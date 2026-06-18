@@ -224,17 +224,25 @@ pub struct PaginationList<T> {
     pub items: Vec<T>,
 }
 
+/// Reports whether the environment variable `name` is set to a non-empty value.
+fn env_var_set(name: &str) -> bool {
+    matches!(std::env::var(name), Ok(value) if !value.is_empty())
+}
+
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
     let os = std::env::consts::OS;
-    // The Apify platform sets `APIFY_IS_AT_HOME` (via `@apify/consts`), which the reference
-    // JS client reads to populate this flag. The reference-parity requirement takes precedence
-    // over the literal `isAtHome` example in the spec text, so we read `APIFY_IS_AT_HOME` here
-    // and render the lowercase `true`/`false` the reference emits (it interpolates a JS boolean).
-    let is_at_home = match std::env::var("APIFY_IS_AT_HOME") {
-        Ok(value) if !value.is_empty() => "true",
-        _ => "false",
+    // The `isAtHome` flag signals whether the client runs on the Apify platform. The canonical
+    // JS reference reads `APIFY_IS_AT_HOME` (via `@apify/consts`), while `client_requirements`'s
+    // worked example uses the bare name `isAtHome`. These two same-priority requirements
+    // conflict, so we honour BOTH variable names (either being set marks the client "at home"),
+    // consistent with the Go sibling. The flag is rendered lowercase (`true`/`false`) to stay
+    // byte-consistent with the JS reference (it interpolates a JS boolean).
+    let is_at_home = if env_var_set("APIFY_IS_AT_HOME") || env_var_set("isAtHome") {
+        "true"
+    } else {
+        "false"
     };
     // Rust has no stable runtime-version API, so report the compiler version captured at build
     // time by `build.rs` (the closest analogue to a "language/runtime version"). Falls back to
@@ -336,25 +344,33 @@ pub fn sign_storage_content(
 mod user_agent_tests {
     use super::build_user_agent;
 
-    // `build_user_agent` must read the platform env var `APIFY_IS_AT_HOME` (matching the JS
-    // reference), not the literal `isAtHome`. This pins the source so a regression to the wrong
-    // variable name is caught. Env vars are process-global, so this test owns both names for
-    // its duration and restores them afterwards.
+    // `build_user_agent` must honour BOTH the JS-consistent `APIFY_IS_AT_HOME` env var and the
+    // bare `isAtHome` name from the requirements doc (the two same-priority requirements were
+    // resolved by supporting both, consistent with the Go sibling). The value is the lowercase
+    // `true`/`false` the JS reference emits. Env vars are process-global, so this test owns both
+    // names for its duration and restores them afterwards.
     #[test]
-    fn is_at_home_reads_apify_env_var() {
+    fn is_at_home_reads_both_env_vars() {
         let prev_apify = std::env::var("APIFY_IS_AT_HOME").ok();
         let prev_literal = std::env::var("isAtHome").ok();
 
-        // The wrong (literal) variable must NOT flip the flag. The value is the lowercase
-        // `true`/`false` the JS reference emits.
+        // Neither set -> false.
         std::env::remove_var("APIFY_IS_AT_HOME");
-        std::env::set_var("isAtHome", "1");
+        std::env::remove_var("isAtHome");
         assert!(
             build_user_agent(None).contains("isAtHome/false"),
-            "literal `isAtHome` env var must not be the source"
+            "no env var set must render isAtHome/false"
         );
 
-        // The correct platform variable flips it to true.
+        // The bare `isAtHome` (requirements doc) variable flips it to true.
+        std::env::set_var("isAtHome", "1");
+        assert!(
+            build_user_agent(None).contains("isAtHome/true"),
+            "bare `isAtHome` env var must drive the flag"
+        );
+
+        // The JS-consistent `APIFY_IS_AT_HOME` variable also flips it to true.
+        std::env::remove_var("isAtHome");
         std::env::set_var("APIFY_IS_AT_HOME", "1");
         assert!(
             build_user_agent(None).contains("isAtHome/true"),

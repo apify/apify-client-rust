@@ -13,6 +13,22 @@ use crate::models::{
     RequestQueue, RequestQueueHead, RequestQueueOperationInfo, RequestQueueRequest,
 };
 
+/// Maximum number of requests the API accepts in a single `requests/batch` call. Larger
+/// inputs are split into chunks of this size (matching the reference client).
+const MAX_REQUESTS_PER_BATCH_OPERATION: usize = 25;
+
+/// Appends the array under `key` in `chunk_result` (if present) onto `acc`. Used to merge the
+/// per-chunk `processedRequests` / `unprocessedRequests` arrays of a chunked batch-add.
+fn merge_request_array(
+    acc: &mut Vec<serde_json::Value>,
+    chunk_result: &serde_json::Value,
+    key: &str,
+) {
+    if let Some(items) = chunk_result.get(key).and_then(|v| v.as_array()) {
+        acc.extend(items.iter().cloned());
+    }
+}
+
 /// Options for [`RequestQueueClient::list_requests`].
 ///
 /// Covers the spec query parameters of `GET /v2/request-queues/{queueId}/requests`.
@@ -183,8 +199,33 @@ impl RequestQueueClient {
         post_action(&self.ctx, Some("head/lock"), &params, None, None).await
     }
 
-    /// Adds multiple requests to the queue in a single batch operation.
+    /// Adds multiple requests to the queue, automatically splitting the input into chunks of
+    /// at most [`MAX_REQUESTS_PER_BATCH_OPERATION`] requests per API call (the API rejects
+    /// larger batches). The per-chunk responses are merged into a single result whose
+    /// `processedRequests` / `unprocessedRequests` arrays concatenate every chunk's, matching
+    /// the reference client's client-side chunking.
     pub async fn batch_add_requests(
+        &self,
+        requests: &[RequestQueueRequest],
+        forefront: bool,
+    ) -> ApifyClientResult<serde_json::Value> {
+        let mut processed: Vec<serde_json::Value> = Vec::new();
+        let mut unprocessed: Vec<serde_json::Value> = Vec::new();
+
+        for chunk in requests.chunks(MAX_REQUESTS_PER_BATCH_OPERATION) {
+            let chunk_result = self.batch_add_chunk(chunk, forefront).await?;
+            merge_request_array(&mut processed, &chunk_result, "processedRequests");
+            merge_request_array(&mut unprocessed, &chunk_result, "unprocessedRequests");
+        }
+
+        Ok(serde_json::json!({
+            "processedRequests": processed,
+            "unprocessedRequests": unprocessed,
+        }))
+    }
+
+    /// Posts a single chunk of requests (at most [`MAX_REQUESTS_PER_BATCH_OPERATION`]).
+    async fn batch_add_chunk(
         &self,
         requests: &[RequestQueueRequest],
         forefront: bool,

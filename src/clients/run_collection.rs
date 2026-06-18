@@ -15,8 +15,10 @@ use crate::models::ActorRun;
 /// task-scoped list. This deliberate reference-parity reuse keeps the API surface uniform.
 #[derive(Debug, Default, Clone)]
 pub struct RunListOptions {
-    /// Only return runs with this status (e.g. `SUCCEEDED`, `RUNNING`).
-    pub status: Option<String>,
+    /// Only return runs with one of these statuses (e.g. `SUCCEEDED`, `RUNNING`). The API
+    /// accepts multiple statuses; they are sent as a comma-separated list. Empty means no
+    /// status filter. Matches the reference client, whose `status` accepts a string or array.
+    pub status: Vec<String>,
     /// Only return runs started at or after this ISO 8601 timestamp. (Actor-scoped lists only.)
     pub started_after: Option<String>,
     /// Only return runs started at or before this ISO 8601 timestamp. (Actor-scoped lists only.)
@@ -47,7 +49,7 @@ impl RunCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc)
-            .add_str("status", filter.status)
+            .add_csv("status", Some(&filter.status))
             .add_str("startedAfter", filter.started_after)
             .add_str("startedBefore", filter.started_before);
         list_resource(&self.ctx, None, &params).await

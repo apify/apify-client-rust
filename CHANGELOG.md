@@ -48,8 +48,11 @@ Initial release of the official Rust client for the Apify API.
 ### Fixed
 - Percent-encode URL path segments (key-value-store record keys, request-queue request IDs)
   so keys containing `/`, `?`, `#`, spaces or non-ASCII no longer produce malformed URLs.
-- `User-Agent` `isAtHome` flag now reads the platform variable `APIFY_IS_AT_HOME` (matching
-  the JS reference) instead of the literal `isAtHome`, so it is correct on the Apify platform.
+- `User-Agent` `isAtHome` flag now reads **both** the platform variable `APIFY_IS_AT_HOME`
+  (matching the JS reference) and the bare `isAtHome` name from `client_requirements.md`; either
+  being set marks the client "at home". These two same-priority requirements conflicted, so the
+  client honours both (consistent with the Go sibling). The flag is rendered lowercase
+  (`true`/`false`) to stay byte-consistent with the JS reference.
 - `get_record` now sends `attachment=true`, matching the reference client's `getRecord`
   (which sends `attachment=true` unconditionally). `get_record_with_options` takes a
   `GetRecordOptions { attachment, signature }`; `attachment` defaults to `true` when unset.
@@ -77,6 +80,27 @@ Initial release of the official Rust client for the Apify API.
   reference client's `defaultBuild(options)`), optionally bounding how long the API waits for the
   default build to finish.
 - Backoff doubling factor extracted to a named constant.
+- Cross-client consistency with the JS reference and the OpenAPI spec (aligning with the Go
+  sibling):
+  - `RunClient::charge` now takes `RunChargeOptions { event_name, count, idempotency_key }` and
+    always sends an `idempotency-key` header (auto-generated as
+    `{runId}-{eventName}-{millis}-{random}` when omitted), so a transport-retried charge is
+    applied at most once. (Was `charge(event_name, count)` with no idempotency key.)
+  - `RunClient::metamorph` now takes `RunMetamorphOptions { build, content_type }`, letting the
+    caller set the input body content type (defaults to `application/json`). (Was
+    `metamorph(target, input, build)`.)
+  - `RunResurrectOptions` gained `max_items`, `max_total_charge_usd`, and `restart_on_error`
+    (all declared by `POST /v2/actor-runs/{runId}/resurrect` and supported by the JS reference).
+  - `RunListOptions::status` is now `Vec<String>` (sent comma-separated), so multiple run
+    statuses can be filtered in one call, matching the spec's array `status` parameter. (Was a
+    single `Option<String>`.)
+  - `RunClient::abort` now takes `gracefully: Option<bool>` instead of `bool`. Passing `None`
+    omits the `gracefully` query parameter (letting the server apply its default, immediate
+    abort), matching the reference client's optional `gracefully` option and the Go sibling.
+  - `RequestQueueClient::batch_add_requests` now splits inputs larger than the API's 25-per-call
+    limit into chunks and merges the per-chunk `processedRequests`/`unprocessedRequests` results,
+    matching the reference client's client-side chunking. (Was a single raw POST of the whole
+    slice, which could exceed API limits for large batches.)
 
 ### Notes
 - A few documented endpoints are intentionally not exposed (matching the JS reference):
