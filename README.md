@@ -130,6 +130,10 @@ reference client does not expose them either, keeping the clients consistent:
   client creates versions/env-vars via `POST` to the collection and upserts via `PUT` on the
   keyed path (both supported here as `versions().create(...)` / `version(n).update(...)` and
   the env-var equivalents), so the redundant keyed-`POST` create is intentionally omitted.
+- The `POST` store-record variant (`POST /v2/key-value-stores/{storeId}/records/{recordKey}`),
+  which the spec defines as behaving identically to the covered `PUT` variant. Records are
+  stored via `set_record_raw(...)` / `set_record_json(...)` (`PUT`), matching the reference
+  client; the redundant keyed-`POST` alias is intentionally omitted.
 
 If you need these, call them directly through a custom `HttpBackend` or open an issue.
 

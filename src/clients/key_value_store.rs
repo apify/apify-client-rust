@@ -28,6 +28,20 @@ pub struct ListKeysOptions {
     pub signature: Option<String>,
 }
 
+/// Options for downloading all records as a ZIP archive via
+/// [`KeyValueStoreClient::get_records`].
+///
+/// Covers the spec query parameters of `GET /v2/key-value-stores/{storeId}/records`.
+#[derive(Debug, Default, Clone)]
+pub struct GetRecordsOptions {
+    /// Only include records belonging to this collection from the store schema.
+    pub collection: Option<String>,
+    /// Only include records whose key starts with this prefix.
+    pub prefix: Option<String>,
+    /// URL-signing signature granting access to a private store's records.
+    pub signature: Option<String>,
+}
+
 /// Options for reading a single record via [`KeyValueStoreClient::get_record_with_options`].
 ///
 /// Covers the spec query parameters of
@@ -95,6 +109,36 @@ impl KeyValueStoreClient {
             .add_str("collection", options.collection)
             .add_str("signature", options.signature);
         get_resource_required(&self.ctx, Some("keys"), &params).await
+    }
+
+    /// Downloads all records from the store as a ZIP archive (raw bytes).
+    ///
+    /// Each record is stored as a separate file in the archive, with the filename equal to the
+    /// record key. Use [`GetRecordsOptions`] to filter by `collection` or `prefix`, or to pass a
+    /// URL-signing `signature` for a private store. Wraps
+    /// `GET /v2/key-value-stores/{storeId}/records`.
+    pub async fn get_records(&self, options: GetRecordsOptions) -> ApifyClientResult<Vec<u8>> {
+        let mut params = QueryParams::new();
+        params
+            .add_str("collection", options.collection)
+            .add_str("prefix", options.prefix)
+            .add_str("signature", options.signature);
+        let url = self
+            .ctx
+            .merged_params(&params)
+            .apply_to_url(&self.ctx.url(Some("records")));
+        let response = self
+            .ctx
+            .http
+            .call(HttpRequest {
+                method: HttpMethod::Get,
+                url,
+                headers: Default::default(),
+                body: None,
+                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
+            })
+            .await?;
+        Ok(response.body)
     }
 
     /// Returns `true` if a record with the given key exists.

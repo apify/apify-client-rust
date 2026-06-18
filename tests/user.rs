@@ -3,7 +3,7 @@
 mod common;
 
 /// Simple GET: fetching the current account's details.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_own_account() {
     let client = require_client!();
     let user = client
@@ -16,7 +16,7 @@ async fn get_own_account() {
 }
 
 /// Simple GET: the current account's monthly usage.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_monthly_usage() {
     let client = require_client!();
     let usage = client
@@ -28,7 +28,7 @@ async fn get_monthly_usage() {
 }
 
 /// Simple GET: the current account's limits.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_limits() {
     let client = require_client!();
     let limits = client.me().limits().await.expect("get limits");

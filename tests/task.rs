@@ -5,7 +5,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing tasks.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_tasks() {
     let client = require_client!();
     let page = client
@@ -26,7 +26,7 @@ fn task_definition(name: &str) -> serde_json::Value {
 }
 
 /// Simple GET: fetch a single task by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_task() {
     let client = require_client!();
     let name = common::unique_name("task-get");
@@ -53,7 +53,7 @@ async fn get_task() {
 
 /// Complex flow: create a task for the public hello-world Actor, get it, update its input,
 /// list its runs, and delete it.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn task_crud_flow() {
     let client = require_client!();
     let name = common::unique_name("task");

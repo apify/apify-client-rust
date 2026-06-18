@@ -66,8 +66,8 @@ macro_rules! require_client {
 ///
 /// Holds a deferred cleanup action that runs when the guard is dropped — including when a
 /// test panics partway through (a failed `assert!`/`expect`), which would otherwise leak the
-/// created resource on the shared test account. The action is run to completion on a fresh
-/// current-thread Tokio runtime, so it works inside `#[tokio::test]` bodies.
+/// created resource on the shared test account. The action is run to completion on the test's
+/// own (multi-thread) Tokio runtime, so it works inside `#[tokio::test]` bodies.
 ///
 /// Usage:
 /// ```ignore
@@ -90,15 +90,15 @@ impl Cleanup {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + 'static,
     {
+        // Capture a handle to the test's own runtime. The cleanup must run on this runtime,
+        // not a freshly-built one: the API client's reqwest connection pool is bound to this
+        // runtime's reactor, and driving it from a foreign runtime deadlocks (the I/O never
+        // gets polled). Re-entering the original (multi-thread) runtime via the handle lets the
+        // deferred delete actually make progress. Tests therefore use the multi-thread flavor.
+        let handle = tokio::runtime::Handle::current();
         Cleanup {
             action: Some(Box::new(move || {
-                // Run the async cleanup to completion on a dedicated current-thread runtime.
-                // A new runtime avoids interfering with the test's own runtime during unwind.
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("build cleanup runtime");
-                rt.block_on(action());
+                handle.block_on(action());
             })),
         }
     }
@@ -107,8 +107,10 @@ impl Cleanup {
 impl Drop for Cleanup {
     fn drop(&mut self) {
         if let Some(action) = self.action.take() {
-            // Run on a separate OS thread: `block_on` cannot be called from within an active
-            // runtime worker thread, which is where Drop runs during a `#[tokio::test]`.
+            // Run on a separate OS thread: `Handle::block_on` cannot be called from within an
+            // active runtime worker thread, which is where Drop runs during a `#[tokio::test]`.
+            // The closure re-enters the original multi-thread runtime via the captured handle,
+            // whose background workers poll the reqwest I/O the delete depends on.
             let _ = std::thread::spawn(action).join();
         }
     }

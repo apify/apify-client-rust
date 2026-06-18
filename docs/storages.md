@@ -35,6 +35,7 @@
 | `update(fields)` | `&impl Serialize` | `KeyValueStore` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the store. |
 | `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists keys (key-based pagination). |
+| `get_records(options)` | `GetRecordsOptions { collection, prefix, signature }` | `Vec<u8>` | Downloads all records as a ZIP archive (raw bytes). |
 | `record_exists(key)` | `&str` | `bool` | Whether a record exists (HEAD). |
 | `get_record(key)` | `&str` | `Option<KeyValueStoreRecord>` | Reads a record's raw value. |
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |

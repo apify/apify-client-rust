@@ -5,7 +5,7 @@ mod common;
 use apify_client::clients::store_collection::StoreListOptions;
 
 /// Simple GET: listing Store Actors.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_store() {
     let client = require_client!();
     let page = client
@@ -20,7 +20,7 @@ async fn list_store() {
 }
 
 /// Convenience: lazy iteration across Store pages.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn iterate_store() {
     let client = require_client!();
     let mut iter = client.store().iterate(StoreListOptions {

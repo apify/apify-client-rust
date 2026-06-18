@@ -5,7 +5,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing webhooks.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_webhooks() {
     let client = require_client!();
     let page = client
@@ -17,7 +17,7 @@ async fn list_webhooks() {
 }
 
 /// Simple GET: listing webhook dispatches.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_webhook_dispatches() {
     let client = require_client!();
     let page = client
@@ -39,7 +39,7 @@ fn webhook_definition() -> serde_json::Value {
 }
 
 /// Simple GET: fetch a single webhook by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_webhook() {
     let client = require_client!();
     let webhook = client
@@ -67,7 +67,7 @@ async fn get_webhook() {
 ///
 /// Creates a webhook, triggers a test dispatch to obtain a real dispatch ID, then exercises
 /// `webhook_dispatch(id).get()`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_webhook_dispatch() {
     let client = require_client!();
     let webhook = client
@@ -99,7 +99,7 @@ async fn get_webhook_dispatch() {
 }
 
 /// Complex flow: create -> get -> update -> delete a webhook.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn webhook_crud_flow() {
     let client = require_client!();
 

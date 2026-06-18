@@ -26,6 +26,10 @@ Initial release of the official Rust client for the Apify API.
 - Request-queue lock lifecycle: `list_requests`, `list_and_lock_head`, `prolong_request_lock`,
   `delete_request_lock`, `unlock_requests`, plus `batch_add_requests` / `batch_delete_requests`.
 - Dataset `download_items` (JSON/CSV/XLSX/XML/RSS/HTML export) and `get_statistics`.
+- `KeyValueStoreClient::get_records` — downloads all records from a store as a ZIP archive
+  (`GET /v2/key-value-stores/{storeId}/records`), with `collection`/`prefix`/`signature`
+  filtering via `GetRecordsOptions`. Reachable on run/task default stores via the nested
+  `key_value_store()` accessor.
 - Build `get_openapi_definition`.
 - `ApifyClient::set_status_message` for setting the current run's status from inside an Actor.
 - Public, shareable resource URLs with HMAC-SHA256 signing for private resources:
@@ -66,3 +70,7 @@ Initial release of the official Rust client for the Apify API.
   synchronous run endpoints, `/tools/*`, `/browser-info`, and the keyed-`POST` create variants
   for Actor versions and version env-vars (creation is via `POST` to the collection, upsert via
   `PUT` on the keyed path).
+- The `POST` store-record alias `POST /v2/key-value-stores/{storeId}/records/{recordKey}` is
+  intentionally not exposed: the spec defines it as behaving identically to the covered `PUT`
+  variant, and the reference client stores records via `PUT` only. Records are stored with
+  `set_record_raw` / `set_record_json`.

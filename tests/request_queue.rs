@@ -6,7 +6,7 @@ use apify_client::models::RequestQueueRequest;
 use serde_json::json;
 
 /// Simple GET: listing request queues should succeed.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_request_queues() {
     let client = require_client!();
     let page = client
@@ -18,7 +18,7 @@ async fn list_request_queues() {
 }
 
 /// Simple GET: fetch a single request queue by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_request_queue() {
     let client = require_client!();
     let name = common::unique_name("rq-get");
@@ -44,7 +44,7 @@ async fn get_request_queue() {
 }
 
 /// Complex flow: create -> get -> add request -> read request -> list head -> update -> delete.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_queue_crud_flow() {
     let client = require_client!();
     let name = common::unique_name("rq");
@@ -120,7 +120,7 @@ async fn request_queue_crud_flow() {
 
 /// Exercises the request lock lifecycle: add -> list_and_lock_head -> prolong -> unlock,
 /// plus `list_requests` and `unlock_requests`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_queue_lock_lifecycle() {
     let client = require_client!();
     let name = common::unique_name("rq-lock");

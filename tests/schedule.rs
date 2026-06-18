@@ -5,7 +5,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing schedules.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_schedules() {
     let client = require_client!();
     let page = client
@@ -27,7 +27,7 @@ fn schedule_definition(name: &str) -> serde_json::Value {
 }
 
 /// Simple GET: fetch a single schedule by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_schedule() {
     let client = require_client!();
     let name = common::unique_name("schedule-get");
@@ -53,7 +53,7 @@ async fn get_schedule() {
 }
 
 /// Complex flow: create -> get -> update -> delete a schedule.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn schedule_crud_flow() {
     let client = require_client!();
     let name = common::unique_name("schedule");

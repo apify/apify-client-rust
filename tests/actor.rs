@@ -7,7 +7,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing the account's Actors.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_actors() {
     let client = require_client!();
     let page = client
@@ -49,7 +49,7 @@ fn actor_definition(name: &str) -> serde_json::Value {
 }
 
 /// Simple GET: fetch a single Actor by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_actor() {
     let client = require_client!();
     let name = actor_name("actor-get");
@@ -76,7 +76,7 @@ async fn get_actor() {
 
 /// Complex flow: create an Actor with a single version, get it, update it, list builds,
 /// and delete it.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn actor_crud_flow() {
     let client = require_client!();
     let name = actor_name("actor");
@@ -133,7 +133,7 @@ async fn actor_crud_flow() {
 }
 
 /// Actor versions: create -> get -> list -> update -> delete on a fresh Actor.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn actor_version_crud_flow() {
     use apify_client::models::ActorVersion;
 
@@ -233,7 +233,7 @@ async fn actor_version_crud_flow() {
 }
 
 /// Actor version environment variables: create -> get -> list -> update -> delete.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn actor_env_var_crud_flow() {
     use apify_client::models::ActorEnvVar;
 

@@ -5,7 +5,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing datasets should succeed and return a paginated structure.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_datasets() {
     let client = require_client!();
     let page = client
@@ -18,7 +18,7 @@ async fn list_datasets() {
 }
 
 /// Simple GET: fetch a single dataset by ID.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn get_dataset() {
     let client = require_client!();
     let name = common::unique_name("dataset-get");
@@ -45,7 +45,7 @@ async fn get_dataset() {
 }
 
 /// Complex flow: create -> get -> push items -> read items -> update -> delete.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn dataset_crud_flow() {
     let client = require_client!();
     let name = common::unique_name("dataset");

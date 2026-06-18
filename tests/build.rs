@@ -5,7 +5,7 @@ mod common;
 use serde_json::json;
 
 /// Simple GET: listing the account's builds.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_builds() {
     let client = require_client!();
     let page = client
@@ -18,7 +18,7 @@ async fn list_builds() {
 
 /// Complex flow: create an Actor, build it, wait for the build to finish, fetch the build
 /// and its log, then clean up.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn build_actor_flow() {
     let client = require_client!();
     let name = common::unique_name("build").replace('-', "");

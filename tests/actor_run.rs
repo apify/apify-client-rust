@@ -6,7 +6,7 @@
 mod common;
 
 /// Simple GET: listing the account's runs.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_runs() {
     let client = require_client!();
     let page = client
@@ -19,7 +19,7 @@ async fn list_runs() {
 
 /// Complex flow: call the hello-world Actor, wait for it to finish, fetch its log and
 /// read its default dataset.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn run_actor_and_read_outputs() {
     let client = require_client!();
 
@@ -74,7 +74,7 @@ async fn run_actor_and_read_outputs() {
 }
 
 /// Convenience: access the Actor's last run.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn last_run_access() {
     let client = require_client!();
     // Ensure there is at least one run by calling the actor.
