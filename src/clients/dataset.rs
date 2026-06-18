@@ -45,6 +45,8 @@ pub struct DatasetListItemsOptions {
     pub simplified: Option<bool>,
     /// Skip items that come from failed pages.
     pub skip_failed_pages: Option<bool>,
+    /// Pre-shared URL signature granting access to a private dataset without an API token.
+    pub signature: Option<String>,
 }
 
 impl DatasetListItemsOptions {
@@ -63,7 +65,8 @@ impl DatasetListItemsOptions {
             .add_csv("flatten", self.flatten.as_deref())
             .add_str("view", self.view.clone())
             .add_bool("simplified", self.simplified)
-            .add_bool("skipFailedPages", self.skip_failed_pages);
+            .add_bool("skipFailedPages", self.skip_failed_pages)
+            .add_str("signature", self.signature.clone());
     }
 }
 

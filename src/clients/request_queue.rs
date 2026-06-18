@@ -293,13 +293,15 @@ impl RequestQueueClient {
     /// Lazily paginates over all requests in the queue, fetching pages on demand.
     ///
     /// Returns a [`RequestQueueRequestsIterator`]; call its `next()` to get one request at a
-    /// time. Pagination uses the API's `nextCursor` (via `exclusiveStartId`).
+    /// time. Pagination uses the API's opaque `nextCursor` token: the first page may be
+    /// anchored with `exclusiveStartId`, but every subsequent page is fetched with `cursor`
+    /// (matching the JS reference). `cursor` and `exclusiveStartId` are mutually exclusive.
     pub fn paginate_requests(&self, page_limit: Option<i64>) -> RequestQueueRequestsIterator {
         RequestQueueRequestsIterator {
             client: self.clone(),
             page_limit,
             buffer: std::collections::VecDeque::new(),
-            next_start_id: None,
+            next_cursor: None,
             exhausted: false,
         }
     }
@@ -326,7 +328,8 @@ pub struct RequestQueueRequestsIterator {
     client: RequestQueueClient,
     page_limit: Option<i64>,
     buffer: std::collections::VecDeque<RequestQueueRequest>,
-    next_start_id: Option<String>,
+    /// Opaque pagination token returned by the previous page, fed back as `cursor`.
+    next_cursor: Option<String>,
     exhausted: bool,
 }
 
@@ -340,11 +343,15 @@ impl RequestQueueRequestsIterator {
             return Ok(None);
         }
 
+        // The first page may be anchored by exclusiveStartId; every later page is fetched
+        // with the opaque `cursor` token (mutually exclusive with exclusiveStartId), matching
+        // the JS reference. Here we only ever paginate from the queue head, so the first page
+        // uses neither and subsequent pages use `cursor`.
         let page = self
             .client
             .list_requests(ListRequestsOptions {
                 limit: self.page_limit,
-                exclusive_start_id: self.next_start_id.clone(),
+                cursor: self.next_cursor.clone(),
                 ..Default::default()
             })
             .await?;
@@ -363,8 +370,8 @@ impl RequestQueueRequestsIterator {
 
         // Advance the cursor; stop when the API stops returning one.
         match page.get("nextCursor").and_then(|v| v.as_str()) {
-            Some(cursor) => self.next_start_id = Some(cursor.to_string()),
-            None => self.exhausted = true,
+            Some(cursor) if !cursor.is_empty() => self.next_cursor = Some(cursor.to_string()),
+            _ => self.exhausted = true,
         }
 
         self.buffer.extend(items);

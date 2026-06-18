@@ -118,6 +118,68 @@ async fn request_queue_crud_flow() {
         .is_none());
 }
 
+/// Paginates across multiple pages: add N requests with a page limit < N and assert the
+/// iterator yields all N exactly once. This exercises the second-page `cursor` path, which is
+/// broken if the iterator feeds `nextCursor` back as `exclusiveStartId` instead of `cursor`.
+#[tokio::test(flavor = "multi_thread")]
+async fn request_queue_paginate_multiple_pages() {
+    let client = require_client!();
+    let name = common::unique_name("rq-page");
+
+    let queue = client
+        .request_queues()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&cleanup_id).delete().await;
+    });
+
+    let queue_client = client.request_queue(&queue.id);
+
+    // Add several requests (more than the page size used below).
+    const TOTAL: usize = 5;
+    let mut expected_urls = std::collections::HashSet::new();
+    for i in 0..TOTAL {
+        let url = format!("https://example.com/page/{i}");
+        let request = RequestQueueRequest {
+            id: None,
+            url: url.clone(),
+            unique_key: Some(format!("page-{i}")),
+            method: Some("GET".to_string()),
+            user_data: None,
+            extra: Default::default(),
+        };
+        queue_client
+            .add_request(&request, false)
+            .await
+            .expect("add request");
+        expected_urls.insert(url);
+    }
+
+    // Paginate with a page size of 2, forcing several pages (and thus the cursor path).
+    let mut iter = queue_client.paginate_requests(Some(2));
+    let mut seen = std::collections::HashSet::new();
+    while let Some(req) = iter.next().await.expect("paginate page") {
+        // Each request must be yielded exactly once.
+        assert!(
+            seen.insert(req.url.clone()),
+            "request {} yielded more than once (pagination cursor bug)",
+            req.url
+        );
+    }
+
+    assert_eq!(
+        seen, expected_urls,
+        "pagination must yield every added request exactly once across pages"
+    );
+
+    queue_client.delete().await.expect("delete queue");
+}
+
 /// Exercises the request lock lifecycle: add -> list_and_lock_head -> prolong -> unlock,
 /// plus `list_requests` and `unlock_requests`.
 #[tokio::test(flavor = "multi_thread")]

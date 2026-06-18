@@ -20,7 +20,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
-| `default_build()` | — | `BuildClient` | Resolves the Actor's default build. |
+| `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the schema. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run (optionally filtered). |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |

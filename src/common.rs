@@ -236,9 +236,10 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
         Ok(value) if !value.is_empty() => "true",
         _ => "false",
     };
-    // Rust has no stable runtime-version API, so report the compiler/runtime version
-    // captured at build time (the closest analogue to a "language version").
-    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
+    // Rust has no stable runtime-version API, so report the compiler version captured at build
+    // time by `build.rs` (the closest analogue to a "language/runtime version"). Falls back to
+    // "unknown" only if the build script could not invoke rustc.
+    let rust_version = option_env!("BUILD_RUSTC_VERSION").unwrap_or("unknown");
     let mut ua =
         format!("ApifyClient/{CLIENT_VERSION} ({os}; Rust/{rust_version}); isAtHome/{is_at_home}");
     if let Some(suffix) = suffix {
@@ -369,6 +370,23 @@ mod user_agent_tests {
             Some(v) => std::env::set_var("isAtHome", v),
             None => std::env::remove_var("isAtHome"),
         }
+    }
+
+    // The `{language version}` segment must carry a real compiler version captured by build.rs,
+    // not the literal "unknown" the MSRV-based source used to produce. We assert the `Rust/`
+    // token is followed by a digit (e.g. `Rust/1.94.1`).
+    #[test]
+    fn user_agent_reports_real_rust_version() {
+        let ua = build_user_agent(None);
+        let after = ua
+            .split("Rust/")
+            .nth(1)
+            .expect("user agent must contain a Rust/ token");
+        let version = after.split([')', ';']).next().unwrap_or("");
+        assert!(
+            version.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            "Rust version must be a real compiler version, got `Rust/{version}`"
+        );
     }
 }
 

@@ -174,8 +174,16 @@ impl ActorClient {
     }
 
     /// Resolves the Actor's default build and returns a client for it.
-    pub async fn default_build(&self) -> ApifyClientResult<BuildClient> {
-        let url = self.ctx.url(Some("builds/default"));
+    ///
+    /// `wait_for_finish` optionally bounds how long (in seconds) the API waits for the build
+    /// to finish before responding, matching the reference client's `defaultBuild(options)`.
+    pub async fn default_build(
+        &self,
+        wait_for_finish: Option<i64>,
+    ) -> ApifyClientResult<BuildClient> {
+        let mut params = QueryParams::new();
+        params.add_int("waitForFinish", wait_for_finish);
+        let url = params.apply_to_url(&self.ctx.url(Some("builds/default")));
         let response = self
             .ctx
             .http

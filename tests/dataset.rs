@@ -84,6 +84,18 @@ async fn dataset_crud_flow() {
         .expect("list items");
     assert_eq!(items.items.len(), 3, "should read back the 3 pushed items");
 
+    // The `signature` query param must be settable on list_items (spec + JS reference both
+    // expose it for fetching items from a private dataset with a pre-shared signature). On this
+    // owned dataset the signature is unnecessary, but the request must still succeed.
+    let signed = dataset_client
+        .list_items::<serde_json::Value>(apify_client::DatasetListItemsOptions {
+            signature: Some("test-signature".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("list items with signature option");
+    assert_eq!(signed.items.len(), 3);
+
     // Download items as CSV with export options (exercises the export/format path).
     let csv = dataset_client
         .download_items(

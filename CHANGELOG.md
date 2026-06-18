@@ -53,6 +53,13 @@ Initial release of the official Rust client for the Apify API.
 - `get_record` now sends `attachment=true`, matching the reference client's `getRecord`
   (which sends `attachment=true` unconditionally). `get_record_with_options` takes a
   `GetRecordOptions { attachment, signature }`; `attachment` defaults to `true` when unset.
+- Request-queue request pagination (`paginate_requests` / `RequestQueueRequestsIterator`) now
+  feeds the opaque `nextCursor` back as the `cursor` query parameter on subsequent pages
+  (matching the JS reference) instead of misusing it as `exclusiveStartId`. Previously
+  pagination broke past the first page (duplicate/missing items or premature stop).
+- `User-Agent` `{language version}` now reports the real compiler version captured at build
+  time (via `build.rs` running `rustc --version`) instead of rendering `Rust/unknown` (it
+  previously read the unset MSRV field `CARGO_PKG_RUST_VERSION`).
 
 ### Changed
 - Added previously-missing spec query parameters: dataset items `outputFields` (list/download)
@@ -61,8 +68,14 @@ Initial release of the official Rust client for the Apify API.
   `cursor`/`filter` (via `ListRequestsOptions`); storage collection list `unnamed`/`ownership`
   (via `StorageListOptions`); run collection list `startedAfter`/`startedBefore` (via
   `RunListOptions`).
+- Added the `signature` query parameter to dataset items (`DatasetListItemsOptions`, inherited
+  by `DatasetDownloadOptions`), so `list_items` / `download_items` can fetch items from a
+  private dataset using a pre-shared signature (spec + JS reference both expose it).
 - `get_record_with_options` signature changed to take `GetRecordOptions` (was `attachment: bool`),
   exposing the spec `signature` param for reading records from private stores.
+- `ActorClient::default_build` now takes a `wait_for_finish: Option<i64>` argument (matching the
+  reference client's `defaultBuild(options)`), optionally bounding how long the API waits for the
+  default build to finish.
 - Backoff doubling factor extracted to a named constant.
 
 ### Notes
@@ -70,6 +83,10 @@ Initial release of the official Rust client for the Apify API.
   synchronous run endpoints, `/tools/*`, `/browser-info`, and the keyed-`POST` create variants
   for Actor versions and version env-vars (creation is via `POST` to the collection, upsert via
   `PUT` on the keyed path).
+- The JS `listItems` `chunkSize` option is intentionally not exposed: it is a client-side
+  hint controlling the per-request page size of the JS async-iterator, not an API query
+  parameter. The Rust `list_items` returns a single `PaginationList` page (the caller controls
+  the page size via `limit`), so `chunkSize` has no analogue here.
 - The `POST` store-record alias `POST /v2/key-value-stores/{storeId}/records/{recordKey}` is
   intentionally not exposed: the spec defines it as behaving identically to the covered `PUT`
   variant, and the reference client stores records via `PUT` only. Records are stored with
