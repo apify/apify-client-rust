@@ -49,6 +49,18 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      # Fail fast if the integration-test secret is missing or empty. Without this guard the
+      # integration tests silently "pass" (they early-return when APIFY_TOKEN is unset), so a
+      # green run would not prove the API logic actually executed.
+      - name: Require APIFY_TOKEN secret
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          if [ -z "${APIFY_TOKEN}" ]; then
+            echo "::error::APIFY_TOKEN secret is empty or missing; integration tests would not run against the API."
+            exit 1
+          fi
+
       - name: Run integration tests
         env:
           # The integration-test token is stored as a repository secret.
@@ -59,4 +71,6 @@ jobs:
       - name: Run documentation example tests
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-        run: cargo test --doc
+        # Match the integration-test thread cap so doctests that hit the live API stay gentle
+        # on the shared account.
+        run: cargo test --doc -- --test-threads=4

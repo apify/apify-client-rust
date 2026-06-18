@@ -62,8 +62,9 @@ Builder options:
 | `http_backend(b)` | reqwest | Replaceable HTTP transport (`HttpBackend`). |
 
 The `User-Agent` header has the form
-`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{True|False}` where
-`isAtHome` reflects the `isAtHome` environment variable.
+`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where
+`isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable (the platform variable the
+reference clients read; rendered lowercase to match them).
 
 Accessor methods return resource clients (see the per-resource pages):
 

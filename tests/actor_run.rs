@@ -11,7 +11,7 @@ async fn list_runs() {
     let client = require_client!();
     let page = client
         .runs()
-        .list(Default::default(), None)
+        .list(Default::default(), Default::default())
         .await
         .expect("listing runs should succeed");
     assert!(page.total >= 0);

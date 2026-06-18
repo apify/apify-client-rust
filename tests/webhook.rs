@@ -28,24 +28,93 @@ async fn list_webhook_dispatches() {
     assert!(page.total >= 0);
 }
 
+fn webhook_definition() -> serde_json::Value {
+    // A webhook that fires when any run of the public hello-world Actor succeeds.
+    json!({
+        "eventTypes": ["ACTOR.RUN.SUCCEEDED"],
+        "condition": { "actorId": "moJRLRc85AitArpNN" },
+        "requestUrl": "https://example.com/webhook",
+        "isAdHoc": false
+    })
+}
+
+/// Simple GET: fetch a single webhook by ID.
+#[tokio::test]
+async fn get_webhook() {
+    let client = require_client!();
+    let webhook = client
+        .webhooks()
+        .create(&webhook_definition())
+        .await
+        .expect("create webhook");
+
+    let cleanup_client = client.clone();
+    let id = webhook.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.webhook(&id).delete().await;
+    });
+
+    let fetched = client
+        .webhook(&webhook.id)
+        .get()
+        .await
+        .expect("get webhook by id")
+        .expect("webhook should exist");
+    assert_eq!(fetched.id, webhook.id);
+}
+
+/// Simple GET: fetch a single webhook dispatch by ID.
+///
+/// Creates a webhook, triggers a test dispatch to obtain a real dispatch ID, then exercises
+/// `webhook_dispatch(id).get()`.
+#[tokio::test]
+async fn get_webhook_dispatch() {
+    let client = require_client!();
+    let webhook = client
+        .webhooks()
+        .create(&webhook_definition())
+        .await
+        .expect("create webhook");
+
+    let cleanup_client = client.clone();
+    let id = webhook.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.webhook(&id).delete().await;
+    });
+
+    let dispatch = client
+        .webhook(&webhook.id)
+        .test()
+        .await
+        .expect("test webhook");
+    assert!(!dispatch.id.is_empty());
+
+    let fetched = client
+        .webhook_dispatch(&dispatch.id)
+        .get()
+        .await
+        .expect("get webhook dispatch by id")
+        .expect("dispatch should exist");
+    assert_eq!(fetched.id, dispatch.id);
+}
+
 /// Complex flow: create -> get -> update -> delete a webhook.
 #[tokio::test]
 async fn webhook_crud_flow() {
     let client = require_client!();
 
-    // A webhook that fires when any run of the public hello-world Actor succeeds.
-    let definition = json!({
-        "eventTypes": ["ACTOR.RUN.SUCCEEDED"],
-        "condition": { "actorId": "moJRLRc85AitArpNN" },
-        "requestUrl": "https://example.com/webhook",
-        "isAdHoc": false
-    });
-
     let webhook = client
         .webhooks()
-        .create(&definition)
+        .create(&webhook_definition())
         .await
         .expect("create webhook");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = webhook.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.webhook(&cleanup_id).delete().await;
+    });
+
     let webhook_client = client.webhook(&webhook.id);
 
     // Get.

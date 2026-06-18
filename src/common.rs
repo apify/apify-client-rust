@@ -148,6 +148,19 @@ fn url_encode(input: &str) -> String {
     out
 }
 
+/// Percent-encodes a single URL *path segment*, so that values interpolated into the path
+/// (such as key-value-store record keys or request IDs) cannot break out of the segment or
+/// inject a query string.
+///
+/// Encodes everything except the RFC 3986 "unreserved" characters. Notably `/`, `?`, `#`,
+/// space and any non-ASCII bytes are escaped — unlike a raw `format!(".../{key}")`, which
+/// would leave them intact and produce a malformed or wrong-endpoint URL.
+pub fn encode_path_segment(input: &str) -> String {
+    // Path segments and query components share the same unreserved set here, so reuse the
+    // query encoder. (`url_encode` already escapes `/`, `?`, `#`, space and non-ASCII.)
+    url_encode(input)
+}
+
 /// Standard offset/limit pagination options shared by most list endpoints.
 #[derive(Debug, Default, Clone)]
 pub struct ListOptions {
@@ -157,6 +170,35 @@ pub struct ListOptions {
     pub limit: Option<i64>,
     /// If `true`, items are returned newest-first.
     pub desc: Option<bool>,
+}
+
+/// Options shared by the storage collection list endpoints (`GET /v2/datasets`,
+/// `/v2/key-value-stores`, `/v2/request-queues`), which add `unnamed` and `ownership`
+/// filters on top of the standard offset/limit pagination.
+#[derive(Debug, Default, Clone)]
+pub struct StorageListOptions {
+    /// Number of items to skip from the beginning of the list.
+    pub offset: Option<i64>,
+    /// Maximum number of items to return.
+    pub limit: Option<i64>,
+    /// If `true`, items are returned newest-first.
+    pub desc: Option<bool>,
+    /// If `true`, include unnamed storages in the result.
+    pub unnamed: Option<bool>,
+    /// Filter by ownership (e.g. `OWNED` / `ACCESSIBLE`).
+    pub ownership: Option<String>,
+}
+
+impl StorageListOptions {
+    /// Serializes these options into query parameters.
+    pub(crate) fn apply(&self, params: &mut QueryParams) {
+        params
+            .add_int("offset", self.offset)
+            .add_int("limit", self.limit)
+            .add_bool("desc", self.desc)
+            .add_bool("unnamed", self.unnamed)
+            .add_str("ownership", self.ownership.clone());
+    }
 }
 
 /// A single page of an offset/limit-paginated list.
@@ -186,9 +228,13 @@ pub struct PaginationList<T> {
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
     let os = std::env::consts::OS;
-    let is_at_home = match std::env::var("isAtHome") {
-        Ok(value) if !value.is_empty() => "True",
-        _ => "False",
+    // The Apify platform sets `APIFY_IS_AT_HOME` (via `@apify/consts`), which the reference
+    // JS client reads to populate this flag. The reference-parity requirement takes precedence
+    // over the literal `isAtHome` example in the spec text, so we read `APIFY_IS_AT_HOME` here
+    // and render the lowercase `true`/`false` the reference emits (it interpolates a JS boolean).
+    let is_at_home = match std::env::var("APIFY_IS_AT_HOME") {
+        Ok(value) if !value.is_empty() => "true",
+        _ => "false",
     };
     // Rust has no stable runtime-version API, so report the compiler/runtime version
     // captured at build time (the closest analogue to a "language version").
@@ -283,6 +329,47 @@ pub fn sign_storage_content(
     let hmac = create_hmac_signature(secret_key, &message);
     let envelope = format!("{version}.{expires_at_millis}.{hmac}");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(envelope.as_bytes())
+}
+
+#[cfg(test)]
+mod user_agent_tests {
+    use super::build_user_agent;
+
+    // `build_user_agent` must read the platform env var `APIFY_IS_AT_HOME` (matching the JS
+    // reference), not the literal `isAtHome`. This pins the source so a regression to the wrong
+    // variable name is caught. Env vars are process-global, so this test owns both names for
+    // its duration and restores them afterwards.
+    #[test]
+    fn is_at_home_reads_apify_env_var() {
+        let prev_apify = std::env::var("APIFY_IS_AT_HOME").ok();
+        let prev_literal = std::env::var("isAtHome").ok();
+
+        // The wrong (literal) variable must NOT flip the flag. The value is the lowercase
+        // `true`/`false` the JS reference emits.
+        std::env::remove_var("APIFY_IS_AT_HOME");
+        std::env::set_var("isAtHome", "1");
+        assert!(
+            build_user_agent(None).contains("isAtHome/false"),
+            "literal `isAtHome` env var must not be the source"
+        );
+
+        // The correct platform variable flips it to true.
+        std::env::set_var("APIFY_IS_AT_HOME", "1");
+        assert!(
+            build_user_agent(None).contains("isAtHome/true"),
+            "APIFY_IS_AT_HOME must drive the flag"
+        );
+
+        // Restore prior environment.
+        match prev_apify {
+            Some(v) => std::env::set_var("APIFY_IS_AT_HOME", v),
+            None => std::env::remove_var("APIFY_IS_AT_HOME"),
+        }
+        match prev_literal {
+            Some(v) => std::env::set_var("isAtHome", v),
+            None => std::env::remove_var("isAtHome"),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
-| `list(options, status)` | `ListOptions`, `Option<&str>` | `PaginationList<ActorRun>` | Lists runs, optionally filtered by status. |
+| `list(options, filter)` | `ListOptions`, `RunListOptions { status, started_after, started_before }` | `PaginationList<ActorRun>` | Lists runs, optionally filtered by status and start time. |
 
 ## `RunClient`
 

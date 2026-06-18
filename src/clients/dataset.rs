@@ -24,6 +24,9 @@ pub struct DatasetListItemsOptions {
     pub desc: Option<bool>,
     /// Only include these fields.
     pub fields: Option<Vec<String>>,
+    /// Positionally renames the fields selected by `fields` in the output (requires `fields`
+    /// to be set). The i-th name here becomes the output name of the i-th `fields` entry.
+    pub output_fields: Option<Vec<String>>,
     /// Exclude these fields.
     pub omit: Option<Vec<String>>,
     /// Skip empty items.
@@ -51,6 +54,7 @@ impl DatasetListItemsOptions {
             .add_int("limit", self.limit)
             .add_bool("desc", self.desc)
             .add_csv("fields", self.fields.as_deref())
+            .add_csv("outputFields", self.output_fields.as_deref())
             .add_csv("omit", self.omit.as_deref())
             .add_bool("skipEmpty", self.skip_empty)
             .add_bool("skipHidden", self.skip_hidden)
@@ -114,6 +118,10 @@ pub struct DatasetDownloadOptions {
     pub xml_root: Option<String>,
     /// Name of the per-item XML element (default `item`).
     pub xml_row: Option<String>,
+    /// Title to use for RSS/Atom feed exports.
+    pub feed_title: Option<String>,
+    /// Description to use for RSS/Atom feed exports.
+    pub feed_description: Option<String>,
 }
 
 impl DatasetDownloadOptions {
@@ -125,7 +133,9 @@ impl DatasetDownloadOptions {
             .add_str("delimiter", self.delimiter.clone())
             .add_bool("skipHeaderRow", self.skip_header_row)
             .add_str("xmlRoot", self.xml_root.clone())
-            .add_str("xmlRow", self.xml_row.clone());
+            .add_str("xmlRow", self.xml_row.clone())
+            .add_str("feedTitle", self.feed_title.clone())
+            .add_str("feedDescription", self.feed_description.clone());
     }
 }
 

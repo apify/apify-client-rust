@@ -17,6 +17,33 @@ async fn list_datasets() {
     assert!(page.total >= 0);
 }
 
+/// Simple GET: fetch a single dataset by ID.
+#[tokio::test]
+async fn get_dataset() {
+    let client = require_client!();
+    let name = common::unique_name("dataset-get");
+    let dataset = client
+        .datasets()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create dataset");
+
+    // Panic-safe cleanup: deletes the dataset even if an assertion below fails.
+    let cleanup_client = client.clone();
+    let id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&id).delete().await;
+    });
+
+    let fetched = client
+        .dataset(&dataset.id)
+        .get()
+        .await
+        .expect("get dataset by id");
+    let fetched = fetched.expect("dataset should exist");
+    assert_eq!(fetched.id, dataset.id);
+}
+
 /// Complex flow: create -> get -> push items -> read items -> update -> delete.
 #[tokio::test]
 async fn dataset_crud_flow() {
@@ -30,6 +57,13 @@ async fn dataset_crud_flow() {
         .await
         .expect("create dataset");
     assert_eq!(dataset.name.as_deref(), Some(name.as_str()));
+
+    // Panic-safe cleanup so a mid-flow failure does not leak the dataset.
+    let cleanup_client = client.clone();
+    let cleanup_id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&cleanup_id).delete().await;
+    });
 
     let dataset_client = client.dataset(&dataset.id);
 

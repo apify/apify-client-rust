@@ -1,7 +1,7 @@
 //! Client for the dataset collection (`/v2/datasets`).
 
 use crate::clients::base::{get_or_create_named, list_resource, ResourceContext};
-use crate::common::{ListOptions, PaginationList, QueryParams};
+use crate::common::{PaginationList, QueryParams, StorageListOptions};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Dataset;
@@ -19,13 +19,13 @@ impl DatasetCollectionClient {
         }
     }
 
-    /// Lists datasets with offset/limit pagination.
-    pub async fn list(&self, options: ListOptions) -> ApifyClientResult<PaginationList<Dataset>> {
+    /// Lists datasets with offset/limit pagination, optionally filtering by `unnamed`/`ownership`.
+    pub async fn list(
+        &self,
+        options: StorageListOptions,
+    ) -> ApifyClientResult<PaginationList<Dataset>> {
         let mut params = QueryParams::new();
-        params
-            .add_int("offset", options.offset)
-            .add_int("limit", options.limit)
-            .add_bool("desc", options.desc);
+        options.apply(&mut params);
         list_resource(&self.ctx, None, &params).await
     }
 

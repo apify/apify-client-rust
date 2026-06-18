@@ -200,6 +200,12 @@ impl ApifyClient {
         self.http.user_agent()
     }
 
+    /// The fully-qualified API base URL this client targets (including the `/v2` suffix),
+    /// e.g. `https://api.apify.com/v2`. Reflects any `base_url` override.
+    pub fn api_base_url(&self) -> &str {
+        &self.base_url
+    }
+
     // ----- Actor accessors -------------------------------------------------
 
     /// Returns a client for the Actor collection (list & create Actors).

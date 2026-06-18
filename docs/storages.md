@@ -2,7 +2,8 @@
 
 ## Datasets — `client.datasets()` / `client.dataset(id)`
 
-`DatasetCollectionClient`: `list(options)`, `get_or_create(name)`.
+`DatasetCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
+`StorageListOptions`: `offset`, `limit`, `desc`, `unnamed`, `ownership`.
 
 `DatasetClient`:
 
@@ -17,12 +18,14 @@
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/CSV/XLSX/XML/RSS/HTML. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
 
-`DatasetListItemsOptions`: `offset`, `limit`, `desc`, `fields`, `omit`, `skip_empty`,
-`skip_hidden`, `clean`.
+`DatasetListItemsOptions`: `offset`, `limit`, `desc`, `fields`, `output_fields`, `omit`,
+`skip_empty`, `skip_hidden`, `clean`, `unwind`, `flatten`, `view`, `simplified`,
+`skip_failed_pages`. `DatasetDownloadOptions` adds `attachment`, `bom`, `delimiter`,
+`skip_header_row`, `xml_root`, `xml_row`, `feed_title`, `feed_description`.
 
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
-`KeyValueStoreCollectionClient`: `list(options)`, `get_or_create(name)`.
+`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
 
 `KeyValueStoreClient`:
 
@@ -37,17 +40,17 @@
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
 | `set_record_json(key, value)` | `&str`, `&impl Serialize` | `()` | Stores a JSON record. |
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
-| `get_record_with_options(key, attachment)` | `&str`, `bool` | `Option<KeyValueStoreRecord>` | Reads a record as an attachment. |
+| `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
 | `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
 
-`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`.
+`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`.
 `KeyValueStoreRecord` exposes `value: Vec<u8>`, `content_type`, plus `as_text()` and
 `json::<T>()` helpers.
 
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
 
-`RequestQueueCollectionClient`: `list(options)`, `get_or_create(name)`.
+`RequestQueueCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
 
 `RequestQueueClient` (chainable `with_client_key(key)` for lock coordination):
 
@@ -64,7 +67,7 @@
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Locks head requests. |
 | `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add. |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
-| `list_requests(limit, start_id)` | `Option<i64>`, `Option<&str>` | `Value` | List requests (cursor pagination). |
+| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Lock head requests. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |

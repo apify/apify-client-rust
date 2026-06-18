@@ -53,7 +53,7 @@ pub mod models;
 mod version;
 
 pub use client::{ApifyClient, ApifyClientBuilder};
-pub use common::{ListOptions, PaginationList, QueryParams};
+pub use common::{ListOptions, PaginationList, QueryParams, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
@@ -61,8 +61,10 @@ pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 pub use clients::actor::{ActorBuildOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
-pub use clients::key_value_store::ListKeysOptions;
+pub use clients::key_value_store::{GetRecordOptions, ListKeysOptions};
+pub use clients::request_queue::ListRequestsOptions;
 pub use clients::run::RunResurrectOptions;
+pub use clients::run_collection::RunListOptions;
 pub use clients::store_collection::StoreListOptions;
 
 // Compile-test the code snippets in the README so the documentation stays valid.

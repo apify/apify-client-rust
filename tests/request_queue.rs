@@ -17,6 +17,32 @@ async fn list_request_queues() {
     assert!(page.total >= 0);
 }
 
+/// Simple GET: fetch a single request queue by ID.
+#[tokio::test]
+async fn get_request_queue() {
+    let client = require_client!();
+    let name = common::unique_name("rq-get");
+    let queue = client
+        .request_queues()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&id).delete().await;
+    });
+
+    let fetched = client
+        .request_queue(&queue.id)
+        .get()
+        .await
+        .expect("get queue by id")
+        .expect("queue should exist");
+    assert_eq!(fetched.id, queue.id);
+}
+
 /// Complex flow: create -> get -> add request -> read request -> list head -> update -> delete.
 #[tokio::test]
 async fn request_queue_crud_flow() {
@@ -29,6 +55,12 @@ async fn request_queue_crud_flow() {
         .await
         .expect("create queue");
     assert_eq!(queue.name.as_deref(), Some(name.as_str()));
+
+    let cleanup_client = client.clone();
+    let cleanup_id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&cleanup_id).delete().await;
+    });
 
     let queue_client = client.request_queue(&queue.id);
 
@@ -98,6 +130,13 @@ async fn request_queue_lock_lifecycle() {
         .get_or_create(Some(&name))
         .await
         .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&cleanup_id).delete().await;
+    });
+
     // A stable client key lets us unlock our own locks.
     let queue_client = client
         .request_queue(&queue.id)
@@ -119,7 +158,10 @@ async fn request_queue_lock_lifecycle() {
 
     // List requests (cursor pagination endpoint).
     let listed = queue_client
-        .list_requests(Some(10), None)
+        .list_requests(apify_client::ListRequestsOptions {
+            limit: Some(10),
+            ..Default::default()
+        })
         .await
         .expect("list requests");
     assert!(listed.get("items").is_some());

@@ -41,6 +41,28 @@ Initial release of the official Rust client for the Apify API.
 - Integration test suite covering simple GETs and full CRUD flows for each resource.
 - GitHub Actions workflow running formatting, clippy, build and integration tests.
 
+### Fixed
+- Percent-encode URL path segments (key-value-store record keys, request-queue request IDs)
+  so keys containing `/`, `?`, `#`, spaces or non-ASCII no longer produce malformed URLs.
+- `User-Agent` `isAtHome` flag now reads the platform variable `APIFY_IS_AT_HOME` (matching
+  the JS reference) instead of the literal `isAtHome`, so it is correct on the Apify platform.
+- `get_record` now sends `attachment=true`, matching the reference client's `getRecord`
+  (which sends `attachment=true` unconditionally). `get_record_with_options` takes a
+  `GetRecordOptions { attachment, signature }`; `attachment` defaults to `true` when unset.
+
+### Changed
+- Added previously-missing spec query parameters: dataset items `outputFields` (list/download)
+  and `feedTitle`/`feedDescription` (download); key-value-store keys `collection`/`signature`;
+  key-value-store record `signature` (via `GetRecordOptions`); request-queue requests
+  `cursor`/`filter` (via `ListRequestsOptions`); storage collection list `unnamed`/`ownership`
+  (via `StorageListOptions`); run collection list `startedAfter`/`startedBefore` (via
+  `RunListOptions`).
+- `get_record_with_options` signature changed to take `GetRecordOptions` (was `attachment: bool`),
+  exposing the spec `signature` param for reading records from private stores.
+- Backoff doubling factor extracted to a named constant.
+
 ### Notes
 - A few documented endpoints are intentionally not exposed (matching the JS reference):
-  synchronous run endpoints, `/tools/*`, and `/browser-info`.
+  synchronous run endpoints, `/tools/*`, `/browser-info`, and the keyed-`POST` create variants
+  for Actor versions and version env-vars (creation is via `POST` to the collection, upsert via
+  `PUT` on the keyed path).

@@ -16,6 +16,41 @@ async fn list_tasks() {
     assert!(page.total >= 0);
 }
 
+fn task_definition(name: &str) -> serde_json::Value {
+    json!({
+        "actId": "apify/hello-world",
+        "name": name,
+        "options": { "memoryMbytes": 256 },
+        "input": { "message": "hi" }
+    })
+}
+
+/// Simple GET: fetch a single task by ID.
+#[tokio::test]
+async fn get_task() {
+    let client = require_client!();
+    let name = common::unique_name("task-get");
+    let task = client
+        .tasks()
+        .create(&task_definition(&name))
+        .await
+        .expect("create task");
+
+    let cleanup_client = client.clone();
+    let id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&id).delete().await;
+    });
+
+    let fetched = client
+        .task(&task.id)
+        .get()
+        .await
+        .expect("get task by id")
+        .expect("task should exist");
+    assert_eq!(fetched.id, task.id);
+}
+
 /// Complex flow: create a task for the public hello-world Actor, get it, update its input,
 /// list its runs, and delete it.
 #[tokio::test]
@@ -23,19 +58,18 @@ async fn task_crud_flow() {
     let client = require_client!();
     let name = common::unique_name("task");
 
-    let definition = json!({
-        "actId": "apify/hello-world",
-        "name": name,
-        "options": { "memoryMbytes": 256 },
-        "input": { "message": "hi" }
-    });
-
     let task = client
         .tasks()
-        .create(&definition)
+        .create(&task_definition(&name))
         .await
         .expect("create task");
     assert_eq!(task.name.as_deref(), Some(name.as_str()));
+
+    let cleanup_client = client.clone();
+    let cleanup_id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&cleanup_id).delete().await;
+    });
 
     let task_client = client.task(&task.id);
 
@@ -62,7 +96,7 @@ async fn task_crud_flow() {
     // List its runs (likely empty, but the endpoint should respond).
     let runs = task_client
         .runs()
-        .list(Default::default(), None)
+        .list(Default::default(), Default::default())
         .await
         .expect("list task runs");
     assert!(runs.total >= 0);

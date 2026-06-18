@@ -6,7 +6,9 @@ use crate::clients::base::{
     delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
     update_resource, ResourceContext,
 };
-use crate::common::{create_hmac_signature, sign_storage_content, QueryParams};
+use crate::common::{
+    create_hmac_signature, encode_path_segment, sign_storage_content, QueryParams,
+};
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
 use crate::models::{KeyValueStore, KeyValueStoreKeysPage, KeyValueStoreRecord};
@@ -20,6 +22,23 @@ pub struct ListKeysOptions {
     pub exclusive_start_key: Option<String>,
     /// Only return keys with this prefix.
     pub prefix: Option<String>,
+    /// Only return keys belonging to this collection.
+    pub collection: Option<String>,
+    /// URL-signing signature granting access to a private store's key listing.
+    pub signature: Option<String>,
+}
+
+/// Options for reading a single record via [`KeyValueStoreClient::get_record_with_options`].
+///
+/// Covers the spec query parameters of
+/// `GET /v2/key-value-stores/{storeId}/records/{recordKey}`.
+#[derive(Debug, Default, Clone)]
+pub struct GetRecordOptions {
+    /// Request the record with a `Content-Disposition: attachment` response header. When unset,
+    /// the client sends `attachment=true`, matching the reference client's unconditional default.
+    pub attachment: Option<bool>,
+    /// URL-signing signature granting access to a record in a private store.
+    pub signature: Option<String>,
 }
 
 /// Client for a specific key-value store.
@@ -72,7 +91,9 @@ impl KeyValueStoreClient {
         params
             .add_int("limit", options.limit)
             .add_str("exclusiveStartKey", options.exclusive_start_key)
-            .add_str("prefix", options.prefix);
+            .add_str("prefix", options.prefix)
+            .add_str("collection", options.collection)
+            .add_str("signature", options.signature);
         get_resource_required(&self.ctx, Some("keys"), &params).await
     }
 
@@ -80,29 +101,43 @@ impl KeyValueStoreClient {
     pub async fn record_exists(&self, key: &str) -> ApifyClientResult<bool> {
         head_exists(
             &self.ctx,
-            Some(&format!("records/{key}")),
+            Some(&format!("records/{}", encode_path_segment(key))),
             &QueryParams::new(),
         )
         .await
     }
 
     /// Gets a record's raw value (and content type), or `None` if it does not exist.
+    ///
+    /// Like the reference client's `getRecord`, this sends `attachment=true`. Use
+    /// [`get_record_with_options`](Self::get_record_with_options) to override the attachment
+    /// behaviour or to pass a URL-signing `signature` for a private store.
     pub async fn get_record(&self, key: &str) -> ApifyClientResult<Option<KeyValueStoreRecord>> {
-        self.get_record_with_options(key, false).await
+        self.get_record_with_options(key, GetRecordOptions::default())
+            .await
     }
 
-    /// Gets a record, optionally requesting it as an attachment.
+    /// Gets a record with explicit options.
     ///
-    /// When `attachment` is `true`, the API adds a `Content-Disposition: attachment` header,
-    /// which is useful when forwarding the value to a browser download.
+    /// The `attachment` option controls the `Content-Disposition: attachment` response header;
+    /// when unset it defaults to `true`, matching the reference client's unconditional behaviour.
+    /// `signature` supplies a URL-signing signature for accessing a record in a private store.
     pub async fn get_record_with_options(
         &self,
         key: &str,
-        attachment: bool,
+        options: GetRecordOptions,
     ) -> ApifyClientResult<Option<KeyValueStoreRecord>> {
         let mut params = QueryParams::new();
-        params.add_bool("attachment", Some(attachment));
-        let response = get_raw(&self.ctx, Some(&format!("records/{key}")), &params).await?;
+        // Default to `attachment=true` (reference parity); honour an explicit override.
+        params
+            .add_bool("attachment", Some(options.attachment.unwrap_or(true)))
+            .add_str("signature", options.signature);
+        let response = get_raw(
+            &self.ctx,
+            Some(&format!("records/{}", encode_path_segment(key))),
+            &params,
+        )
+        .await?;
         Ok(response.map(|r| {
             let content_type = r.header("content-type").map(|s| s.to_string());
             KeyValueStoreRecord {
@@ -122,7 +157,7 @@ impl KeyValueStoreClient {
     ) -> ApifyClientResult<()> {
         put_raw(
             &self.ctx,
-            Some(&format!("records/{key}")),
+            Some(&format!("records/{}", encode_path_segment(key))),
             &QueryParams::new(),
             value,
             content_type,
@@ -158,7 +193,11 @@ impl KeyValueStoreClient {
                 params.add_str("signature", Some(create_hmac_signature(secret, key)));
             }
         }
-        Ok(params.apply_to_url(&self.ctx.public_url(Some(&format!("records/{key}")))))
+        Ok(params.apply_to_url(
+            &self
+                .ctx
+                .public_url(Some(&format!("records/{}", encode_path_segment(key)))),
+        ))
     }
 
     /// Builds a public URL for listing this store's keys.
@@ -186,7 +225,9 @@ impl KeyValueStoreClient {
 
     /// Deletes the record with the given key.
     pub async fn delete_record(&self, key: &str) -> ApifyClientResult<()> {
-        let url = self.ctx.url(Some(&format!("records/{key}")));
+        let url = self
+            .ctx
+            .url(Some(&format!("records/{}", encode_path_segment(key))));
         self.ctx
             .http
             .call(HttpRequest {

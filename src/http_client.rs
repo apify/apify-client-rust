@@ -25,6 +25,9 @@ const RATE_LIMIT_EXCEEDED_STATUS_CODE: u16 = 429;
 const MIN_SERVER_ERROR_STATUS_CODE: u16 = 500;
 /// Responses with status `< 300` are treated as success.
 const MAX_SUCCESS_STATUS_CODE: u16 = 300;
+/// Multiplier applied to the inter-retry delay after each attempt (exponential backoff).
+/// Matches the reference client's `async-retry` default factor of 2.
+const BACKOFF_FACTOR: u32 = 2;
 
 /// HTTP method of a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,9 +269,12 @@ impl HttpClient {
                 return Err(error);
             }
 
-            // Sleep with randomized exponential backoff before the next attempt.
+            // Sleep with randomized exponential backoff before the next attempt. The backoff
+            // doubles each retry (matching the reference client, which uses `async-retry` with
+            // a factor of 2) and is capped at the overall request timeout so a single backoff
+            // can never exceed the budget the whole request is allowed.
             sleep(randomized_delay(delay)).await;
-            delay = (delay * 2).min(self.retry.timeout);
+            delay = (delay * BACKOFF_FACTOR).min(self.retry.timeout);
         }
 
         // Unreachable: the loop always returns on its final iteration, but the compiler

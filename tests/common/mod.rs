@@ -62,6 +62,58 @@ macro_rules! require_client {
     }};
 }
 
+/// A panic-safe cleanup guard.
+///
+/// Holds a deferred cleanup action that runs when the guard is dropped — including when a
+/// test panics partway through (a failed `assert!`/`expect`), which would otherwise leak the
+/// created resource on the shared test account. The action is run to completion on a fresh
+/// current-thread Tokio runtime, so it works inside `#[tokio::test]` bodies.
+///
+/// Usage:
+/// ```ignore
+/// let store = client.key_value_stores().get_or_create(Some(&name)).await.unwrap();
+/// let client2 = client.clone();
+/// let id = store.id.clone();
+/// let _guard = Cleanup::new(move || async move {
+///     let _ = client2.key_value_store(&id).delete().await;
+/// });
+/// // ... test body; even if it panics, the store is deleted.
+/// ```
+pub struct Cleanup {
+    action: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Cleanup {
+    /// Creates a guard from an async cleanup closure (a `FnOnce` returning a future).
+    pub fn new<F, Fut>(action: F) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + 'static,
+    {
+        Cleanup {
+            action: Some(Box::new(move || {
+                // Run the async cleanup to completion on a dedicated current-thread runtime.
+                // A new runtime avoids interfering with the test's own runtime during unwind.
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("build cleanup runtime");
+                rt.block_on(action());
+            })),
+        }
+    }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if let Some(action) = self.action.take() {
+            // Run on a separate OS thread: `block_on` cannot be called from within an active
+            // runtime worker thread, which is where Drop runs during a `#[tokio::test]`.
+            let _ = std::thread::spawn(action).join();
+        }
+    }
+}
+
 /// Generates a unique, collision-resistant resource name for test isolation.
 ///
 /// The name embeds the test-specific `prefix`, a random UUID fragment, and is kept short

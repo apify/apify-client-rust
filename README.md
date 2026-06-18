@@ -124,6 +124,12 @@ reference client does not expose them either, keeping the clients consistent:
 - Synchronous run endpoints (`run-sync`, `run-sync-get-dataset-items`).
 - Cryptographic tools (`/tools/encode-and-sign`, `/tools/decode-and-verify`).
 - `/browser-info`.
+- The `POST` create-with-explicit-key variants of Actor versions
+  (`POST /v2/actors/{actorId}/versions/{versionNumber}`) and version env-vars
+  (`POST /v2/actors/{actorId}/versions/{versionNumber}/env-vars/{envVarName}`). The reference
+  client creates versions/env-vars via `POST` to the collection and upserts via `PUT` on the
+  keyed path (both supported here as `versions().create(...)` / `version(n).update(...)` and
+  the env-var equivalents), so the redundant keyed-`POST` create is intentionally omitted.
 
 If you need these, call them directly through a custom `HttpBackend` or open an issue.
 

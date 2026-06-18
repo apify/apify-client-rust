@@ -6,12 +6,27 @@ use crate::clients::base::{
     delete_resource, delete_with_body, get_resource, get_resource_required, post_action,
     post_with_body, update_resource, ResourceContext,
 };
-use crate::common::QueryParams;
+use crate::common::{encode_path_segment, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
 use crate::models::{
     RequestQueue, RequestQueueHead, RequestQueueOperationInfo, RequestQueueRequest,
 };
+
+/// Options for [`RequestQueueClient::list_requests`].
+///
+/// Covers the spec query parameters of `GET /v2/request-queues/{queueId}/requests`.
+#[derive(Debug, Default, Clone)]
+pub struct ListRequestsOptions {
+    /// Maximum number of requests to return.
+    pub limit: Option<i64>,
+    /// Start listing after this request ID (exclusive).
+    pub exclusive_start_id: Option<String>,
+    /// Opaque pagination cursor returned by a previous call.
+    pub cursor: Option<String>,
+    /// Server-side filter expression for the returned requests.
+    pub filter: Option<String>,
+}
 
 /// Client for a specific request queue.
 #[derive(Debug, Clone)]
@@ -93,7 +108,7 @@ impl RequestQueueClient {
     pub async fn get_request(&self, id: &str) -> ApifyClientResult<Option<RequestQueueRequest>> {
         get_resource(
             &self.ctx,
-            Some(&format!("requests/{id}")),
+            Some(&format!("requests/{}", encode_path_segment(id))),
             &self.base_params(),
         )
         .await
@@ -112,7 +127,11 @@ impl RequestQueueClient {
         })?;
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("requests/{id}"))));
+        let url = params.apply_to_url(
+            &self
+                .ctx
+                .url(Some(&format!("requests/{}", encode_path_segment(&id)))),
+        );
         let body = serde_json::to_vec(request)?;
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -133,7 +152,11 @@ impl RequestQueueClient {
     /// Deletes a request by ID.
     pub async fn delete_request(&self, id: &str) -> ApifyClientResult<()> {
         let params = self.base_params();
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("requests/{id}"))));
+        let url = params.apply_to_url(
+            &self
+                .ctx
+                .url(Some(&format!("requests/{}", encode_path_segment(id)))),
+        );
         self.ctx
             .http
             .call(HttpRequest {
@@ -195,17 +218,18 @@ impl RequestQueueClient {
 
     /// Lists requests in the queue.
     ///
-    /// Supports cursor-based pagination via `limit` and `exclusive_start_id`.
+    /// Supports pagination via `limit`/`exclusive_start_id` and the spec's `cursor`/`filter`
+    /// parameters (see [`ListRequestsOptions`]).
     pub async fn list_requests(
         &self,
-        limit: Option<i64>,
-        exclusive_start_id: Option<&str>,
+        options: ListRequestsOptions,
     ) -> ApifyClientResult<serde_json::Value> {
         let mut params = self.base_params();
-        params.add_int("limit", limit).add_str(
-            "exclusiveStartId",
-            exclusive_start_id.map(|s| s.to_string()),
-        );
+        params
+            .add_int("limit", options.limit)
+            .add_str("exclusiveStartId", options.exclusive_start_id)
+            .add_str("cursor", options.cursor)
+            .add_str("filter", options.filter);
         get_resource_required(&self.ctx, Some("requests"), &params).await
     }
 
@@ -223,7 +247,11 @@ impl RequestQueueClient {
         params
             .add_int("lockSecs", Some(lock_secs))
             .add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("requests/{id}/lock"))));
+        let url = params.apply_to_url(
+            &self
+                .ctx
+                .url(Some(&format!("requests/{}/lock", encode_path_segment(id)))),
+        );
         let response = self
             .ctx
             .http
@@ -244,7 +272,11 @@ impl RequestQueueClient {
     pub async fn delete_request_lock(&self, id: &str, forefront: bool) -> ApifyClientResult<()> {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("requests/{id}/lock"))));
+        let url = params.apply_to_url(
+            &self
+                .ctx
+                .url(Some(&format!("requests/{}/lock", encode_path_segment(id)))),
+        );
         self.ctx
             .http
             .call(HttpRequest {
@@ -310,7 +342,11 @@ impl RequestQueueRequestsIterator {
 
         let page = self
             .client
-            .list_requests(self.page_limit, self.next_start_id.as_deref())
+            .list_requests(ListRequestsOptions {
+                limit: self.page_limit,
+                exclusive_start_id: self.next_start_id.clone(),
+                ..Default::default()
+            })
             .await?;
 
         // Parse the items and the next cursor from the (untyped) page.

@@ -51,6 +51,13 @@ async fn build_actor_flow() {
         .create(&definition)
         .await
         .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
     let actor_client = client.actor(&actor.id);
 
     // Start a build and wait for it to finish.

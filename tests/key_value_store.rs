@@ -16,6 +16,82 @@ async fn list_key_value_stores() {
     assert!(page.total >= 0);
 }
 
+/// Simple GET: fetch a single key-value store by ID.
+#[tokio::test]
+async fn get_key_value_store() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-get");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let fetched = client
+        .key_value_store(&store.id)
+        .get()
+        .await
+        .expect("get store by id")
+        .expect("store should exist");
+    assert_eq!(fetched.id, store.id);
+}
+
+/// Record keys containing characters that are valid for the API (`!`, `'`, `(`, `)`) but
+/// reserved in a URL path must round-trip correctly, proving the path segment is
+/// percent-encoded rather than interpolated raw.
+///
+/// The Apify API restricts record keys to `a-zA-Z0-9!-_.'()`; several of those (`!`, `'`,
+/// `(`, `)`) are not RFC 3986 unreserved characters, so they must be percent-encoded in the
+/// URL path. A raw `format!(".../{key}")` would send them unescaped.
+#[tokio::test]
+async fn record_key_with_special_chars_round_trips() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-key");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    // Valid API key with URL-reserved characters that must be percent-encoded in the path.
+    let key = "my!key'(v1).json";
+    store_client
+        .set_record_json(key, &json!({ "ok": true }))
+        .await
+        .expect("set record with special-char key");
+
+    assert!(
+        store_client.record_exists(key).await.expect("exists"),
+        "record with special-char key should exist (key must be percent-encoded)"
+    );
+    let record = store_client
+        .get_record(key)
+        .await
+        .expect("get record")
+        .expect("record should exist");
+    let value: serde_json::Value = record.json().expect("parse json");
+    assert_eq!(value["ok"], true);
+
+    store_client
+        .delete_record(key)
+        .await
+        .expect("delete record with special-char key");
+    assert!(!store_client.record_exists(key).await.expect("exists after"));
+}
+
 /// Complex flow: create -> get -> set record -> read record -> list keys -> update -> delete.
 #[tokio::test]
 async fn key_value_store_crud_flow() {
@@ -28,6 +104,12 @@ async fn key_value_store_crud_flow() {
         .await
         .expect("create store");
     assert_eq!(store.name.as_deref(), Some(name.as_str()));
+
+    let cleanup_client = client.clone();
+    let cleanup_id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&cleanup_id).delete().await;
+    });
 
     let store_client = client.key_value_store(&store.id);
 
@@ -51,6 +133,21 @@ async fn key_value_store_crud_flow() {
         .expect("record should exist");
     let value: serde_json::Value = record.json().expect("parse record json");
     assert_eq!(value["hello"], "world");
+
+    // Read again via the explicit-options API (attachment override exercised).
+    let record2 = store_client
+        .get_record_with_options(
+            "OUTPUT",
+            apify_client::GetRecordOptions {
+                attachment: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("get record with options")
+        .expect("record should exist");
+    let value2: serde_json::Value = record2.json().expect("parse record json");
+    assert_eq!(value2["hello"], "world");
 
     // List keys.
     let keys = store_client
@@ -99,6 +196,13 @@ async fn record_public_url_is_fetchable() {
         .get_or_create(Some(&name))
         .await
         .expect("create store");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&cleanup_id).delete().await;
+    });
+
     let store_client = client.key_value_store(&store.id);
     store_client
         .set_record_json("OUTPUT", &json!({ "signed": true }))
