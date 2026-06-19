@@ -2,8 +2,25 @@
 
 ## Datasets — `client.datasets()` / `client.dataset(id)`
 
-`DatasetCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
+`DatasetCollectionClient`: `list(options: StorageListOptions)`,
+`get_or_create(name: Option<&str>)`.
 `StorageListOptions`: `offset`, `limit`, `desc`, `unnamed`, `ownership`.
+
+`get_or_create` takes `Option<&str>`: pass `Some("my-name")` to get-or-create a **named**
+storage (reused across runs), or `None` for an unnamed one. The same signature applies to the
+key-value-store and request-queue collections.
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+// Named: returns the existing dataset if one with this name exists, else creates it.
+let dataset = client.datasets().get_or_create(Some("my-results")).await?;
+// Unnamed:
+let scratch = client.datasets().get_or_create(None).await?;
+# let _ = (dataset, scratch);
+# Ok(())
+# }
+```
 
 `DatasetClient`:
 
@@ -25,7 +42,7 @@
 
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
-`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
+`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
 
 `KeyValueStoreClient`:
 
@@ -51,7 +68,7 @@
 
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
 
-`RequestQueueCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name)`.
+`RequestQueueCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
 
 `RequestQueueClient` (chainable `with_client_key(key)` for lock coordination):
 

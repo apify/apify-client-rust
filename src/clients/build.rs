@@ -38,6 +38,12 @@ impl BuildClient {
     }
 
     /// Waits (by client-side polling) for the build to reach a terminal state.
+    ///
+    /// `wait_secs` controls the wait budget:
+    /// - `None` polls indefinitely until the build reaches a terminal state.
+    /// - `Some(n)` bounds the wait to roughly `n` seconds; if the build has not finished by
+    ///   then, the **last fetched (still non-terminal) build is returned** rather than an
+    ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
     pub async fn wait_for_finish(&self, wait_secs: Option<i64>) -> ApifyClientResult<Build> {
         wait_for_finish(&self.ctx, wait_secs, |b: &Build| b.is_terminal()).await
     }

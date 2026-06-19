@@ -144,8 +144,11 @@ impl ActorClient {
 
     /// Starts the Actor and waits (client-side polling) for it to finish.
     ///
-    /// `wait_secs` bounds the wait; `None` waits indefinitely. Returns the finished run
-    /// (or the still-running run if the wait budget was exhausted).
+    /// `wait_secs` controls the wait budget:
+    /// - `None` polls indefinitely until the run reaches a terminal state.
+    /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
+    ///   then, the **last fetched (still non-terminal) run is returned** rather than an
+    ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,

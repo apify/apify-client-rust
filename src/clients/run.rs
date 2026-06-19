@@ -208,7 +208,11 @@ impl RunClient {
 
     /// Waits (by client-side polling) for the run to reach a terminal state.
     ///
-    /// `wait_secs` bounds the wait; `None` waits indefinitely.
+    /// `wait_secs` controls the wait budget:
+    /// - `None` polls indefinitely until the run reaches a terminal state.
+    /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
+    ///   then, the **last fetched (still non-terminal) run is returned** rather than an
+    ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
     pub async fn wait_for_finish(&self, wait_secs: Option<i64>) -> ApifyClientResult<ActorRun> {
         wait_for_finish(&self.ctx, wait_secs, |r: &ActorRun| r.is_terminal()).await
     }

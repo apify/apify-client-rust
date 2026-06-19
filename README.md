@@ -140,7 +140,13 @@ If you need these, call them directly through a custom `HttpBackend` or open an 
 ## Error handling
 
 All fallible methods return `Result<T, ApifyClientError>`. API errors expose the parsed
-`type`, `message`, `status_code` and request details:
+`type`, `message`, `status_code` and request details.
+
+An Actor (or task/store) id may be a bare id, a `username/name` reference, or the equivalent
+`username~name` form (the client encodes the first `/` as `~` on the wire, so the two are
+interchangeable). The example below uses `"nonexistent~actor"` — a deliberately non-existent
+reference — to show how a missing resource surfaces as `Ok(None)` rather than an error, while
+real calls elsewhere in this README use a live actor such as `"apify/hello-world"`:
 
 ```rust,no_run
 # use apify_client::ApifyClient;

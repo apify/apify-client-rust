@@ -7,7 +7,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
-| `list(options)` | `ListOptions { offset, limit, desc }` | `PaginationList<Actor>` | Lists your Actors. |
+| `list(options)` | `ActorListOptions { offset, limit, desc, my, sort_by }` | `PaginationList<Actor>` | Lists your Actors. |
 | `create(actor)` | `&impl Serialize` | `Actor` | Creates an Actor from a definition. |
 
 ## `ActorClient`
@@ -34,6 +34,20 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 `max_total_charge_usd`, `content_type` — all optional. Used by both `start` and `call`
 (for `call`, `wait_for_finish` is server-side; the `wait_secs` argument controls
 client-side polling).
+
+The `wait_secs` argument of `call` (and of `wait_for_finish` on runs/builds) controls the
+client-side polling budget:
+
+- `None` polls indefinitely until the run reaches a terminal state.
+- `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by then, the
+  **last fetched (still non-terminal) run is returned** rather than an error — inspect
+  `run.status` / `run.is_terminal()` on the result.
+
+> Note: `list` here takes `ActorListOptions` (fields `offset, limit, desc, my, sort_by`),
+> which is distinct from the generic `ListOptions { offset, limit, desc }` used by most other
+> collection `list` methods (builds, tasks, schedules, webhooks). The dataset/key-value-store/
+> request-queue collections take `StorageListOptions`, runs take `ListOptions` + `RunListOptions`,
+> and the Store takes `StoreListOptions`.
 
 ### `ActorBuildOptions`
 

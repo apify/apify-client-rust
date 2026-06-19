@@ -2,8 +2,7 @@
 //!
 //! Run with: `APIFY_TOKEN=... cargo run --example iterate_store`
 
-use apify_client::clients::store_collection::StoreListOptions;
-use apify_client::ApifyClient;
+use apify_client::{ApifyClient, StoreListOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

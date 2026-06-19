@@ -43,6 +43,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Imports
+
+All public types you need day-to-day — the client, the builder, and every option struct
+(`ActorListOptions`, `ListOptions`, `StorageListOptions`, `StoreListOptions`,
+`RunListOptions`, `ActorStartOptions`, `DatasetListItemsOptions`, `DownloadItemsFormat`,
+`GetRecordOptions`, …) — are re-exported at the crate root, so you can import them directly
+from `apify_client`:
+
+```rust,no_run
+use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};
+```
+
+You do **not** need the longer `apify_client::clients::<module>::<Type>` paths shown by
+`cargo doc`'s module tree — the short crate-root path is the supported way to import them.
+
 ## `ApifyClient` and the builder
 
 `ApifyClient` is the entry point. Construct it with `ApifyClient::new(token)` for the common
