@@ -67,7 +67,34 @@ pub use clients::run::RunResurrectOptions;
 pub use clients::run_collection::RunListOptions;
 pub use clients::store_collection::StoreListOptions;
 
-// Compile-test the code snippets in the README so the documentation stays valid.
+// Compile-test the code snippets in the README and the external `docs/` pages so every
+// in-documentation code snippet stays valid and runnable. Pulling each Markdown file in as
+// a doctest source means `cargo test --doc` (the `Test examples` CI step) compiles every
+// `rust` fenced block; `no_run` blocks are compiled but not executed, runnable blocks run.
 #[doc = include_str!("../README.md")]
 #[cfg(doctest)]
 struct ReadmeDoctests;
+
+#[doc = include_str!("../docs/README.md")]
+#[cfg(doctest)]
+struct DocsReadmeDoctests;
+
+#[doc = include_str!("../docs/actors.md")]
+#[cfg(doctest)]
+struct DocsActorsDoctests;
+
+#[doc = include_str!("../docs/misc.md")]
+#[cfg(doctest)]
+struct DocsMiscDoctests;
+
+#[doc = include_str!("../docs/storages.md")]
+#[cfg(doctest)]
+struct DocsStoragesDoctests;
+
+#[doc = include_str!("../docs/runs.md")]
+#[cfg(doctest)]
+struct DocsRunsDoctests;
+
+#[doc = include_str!("../docs/builds.md")]
+#[cfg(doctest)]
+struct DocsBuildsDoctests;

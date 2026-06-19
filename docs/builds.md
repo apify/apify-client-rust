@@ -18,3 +18,6 @@ collections are available via `actor.builds()`.
 | `delete()` | — | `()` | Deletes the build. |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `Build` | Polls until the build is terminal. |
 | `log()` | — | `LogClient` | Access the build's log. |
+
+The returned `Build` model's fields (`id`, `status`, `build_number`, …) are documented in
+[actors.md → `Build` fields](actors.md#build-fields).

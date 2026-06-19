@@ -9,7 +9,8 @@ It provides a resource-oriented, async interface that mirrors the official
 - Transparent authentication, retries with exponential backoff, and timeouts.
 - Resource clients for Actors, runs, builds, tasks, datasets, key-value stores, request
   queues, schedules, webhooks, the Apify Store, users and logs.
-- Convenience helpers: run/wait, log streaming (redirection), lazy Store iteration.
+- Convenience helpers: run/wait, log streaming (redirection; needs the `futures-util` crate —
+  see [Installation](#installation)), lazy Store iteration.
 - A replaceable HTTP transport for testing or custom runtimes.
 
 ## Installation
@@ -18,7 +19,15 @@ It provides a resource-oriented, async interface that mirrors the official
 [dependencies]
 apify-client = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
+
+The Quick start below reads dynamically-typed records with `serde_json::Value`, so a fresh
+project needs `serde_json`. Two more dependencies are needed only for specific features:
+
+- `futures-util = "0.3"` — to consume `LogClient::stream()` (log streaming/redirection); it
+  provides the `StreamExt` trait used by the [`log_redirection`](examples/log_redirection.rs)
+  example. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
 
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 

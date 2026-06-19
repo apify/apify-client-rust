@@ -1,6 +1,6 @@
 [package]
 name = "apify-client"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Apify Technologies <support@apify.com>"]
 description = "The official Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"

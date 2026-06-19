@@ -4,6 +4,34 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-06-19
+
+Compliance fix for the updated client/test requirements (apify-client-orchestration PR #4).
+No changes to the public interface; CI and documentation-testing only.
+
+### Changed
+- CI: added a standalone `Test examples` workflow step that verifies the documentation
+  examples actually work — it runs the `examples/` programs end-to-end against the live API
+  (the `example_*` smoke tests in `tests/examples.rs`, each invoking `cargo run --example`) and
+  runs the in-documentation code snippets as doctests (`cargo test --doc`). The example smoke
+  tests were previously executed as part of the `Run integration tests` step and the doctests in
+  a separate `Run documentation example tests` step; they are now consolidated under the
+  requirement-named `Test examples` step. `Run integration tests` now skips the `example_*`
+  tests (via `--skip example_`) so the two concerns stay separate.
+- Documentation testing: the external `docs/` pages (`docs/README.md`, `docs/actors.md`,
+  `docs/misc.md`, `docs/storages.md`, `docs/runs.md`, `docs/builds.md`) are now compiled as
+  doctests via `#[doc = include_str!]` in `src/lib.rs`, so every in-documentation `rust` code
+  snippet is verified valid and runnable by `cargo test --doc`. Previously only the root
+  `README.md` snippets were doctest-checked.
+- Documentation: added response-model field tables for the types the README Quick start and the
+  examples read but which were previously undocumented — `ActorRun` (incl. `id`, `status`,
+  `default_dataset_id`/`default_key_value_store_id`/`default_request_queue_id`) in
+  `docs/runs.md`; `Actor` (`id`, …) and `Build` (`id`, `status`, …) in `docs/actors.md` (with a
+  cross-reference from `docs/builds.md`); the shared storage-metadata fields of `Dataset` /
+  `KeyValueStore` / `RequestQueue` (incl. `id`) in `docs/storages.md`; and `User` (`id`,
+  `username`) in `docs/misc.md`. Each new section carries a runnable `no_run` doctest exercising
+  the documented fields.
+
 ## [0.2.0] - 2026-06-19
 
 Updated to Apify OpenAPI specification `v2-2026-06-18T095846Z` (previously
