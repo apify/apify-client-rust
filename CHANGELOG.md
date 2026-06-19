@@ -4,6 +4,37 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-06-19
+
+Updated to Apify OpenAPI specification `v2-2026-06-18T095846Z` (previously
+`v2-2026-06-16T064758Z`). The spec delta is small and fully additive; no breaking changes to
+the public interface.
+
+### Added
+- `ActorClient::validate_input_for_build` — validates input against the input schema of a
+  specific Actor build, exposing the spec's optional `build` query parameter on
+  `POST /v2/actors/{actorId}/validate-input`. The existing `validate_input` is unchanged and now
+  delegates to it with `None` (default build).
+- `UserClient::monthly_usage_for_date` — fetches monthly usage for the month containing a given
+  `YYYY-MM-DD` date, exposing the spec's optional `date` query parameter on
+  `GET /v2/users/me/usage/monthly`. The existing `monthly_usage` is unchanged and now delegates
+  to it with `None` (current month).
+- Integration tests: `get_monthly_usage_for_date` (user) and a `validate_input_for_build` call
+  added to `build_actor_flow` (where a real `latest` build exists to validate against).
+
+### Changed
+- `API_SPEC_VERSION` bumped to `v2-2026-06-18T095846Z`.
+
+### Fixed
+- `ActorClient::validate_input` (and the new `validate_input_for_build`) no longer fail to parse
+  the response. The `validate-input` endpoint returns a bare `{ "valid": ... }` object rather than
+  the usual `{ "data": ... }` envelope, so it now skips `data`-envelope unwrapping (new internal
+  `post_action_raw` helper). Previously any call returned a deserialization error
+  (`missing field 'data'`). Exercised by the `validate_input_for_build` assertion in the
+  `build_actor_flow` integration test.
+- `UserClient::monthly_usage`'s `me`-only guard error now names `monthly_usage` instead of the
+  delegated `monthly_usage_for_date`, so a non-`me` caller sees the method they actually called.
+
 ## [0.1.0] - 2026-06-18
 
 Initial release of the official Rust client for the Apify API.

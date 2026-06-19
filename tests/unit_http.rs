@@ -37,6 +37,10 @@ impl MockBackend {
     fn call_count(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
+
+    fn last_url(&self) -> Option<String> {
+        self.last_url.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -190,4 +194,64 @@ async fn zero_retries_single_attempt() {
     let client = client_with(backend.clone(), 0);
     let _ = client.me().get().await.expect_err("should fail");
     assert_eq!(backend.call_count(), 1);
+}
+
+/// Regression guard for the validate-input envelope-skip fix: the `validate-input` endpoint
+/// returns a **bare** `{"valid":...}` object with no `{"data":...}` envelope, so it must NOT be
+/// routed through `parse_data_envelope` (which would fail with `missing field 'data'`). This is
+/// token-free, so a future refactor that re-introduces envelope unwrapping is caught even in a
+/// run without `APIFY_TOKEN`.
+#[tokio::test]
+async fn validate_input_does_not_unwrap_data_envelope() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"valid":true}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 3);
+    let result = client
+        .actor("me~some-actor")
+        .validate_input(&serde_json::json!({}))
+        .await
+        .expect("validate_input should parse a bare {valid} body");
+    assert_eq!(
+        result.get("valid").and_then(|v| v.as_bool()),
+        Some(true),
+        "the bare body must be returned verbatim, not unwrapped from a `data` envelope"
+    );
+    assert_eq!(backend.call_count(), 1);
+}
+
+/// `validate_input_for_build` sends the spec's optional `build` query parameter, and the
+/// no-arg `validate_input` omits it.
+#[tokio::test]
+async fn validate_input_sends_build_query_param() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"valid":true}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    // With a build tag -> `build=latest` present in the URL.
+    client
+        .actor("me~some-actor")
+        .validate_input_for_build(&serde_json::json!({}), Some("latest"))
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/validate-input") && url.contains("build=latest"),
+        "expected build=latest in {url}"
+    );
+
+    // Without a build -> no `build` param.
+    client
+        .actor("me~some-actor")
+        .validate_input(&serde_json::json!({}))
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("build="),
+        "default validate_input must not send a build param, got {url}"
+    );
 }

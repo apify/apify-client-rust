@@ -21,7 +21,8 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
-| `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the schema. |
+| `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
+| `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `serde_json::Value` | Validates input against a specific build's schema (`build` tag/number; `None` = default). |
 | `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run (optionally filtered). |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |
 | `runs()` | — | `RunCollectionClient` | The Actor's run collection. |
@@ -52,6 +53,40 @@ client-side polling budget:
 ### `ActorBuildOptions`
 
 `beta_packages`, `tag`, `use_cache`, `wait_for_finish` — all optional.
+
+### Input validation
+
+`validate_input` / `validate_input_for_build` check an input value against the Actor's input
+schema and return the API's JSON response as `serde_json::Value`. Unlike most endpoints this one
+is **not** wrapped in a `{ "data": ... }` envelope — the returned `Value` is the top-level body
+`{ "valid": <bool> }`, where `valid` reports whether the input satisfies the schema. A failed
+*request* (e.g. unknown `build` tag, missing auth, malformed body) is not reported via `valid`;
+it surfaces as an `Err(ApifyClientError)` from the call instead.
+
+```rust,no_run
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
+let actor = client.actor("apify~hello-world");
+
+// Validate against the default build's input schema.
+let result = actor.validate_input(&json!({ "message": "hi" })).await?;
+let is_valid = result.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+println!("input valid: {is_valid}");
+
+// Validate against a specific build (by tag or version number). `None` == default build.
+let result = actor
+    .validate_input_for_build(&json!({ "message": "hi" }), Some("latest"))
+    .await?;
+println!("validated against latest build: {result}");
+# Ok(())
+# }
+```
+
+The `build` argument accepts a build **tag** (e.g. `"latest"`, `"beta"`) or a build **number**
+(e.g. `"1.2.34"`); the referenced build must already exist for the API to resolve its schema.
 
 ## Actor versions and environment variables
 

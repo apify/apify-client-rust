@@ -16,14 +16,14 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.1"
+apify-client = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.1", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.2", default-features = false, features = ["rustls"] }
 ```
 
 ## Quick start
@@ -107,7 +107,7 @@ run with `cargo run --example <name>`:
 
 - `run_store_actor` — run a Store Actor, wait, read its default dataset.
 - `storages` — create each storage type (dataset, key-value store, request queue), write and read back.
-- `get_account` — fetch the current account's details.
+- `get_account` — fetch the current account's details and monthly usage (current cycle and for a specific date via `monthly_usage_for_date`).
 - `create_build_run_actor` — create an Actor, build it, run it, fetch the run log.
 - `run_and_last_run_storages` — run an Actor, then access the last run and its storages.
 - `iterate_store` — lazily iterate Actors in the Apify Store.
