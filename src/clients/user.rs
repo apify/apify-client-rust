@@ -34,10 +34,36 @@ impl UserClient {
         get_resource(&self.ctx, None, &QueryParams::new()).await
     }
 
-    /// Returns the current user's monthly usage. Only valid for the `me` client.
+    /// Returns the current user's monthly usage for the current month. Only valid for the `me`
+    /// client. To fetch usage for a specific month, use [`UserClient::monthly_usage_for_date`].
     pub async fn monthly_usage(&self) -> ApifyClientResult<Value> {
-        self.require_me("monthly_usage")?;
-        get_resource_required(&self.ctx, Some("usage/monthly"), &QueryParams::new()).await
+        self.monthly_usage_for_date_named(None, "monthly_usage")
+            .await
+    }
+
+    /// Returns the current user's monthly usage, optionally for the month containing `date`.
+    ///
+    /// `date` is an optional `YYYY-MM-DD` string selecting the month to report (the spec's
+    /// optional `date` query parameter on `GET /v2/users/me/usage/monthly`); passing `None`
+    /// returns the current month, which is equivalent to [`UserClient::monthly_usage`]. Only
+    /// valid for the `me` client.
+    pub async fn monthly_usage_for_date(&self, date: Option<&str>) -> ApifyClientResult<Value> {
+        self.monthly_usage_for_date_named(date, "monthly_usage_for_date")
+            .await
+    }
+
+    /// Shared implementation for [`UserClient::monthly_usage`] and
+    /// [`UserClient::monthly_usage_for_date`]. `method` is the caller's own public method name,
+    /// so the `me`-only guard error names the method the caller actually invoked.
+    async fn monthly_usage_for_date_named(
+        &self,
+        date: Option<&str>,
+        method: &str,
+    ) -> ApifyClientResult<Value> {
+        self.require_me(method)?;
+        let mut params = QueryParams::new();
+        params.add_str("date", date);
+        get_resource_required(&self.ctx, Some("usage/monthly"), &params).await
     }
 
     /// Returns the current user's account and usage limits. Only valid for the `me` client.

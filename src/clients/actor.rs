@@ -207,14 +207,35 @@ impl ActorClient {
     }
 
     /// Validates the given input against the Actor's input schema.
+    ///
+    /// Uses the Actor's default build for the input schema. To validate against a specific
+    /// build, use [`ActorClient::validate_input_for_build`].
     pub async fn validate_input<T: Serialize>(&self, input: &T) -> ApifyClientResult<Value> {
+        self.validate_input_for_build(input, None).await
+    }
+
+    /// Validates the given input against the input schema of a specific Actor build.
+    ///
+    /// `build` is the optional tag or number of the Actor build whose input schema is used for
+    /// validation (e.g. `"latest"` or `"1.2.34"`); passing `None` uses the default build, which
+    /// is equivalent to [`ActorClient::validate_input`]. This maps to the spec's optional `build`
+    /// query parameter on `POST /v2/actors/{actorId}/validate-input`.
+    pub async fn validate_input_for_build<T: Serialize>(
+        &self,
+        input: &T,
+        build: Option<&str>,
+    ) -> ApifyClientResult<Value> {
         let body = serde_json::to_vec(input)?;
-        crate::clients::base::post_with_body(
+        let mut params = QueryParams::new();
+        params.add_str("build", build);
+        // `validate-input` returns a bare `{ "valid": ... }` object, *not* the usual
+        // `{ "data": ... }` envelope, so it must skip `parse_data_envelope`.
+        crate::clients::base::post_action_raw(
             &self.ctx,
             Some("validate-input"),
-            &QueryParams::new(),
+            &params,
             Some(body),
-            "application/json",
+            Some("application/json"),
         )
         .await
     }

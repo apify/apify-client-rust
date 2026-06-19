@@ -259,8 +259,9 @@ pub(crate) async fn get_or_create_named<T: DeserializeOwned>(
     parse_data_envelope(&response.body)
 }
 
-/// A `POST` that returns the raw (non-enveloped or enveloped) response, used by
-/// endpoints that need custom handling.
+/// A `POST` that unwraps the `data` envelope from the response. Used by the common
+/// `{ "data": ... }`-enveloped endpoints; see [`post_action_raw`] for endpoints that return a
+/// bare (un-enveloped) body.
 pub(crate) async fn post_action<T: DeserializeOwned>(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -268,13 +269,40 @@ pub(crate) async fn post_action<T: DeserializeOwned>(
     body: Option<Vec<u8>>,
     content_type: Option<&str>,
 ) -> ApifyClientResult<T> {
+    let response = post_send(ctx, sub_path, params, body, content_type).await?;
+    parse_data_envelope(&response.body)
+}
+
+/// Sends a `POST` and returns the raw response body, deserialized directly **without**
+/// unwrapping a `data` envelope. A few endpoints (e.g. `validate-input`) return a bare JSON
+/// object rather than the usual `{ "data": ... }` envelope, so they must not go through
+/// [`parse_data_envelope`].
+pub(crate) async fn post_action_raw<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+) -> ApifyClientResult<T> {
+    let response = post_send(ctx, sub_path, params, body, content_type).await?;
+    Ok(serde_json::from_slice(&response.body)?)
+}
+
+/// Shared `POST` sender used by [`post_action`] and [`post_action_raw`]. Builds the URL with
+/// merged query params, sets the optional `Content-Type`, and returns the raw response.
+async fn post_send(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+) -> ApifyClientResult<crate::http_client::HttpResponse> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let mut headers = std::collections::HashMap::new();
     if let Some(ct) = content_type {
         headers.insert("Content-Type".to_string(), ct.to_string());
     }
-    let response = ctx
-        .http
+    ctx.http
         .call(HttpRequest {
             method: HttpMethod::Post,
             url,
@@ -282,8 +310,7 @@ pub(crate) async fn post_action<T: DeserializeOwned>(
             body,
             timeout: DEFAULT_REQUEST_TIMEOUT,
         })
-        .await?;
-    parse_data_envelope(&response.body)
+        .await
 }
 
 /// A `GET` returning the raw response body bytes (no `data` envelope). Maps `404`/`HEAD`
