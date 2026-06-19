@@ -1,0 +1,76 @@
+name: Rust integration tests
+
+# Language-specific workflow: only runs for the Rust client. Triggers on PRs to master
+# that touch Rust client or test code, and can be dispatched manually from any branch.
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/rust-integration-tests.yml'
+  workflow_dispatch:
+
+# Avoid concurrent runs of the same ref racing on the shared test account.
+concurrency:
+  group: rust-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose
+
+      # Fail fast if the integration-test secret is missing or empty. Without this guard the
+      # integration tests silently "pass" (they early-return when APIFY_TOKEN is unset), so a
+      # green run would not prove the API logic actually executed.
+      - name: Require APIFY_TOKEN secret
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          if [ -z "${APIFY_TOKEN}" ]; then
+            echo "::error::APIFY_TOKEN secret is empty or missing; integration tests would not run against the API."
+            exit 1
+          fi
+
+      - name: Run integration tests
+        env:
+          # The integration-test token is stored as a repository secret.
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        # Limit parallelism to be gentle on the shared test account.
+        run: cargo test --verbose -- --test-threads=4
+
+      - name: Run documentation example tests
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        # Match the integration-test thread cap so doctests that hit the live API stay gentle
+        # on the shared account.
+        run: cargo test --doc -- --test-threads=4
