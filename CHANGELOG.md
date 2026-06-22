@@ -31,6 +31,8 @@ No changes to the public interface; packaging metadata and a release workflow on
 - Documentation: removed dangling reference-style Markdown link brackets around
   `apify_client::models` (`docs/README.md`) and `futures_util::StreamExt` (`docs/misc.md`) so
   they render as plain inline code rather than broken links on GitHub.
+- Documentation: added a "Releasing" subsection to the README "Versioning" section describing the
+  crates.io distribution mechanism and the publish workflow, for parity with the Go sibling.
 
 ## [0.2.1] - 2026-06-19
 
