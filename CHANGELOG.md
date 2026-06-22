@@ -4,6 +4,29 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-06-22
+
+Publishing compliance for the updated client requirements (apify-client-orchestration PR #9),
+which added: "Manual release workflow also creates a tagged GitHub release." No changes to the
+public interface; release-workflow behaviour only.
+
+### Changed
+- CI: the manually triggered `Publish Rust client to crates.io` workflow
+  (`.github/workflows/rust-publish.yml`) now also tags the released commit and creates a matching
+  GitHub release, in addition to publishing to crates.io. The release tag (`vX.Y.Z`) is derived
+  from the single source of truth (the `version` field in `Cargo.toml`, which is also what
+  `CLIENT_VERSION` exposes via `CARGO_PKG_VERSION`), validated to be bare semver, and checked
+  against existing local/remote tags so a release can never silently clobber a prior one. The
+  workflow now requires the `master` branch, requests `contents: write` permission, and creates
+  the GitHub release via `gh` using the default `GITHUB_TOKEN` repository secret. The release notes
+  are extracted from the matching `CHANGELOG.md` section (falling back to a one-liner if absent).
+  The tag and release are created before `cargo publish` so the immutable git tag/release stay
+  consistent with the crate version even if the (unrepeatable) publish step fails. The GitHub
+  release step is idempotent (updates an existing release rather than failing), and the README
+  documents the "delete the tag and re-run" recovery procedure for a post-tag/pre-publish failure.
+  The `dry_run` input now also skips tag and release creation. This mirrors the Go client's
+  `go-publish.yml`.
+
 ## [0.2.2] - 2026-06-22
 
 Publishing compliance for the updated client requirements (apify-client-orchestration PR #7).

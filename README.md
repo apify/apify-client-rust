@@ -118,10 +118,50 @@ println!("client {CLIENT_VERSION}, built against API spec {API_SPEC_VERSION}");
 The crate is distributed on [crates.io](https://crates.io/crates/apify-client). The
 [`Publish Rust client to crates.io`](.github/workflows/rust-publish.yml) workflow is the release
 mechanism: a maintainer triggers it manually (`workflow_dispatch`), it runs the same
-fmt/clippy/build quality gate as CI, verifies packaging with `cargo publish --dry-run`, then runs
-`cargo publish`. The registry token is read only from the `CARGO_REGISTRY_TOKEN` repository secret,
-and a `dry_run` input allows a packaging-only run with no actual release. Bump `version` in
-`Cargo.toml` before releasing.
+fmt/clippy/build quality gate as CI, verifies packaging with `cargo publish --dry-run`, then tags
+the released commit (`vX.Y.Z`, derived from the `version` in `Cargo.toml`), creates a matching
+GitHub release whose notes are the corresponding `CHANGELOG.md` section (falling back to a generated
+one-liner if that section is missing), and finally runs `cargo publish`.
+
+The workflow **only runs from `master`** — it hard-fails on any other ref — and refuses to run if
+the resolved tag already exists, so a release can never clobber a prior one. It also fails early
+with a clear message if the `CARGO_REGISTRY_TOKEN` secret is missing. A `dry_run` input runs all
+checks but performs no publish, tag, or release.
+
+Prerequisites and steps to cut a release:
+
+1. Configure the `CARGO_REGISTRY_TOKEN` repository secret with a crates.io API token (one-time
+   setup). The tag and GitHub release use the default `GITHUB_TOKEN`, so no other secret is needed.
+2. Bump `version` in `Cargo.toml` and add a matching dated entry to `CHANGELOG.md` (the release
+   notes are extracted from that section), then merge to `master`.
+3. Trigger the workflow from `master`.
+
+The tag is pushed and the GitHub release created before `cargo publish`, because the crates.io
+publish is the only truly unrepeatable step — failing before it leaves the tag and release
+consistent with the crate version. The GitHub-release step is idempotent (on a re-run it updates an
+existing release rather than failing), so it never needs manual cleanup.
+
+**Recovering from a failed release.** If the run fails *after* the tag was pushed but *before*
+`cargo publish` succeeded (e.g. a transient registry error), the tag now exists, so a plain re-run
+is blocked by the "tag already exists" guard. The one thing that unblocks the re-run is **deleting
+the tag** — the existing GitHub release does not need deleting (the idempotent release step will
+update it on the next run). Delete the remote tag and re-trigger the workflow (replace `vX.Y.Z`
+with the actual release version, e.g. `v0.2.3`):
+
+```bash
+# Replace vX.Y.Z with the real version, e.g. v0.2.3.
+git push origin :refs/tags/vX.Y.Z   # delete the remote tag — this is what clears the guard
+```
+
+`git push origin :refs/tags/vX.Y.Z` deletes only the tag, which is all that is required. If you
+also want to remove the GitHub release (optional, cosmetic, and independent of the required tag
+deletion), use `gh release delete vX.Y.Z --yes` — without `--cleanup-tag` it removes only the
+release and leaves the tag handling to the command above. (Alternatively, `gh release delete
+vX.Y.Z --cleanup-tag --yes` is an all-in-one that deletes the release *and* the tag in a single
+step, replacing the `git push origin :refs/tags/...` command above rather than adding to it.)
+
+If `cargo publish` itself already succeeded, that version is permanent on crates.io; bump the
+`version` in `Cargo.toml` for the next release instead of re-running.
 
 ## Examples
 
