@@ -9,7 +9,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("APIFY_TOKEN").expect("set APIFY_TOKEN");
     let client = ApifyClient::new(token);
 
-    // Iterate the store, fetching pages on demand. Stop after the first 10 actors.
+    // Iterate the store, fetching pages of 5 on demand (`limit` is the per-page size, not a
+    // total cap). The loop below stops after the first 10 actors regardless of page size.
     let mut iter = client.store().iterate(StoreListOptions {
         limit: Some(5),
         ..Default::default()

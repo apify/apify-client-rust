@@ -88,6 +88,63 @@ println!("validated against latest build: {result}");
 The `build` argument accepts a build **tag** (e.g. `"latest"`, `"beta"`) or a build **number**
 (e.g. `"1.2.34"`); the referenced build must already exist for the API to resolve its schema.
 
+## `Actor` fields
+
+`Actor` (from `apify_client::models`) is returned by `get`, `create`, `update`, and the Actor
+`list`. The commonly-used fields — including the `actor.id` read in the
+[README error-handling example](../README.md#error-handling) and the `create_build_run_actor`
+example:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Unique Actor ID (always present); used to build a `client.actor(&actor.id)` client. |
+| `user_id` | `Option<String>` | ID of the user who owns the Actor. |
+| `name` | `Option<String>` | Technical name used in API paths. |
+| `username` | `Option<String>` | Username of the Actor's owner. |
+| `title` | `Option<String>` | Human-readable title shown in the UI. |
+| `description` | `Option<String>` | Description of what the Actor does. |
+| `is_public` | `Option<bool>` | Whether the Actor is published in Apify Store. |
+| `created_at` | `Option<DateTime<Utc>>` | When the Actor was created. |
+| `modified_at` | `Option<DateTime<Utc>>` | When the Actor was last modified. |
+| `extra` | `Extra` | Any other fields returned by the API. |
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+if let Some(actor) = client.actor("apify~hello-world").get().await? {
+    println!("actor {} ({:?})", actor.id, actor.title.or(actor.name));
+}
+# Ok(())
+# }
+```
+
+## `Build` fields
+
+`Build` (from `apify_client::models`) is returned by `build`, `default_build` resolution, `get`,
+`abort` and `wait_for_finish` (see also [builds](builds.md)). The fields the
+`create_build_run_actor` example reads (`build.id`, `build.status`):
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Unique build ID (always present); used to build a `client.build(&build.id)` client. |
+| `act_id` | `Option<String>` | ID of the Actor that was built. |
+| `status` | `Option<String>` | Current build status; the terminal values match the run statuses. |
+| `started_at` | `Option<DateTime<Utc>>` | When the build started. |
+| `finished_at` | `Option<DateTime<Utc>>` | When the build finished. |
+| `build_number` | `Option<String>` | Build number, e.g. `0.1.2`. |
+| `extra` | `Extra` | Any other fields returned by the API. |
+
+`Build::is_terminal()` reports whether `status` is a terminal value, mirroring `ActorRun`.
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient, build_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let build = client.build(build_id).wait_for_finish(Some(300)).await?;
+println!("build {} status {:?}", build.id, build.status);
+# Ok(())
+# }
+```
+
 ## Actor versions and environment variables
 
 `ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.

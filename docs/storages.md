@@ -1,5 +1,35 @@
 # Storages: datasets, key-value stores, request queues
 
+## Storage metadata models (`Dataset`, `KeyValueStore`, `RequestQueue`)
+
+`get` and `get_or_create` on each storage collection/client return a metadata model from
+`apify_client::models` (`Dataset`, `KeyValueStore`, `RequestQueue`). All three share a common
+core; the `.id` field is what the examples read to build a per-storage client
+(`client.dataset(&dataset.id)`, `client.key_value_store(&store.id)`,
+`client.request_queue(&queue.id)`):
+
+| Field | Type | On | Description |
+|---|---|---|---|
+| `id` | `String` | all three | Unique storage ID (always present); pass to `client.dataset(..)` / `client.key_value_store(..)` / `client.request_queue(..)`. |
+| `name` | `Option<String>` | all three | Technical name, if the storage is named. |
+| `user_id` | `Option<String>` | all three | ID of the owner. |
+| `created_at` | `Option<DateTime<Utc>>` | all three | When the storage was created. |
+| `modified_at` | `Option<DateTime<Utc>>` | all three | When the storage was last modified. |
+| `item_count` | `Option<i64>` | `Dataset` only | Total number of items in the dataset. |
+| `total_request_count` | `Option<i64>` | `RequestQueue` only | Total number of requests ever added. |
+| `extra` | `Extra` | all three | Any other fields returned by the API. |
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let dataset = client.datasets().get_or_create(None).await?;
+// Use the metadata `id` to obtain a client for the storage itself.
+let dataset_client = client.dataset(&dataset.id);
+# let _ = dataset_client;
+# Ok(())
+# }
+```
+
 ## Datasets — `client.datasets()` / `client.dataset(id)`
 
 `DatasetCollectionClient`: `list(options: StorageListOptions)`,
@@ -87,10 +117,72 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
 | `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
-| `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Lock head requests. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
 | `unlock_requests()` | — | `Value` | Release all this client's locks. |
+
+### `RequestQueueRequest` and request-queue return types
+
+`RequestQueueRequest` (from `apify_client::models`) is the value passed to `add_request` /
+`update_request` and returned by `get_request` / inside `RequestQueueHead`. Its fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `Option<String>` | Request ID assigned by the API; leave `None` when adding a new request. |
+| `url` | `String` | The URL to process (required). |
+| `unique_key` | `Option<String>` | Dedup key (defaults to `url` server-side when omitted). |
+| `method` | `Option<String>` | HTTP method (defaults to `GET`). |
+| `user_data` | `Option<serde_json::Value>` | Arbitrary user data attached to the request. |
+| `extra` | `Extra` | Any other fields returned by the API; use `Default::default()` when constructing. |
+
+Construct one and add it to a queue:
+
+```rust,no_run
+use apify_client::models::RequestQueueRequest;
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let queue = client.request_queues().get_or_create(None).await?;
+let queue_client = client.request_queue(&queue.id);
+
+let request = RequestQueueRequest {
+    id: None,
+    url: "https://example.com/".to_string(),
+    unique_key: Some("example".to_string()),
+    method: Some("GET".to_string()),
+    user_data: None,
+    extra: Default::default(),
+};
+let info = queue_client.add_request(&request, false).await?;
+println!("added request {}", info.request_id);
+
+let head = queue_client.list_head(Some(10)).await?;
+println!("{} request(s) at the head", head.items.len());
+# Ok(())
+# }
+```
+
+Relevant return-type fields:
+
+- `RequestQueueOperationInfo`: `request_id: String`, `was_already_present: bool`,
+  `was_already_handled: bool`.
+- `RequestQueueHead`: `limit: i64`, `had_multiple_clients: bool`,
+  `items: Vec<RequestQueueRequest>`, `extra: Extra` (any other fields returned by the API).
+- `KeyValueStoreKeysPage`: `limit: i64`, `is_truncated: bool`, `exclusive_start_key`,
+  `next_exclusive_start_key` (both `Option<String>`), `items: Vec<KeyValueStoreKey>`.
+
+## Common list container — `PaginationList<T>`
+
+Offset/limit-paginated list methods (`list_items`, the various collection `list` methods, …)
+return `PaginationList<T>`. Re-exported at the crate root (`apify_client::PaginationList`). Fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `total` | `i64` | Total items available across all pages. |
+| `offset` | `i64` | Items skipped at the start. |
+| `limit` | `i64` | Max items the API would return for this request. |
+| `count` | `i64` | Items actually returned in this page. |
+| `desc` | `bool` | Whether the items are in descending order. |
+| `items` | `Vec<T>` | The items of this page. |
 
 The storage clients are also reachable from a run via `run.dataset()`,
 `run.key_value_store()` and `run.request_queue()`.

@@ -65,12 +65,24 @@ jobs:
         env:
           # The integration-test token is stored as a repository secret.
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-        # Limit parallelism to be gentle on the shared test account.
-        run: cargo test --verbose -- --test-threads=4
+        # Limit parallelism to be gentle on the shared test account. The documentation example
+        # programs in `tests/examples.rs` (test names prefixed `example_`) are exercised by the
+        # standalone `Test examples` step below, so they are skipped here to keep the two
+        # concerns separate.
+        run: cargo test --lib --tests --verbose -- --skip example_ --test-threads=4
 
-      - name: Run documentation example tests
+      # Standalone CI step that verifies the documentation examples actually work. It runs the
+      # example programs from `examples/` end-to-end against the live API (via the `example_*`
+      # smoke tests in `tests/examples.rs`, each of which executes `cargo run --example <name>`)
+      # and runs the in-documentation code snippets as doctests (`cargo test --doc`, which
+      # compiles every fenced `rust` block in the README and the `docs/` pages and runs the
+      # runnable ones). Both are required by the documentation requirements: each documentation
+      # example has a CI test that actually runs the code.
+      - name: Test examples
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-        # Match the integration-test thread cap so doctests that hit the live API stay gentle
-        # on the shared account.
-        run: cargo test --doc -- --test-threads=4
+        # Match the integration-test thread cap so the example programs and any doctests that hit
+        # the live API stay gentle on the shared account.
+        run: |
+          cargo test --test examples --verbose -- --test-threads=4
+          cargo test --doc --verbose -- --test-threads=4

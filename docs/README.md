@@ -29,6 +29,11 @@ apify-client = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+Some snippets and examples need extra crates: add `serde_json = "1"` when you read
+dynamically-typed responses as `serde_json::Value` (as the README Quick start does), and
+`futures-util = "0.3"` to consume `LogClient::stream()` (log streaming — see
+[Store, users and logs](misc.md#logs--clientlogbuild_or_run_id)).
+
 Create a client and call a resource:
 
 ```rust,no_run
@@ -45,10 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Imports
 
-All public types you need day-to-day — the client, the builder, and every option struct
-(`ActorListOptions`, `ListOptions`, `StorageListOptions`, `StoreListOptions`,
-`RunListOptions`, `ActorStartOptions`, `DatasetListItemsOptions`, `DownloadItemsFormat`,
-`GetRecordOptions`, …) — are re-exported at the crate root, so you can import them directly
+The client, the builder, and every option/parameter struct (`ActorListOptions`, `ListOptions`,
+`StorageListOptions`, `StoreListOptions`, `RunListOptions`, `ActorStartOptions`,
+`DatasetListItemsOptions`, `DownloadItemsFormat`, `GetRecordOptions`, …), plus the common
+container `PaginationList`, are re-exported at the crate root, so you can import them directly
 from `apify_client`:
 
 ```rust,no_run
@@ -56,7 +61,17 @@ use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItem
 ```
 
 You do **not** need the longer `apify_client::clients::<module>::<Type>` paths shown by
-`cargo doc`'s module tree — the short crate-root path is the supported way to import them.
+`cargo doc`'s module tree for these option types — the short crate-root path is the supported
+way to import them.
+
+API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
+`RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
+`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the [`apify_client::models`]
+module and are imported from there:
+
+```rust,no_run
+use apify_client::models::RequestQueueRequest;
+```
 
 ## `ApifyClient` and the builder
 
@@ -111,7 +126,7 @@ Each example in [`../examples`](../examples) is runnable with
 |---|---|
 | `run_store_actor` | Run a Store Actor, wait, read its default dataset. |
 | `storages` | Create + write + read each storage type. |
-| `get_account` | Fetch the current account. |
+| `get_account` | Fetch the current account, plus its monthly usage (current cycle and for a specific date). |
 | `create_build_run_actor` | Create an Actor, build, run, fetch the run log. |
 | `run_and_last_run_storages` | Run an Actor, then read the last run's storages. |
 | `iterate_store` | Lazily iterate Store Actors. |
