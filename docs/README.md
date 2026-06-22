@@ -1,5 +1,9 @@
 # Apify Rust client — documentation
 
+> **Experimental — AI-generated and AI-maintained.** This client is experimental. It is
+> generated and maintained by AI, and is not (yet) an officially supported Apify product. Review
+> the code before relying on it in production and report issues on the repository.
+
 This directory documents the public API of the Apify Rust client. The same descriptions
 are available as rustdoc comments and can be browsed with `cargo doc --open`.
 
@@ -66,7 +70,7 @@ way to import them.
 
 API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
 `RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
-`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the [`apify_client::models`]
+`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the `apify_client::models`
 module and are imported from there:
 
 ```rust,no_run
@@ -116,6 +120,22 @@ Every fallible method returns `Result<T, ApifyClientError>`. The variants are:
 - `InvalidResponse(..)` / `InvalidArgument(..)` — unexpected response or bad argument.
 
 `get`/`delete` map a missing resource to `Ok(None)` / a no-op.
+
+To inspect the API-level details of an error without matching every variant, use
+`ApifyClientError::as_api_error`, which returns `Some(&ApiError)` for the `Api` variant and
+`None` for any other (transport, timeout, serde, …):
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run() {
+# let client = ApifyClient::new("t");
+if let Err(err) = client.actor("nonexistent~actor").get().await {
+    if let Some(api) = err.as_api_error() {
+        eprintln!("API error {}: {}", api.status_code, api.message);
+    }
+}
+# }
+```
 
 ## Examples
 

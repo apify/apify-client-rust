@@ -1,6 +1,10 @@
 # Apify API client for Rust
 
-The official, idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
+> **Experimental — AI-generated and AI-maintained.** This client is experimental. It is
+> generated and maintained by AI, and is not (yet) an officially supported Apify product. Review
+> the code before relying on it in production and report issues on the repository.
+
+An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 It provides a resource-oriented, async interface that mirrors the official
 [JavaScript](https://github.com/apify/apify-client-js) and
 [Python](https://github.com/apify/apify-client-python) clients.
