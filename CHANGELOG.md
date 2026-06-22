@@ -4,6 +4,36 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-06-22
+
+Publishing compliance for the updated client requirements (apify-client-orchestration PR #7).
+No changes to the public interface; packaging metadata and a release workflow only.
+
+### Added
+- CI: a manually triggered (`workflow_dispatch`) `Publish Rust client to crates.io` workflow
+  (`.github/workflows/rust-publish.yml`) that publishes the crate to crates.io — the
+  language-specific distribution standard for Rust. It runs the format/clippy/build quality gate,
+  performs a `cargo publish --dry-run` packaging check, then `cargo publish`. The registry token
+  is read exclusively from the `CARGO_REGISTRY_TOKEN` repository secret, and the run fails early
+  with a clear message if that secret is missing. A `dry_run` input allows a packaging-only run
+  with no actual release.
+
+### Changed
+- Packaging: added the strongly recommended `homepage` field (`https://apify.com`) to
+  `Cargo.toml` so the crates.io listing carries complete publishing metadata.
+- Documentation: added the required "experimental, AI-generated and AI-maintained" disclaimer to
+  the crate-level rustdoc (`src/lib.rs`), `README.md` and `docs/README.md`, and softened the
+  "official" wording accordingly. The crates.io package `description` in `Cargo.toml` was likewise
+  reworded to "An experimental, AI-generated and AI-maintained Rust client …" so the published
+  one-line summary matches the disclaimer.
+- Documentation: documented `ApifyClientError::as_api_error` (used in the README error-handling
+  example) in the `docs/README.md` error-handling section, with a runnable snippet.
+- Documentation: removed dangling reference-style Markdown link brackets around
+  `apify_client::models` (`docs/README.md`) and `futures_util::StreamExt` (`docs/misc.md`) so
+  they render as plain inline code rather than broken links on GitHub.
+- Documentation: added a "Releasing" subsection to the README "Versioning" section describing the
+  crates.io distribution mechanism and the publish workflow, for parity with the Go sibling.
+
 ## [0.2.1] - 2026-06-19
 
 Compliance fix for the updated client/test requirements (apify-client-orchestration PR #4).

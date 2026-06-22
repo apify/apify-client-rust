@@ -1,6 +1,10 @@
 # Apify API client for Rust
 
-The official, idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
+> **Experimental — AI-generated and AI-maintained.** This client is experimental. It is
+> generated and maintained by AI, and is not (yet) an officially supported Apify product. Review
+> the code before relying on it in production and report issues on the repository.
+
+An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 It provides a resource-oriented, async interface that mirrors the official
 [JavaScript](https://github.com/apify/apify-client-js) and
 [Python](https://github.com/apify/apify-client-python) clients.
@@ -108,6 +112,16 @@ println!("client {CLIENT_VERSION}, built against API spec {API_SPEC_VERSION}");
 
 - `CLIENT_VERSION` — semantic version of this crate.
 - `API_SPEC_VERSION` — the Apify OpenAPI spec version this client targets.
+
+### Releasing
+
+The crate is distributed on [crates.io](https://crates.io/crates/apify-client). The
+[`Publish Rust client to crates.io`](.github/workflows/rust-publish.yml) workflow is the release
+mechanism: a maintainer triggers it manually (`workflow_dispatch`), it runs the same
+fmt/clippy/build quality gate as CI, verifies packaging with `cargo publish --dry-run`, then runs
+`cargo publish`. The registry token is read only from the `CARGO_REGISTRY_TOKEN` repository secret,
+and a `dry_run` input allows a packaging-only run with no actual release. Bump `version` in
+`Cargo.toml` before releasing.
 
 ## Examples
 

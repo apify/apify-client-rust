@@ -1,0 +1,75 @@
+name: Publish Rust client to crates.io
+
+# Language-specific publish workflow for the Rust client. It is triggered manually only
+# (workflow_dispatch) so a maintainer deliberately decides when a release is cut. Publishing
+# to the crates.io registry is the language-specific distribution standard for Rust.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run `cargo publish --dry-run` only (no actual release).'
+        type: boolean
+        default: false
+
+# Never allow two publish runs to race; a half-finished publish to a registry is hard to undo.
+concurrency:
+  group: rust-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      # Gate the release on the same quality bar as CI so a broken build can never be published.
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose
+
+      # Fail early with a clear message if the registry token is not configured, instead of
+      # letting `cargo publish` fail later with a less obvious authentication error.
+      - name: Require CARGO_REGISTRY_TOKEN secret
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN secret is empty or missing; cannot publish to crates.io."
+            exit 1
+          fi
+
+      # Always verify packaging works (this also runs as part of `cargo publish`, but doing it
+      # explicitly surfaces packaging problems before any registry interaction).
+      - name: Verify package (dry run)
+        env:
+          # The crates.io registry token is stored as a repository secret.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --dry-run --verbose
+
+      - name: Publish to crates.io
+        # Skip the actual publish when the run was dispatched as a dry run.
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          # The crates.io registry token is stored as a repository secret.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --verbose

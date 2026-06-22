@@ -112,7 +112,7 @@ Also reachable via `run.log()` and `build.log()`.
 | `get()` | — | `Option<String>` | The entire log as text. |
 | `stream()` | — | `Stream<Item = Result<Vec<u8>>>` | Streams log chunks live (log redirection). |
 
-Consuming `stream()` requires the [`futures_util::StreamExt`] trait (from the `futures-util`
+Consuming `stream()` requires the `futures_util::StreamExt` trait (from the `futures-util`
 crate) in scope to call `.next()` on the returned stream. Add it to your `Cargo.toml`:
 
 ```toml
