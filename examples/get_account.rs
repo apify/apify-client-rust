@@ -19,8 +19,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Current usage cycle: {cycle}");
     }
 
-    // Usage for the billing cycle containing a specific `YYYY-MM-DD` date, via the spec's
-    // optional `date` query parameter on `GET /v2/users/me/usage/monthly`.
+    // Usage for the billing cycle that contains a specific `YYYY-MM-DD` date — pass `Some(date)`
+    // to look up a past cycle, or `None` for the current one.
     let past_usage = client
         .me()
         .monthly_usage_for_date(Some("2026-03-15"))

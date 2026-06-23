@@ -67,6 +67,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+The type parameter on `call::<T>(...)` is the Actor's input body type (`T: Serialize`). The
+turbofish is only needed here because the input is `None`, which is otherwise untyped; when you
+pass a real payload (e.g. `Some(&my_input)`) the compiler infers `T` and the turbofish can be
+dropped.
+
 ## Configuration
 
 Build a customized client with `ApifyClient::builder()`:

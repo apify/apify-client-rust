@@ -7,12 +7,8 @@ to [Semantic Versioning](https://semver.org/).
 ## [0.2.4] - 2026-06-23
 
 Updated to Apify OpenAPI specification `v2-2026-06-23T113219Z` (previously
-`v2-2026-06-18T095846Z`). The spec delta over the in-scope (documented, non-synchronous,
-reference-client-matching) API surface is fully additive; no breaking changes to the public
-interface. All in-scope endpoints, query/header parameters and request bodies declared by the
-new specification remain covered, and the response models stay forward-compatible (unknown
-fields are captured in each model's `extra` map where present, and otherwise silently ignored
-by serde), so additive schema changes deserialize cleanly.
+`v2-2026-06-18T095846Z`). The spec delta over the in-scope API surface is fully additive; no
+breaking changes to the public interface.
 
 ### Changed
 - `API_SPEC_VERSION` bumped to `v2-2026-06-23T113219Z`.
