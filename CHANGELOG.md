@@ -4,6 +4,16 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] - 2026-06-23
+
+Updated to Apify OpenAPI specification `v2-2026-06-23T113219Z` (previously
+`v2-2026-06-18T095846Z`). The spec delta over the in-scope API surface is fully additive; no
+breaking changes to the public interface.
+
+### Changed
+- `API_SPEC_VERSION` bumped to `v2-2026-06-23T113219Z`.
+- Crate `version` bumped `0.2.3` → `0.2.4` (also exposed via `CLIENT_VERSION`).
+
 ## [0.2.3] - 2026-06-22
 
 Publishing compliance for the updated client requirements (apify-client-orchestration PR #9),
