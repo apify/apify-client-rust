@@ -228,6 +228,18 @@ async fn request_queue_lock_lifecycle() {
         .expect("list requests");
     assert!(listed.get("items").is_some());
 
+    // Exercise the `filter` parameter with both enum values (`locked`, `pending`). This verifies
+    // the multi-value, comma-joined serialization (`filter=locked,pending`) is accepted by the API.
+    let filtered = queue_client
+        .list_requests(apify_client::ListRequestsOptions {
+            limit: Some(10),
+            filter: Some(vec!["locked".to_string(), "pending".to_string()]),
+            ..Default::default()
+        })
+        .await
+        .expect("list requests with filter");
+    assert!(filtered.get("items").is_some());
+
     // Lazily paginate requests; we added one, so at least one should be yielded.
     let mut iter = queue_client.paginate_requests(Some(10));
     let first = iter.next().await.expect("paginate requests");

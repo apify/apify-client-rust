@@ -22,3 +22,19 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run. |
 | `runs()` | — | `RunCollectionClient` | The task's runs. |
 | `webhooks()` | — | `WebhookCollectionClient` | The task's webhooks. |
+
+## The `Task` model
+
+Returned by `get`, `create`, `update` and (as `PaginationList<Task>`) by `list`. Unknown fields
+returned by the API are preserved in `extra`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Unique task ID (always present); used to build a `client.task(&task.id)` client. |
+| `act_id` | `Option<String>` | ID of the Actor this task runs. |
+| `user_id` | `Option<String>` | ID of the user who owns the task. |
+| `name` | `Option<String>` | Technical name of the task, used in API paths. |
+| `title` | `Option<String>` | Human-readable title shown in the UI. |
+| `created_at` | `Option<DateTime<Utc>>` | When the task was created. |
+| `modified_at` | `Option<DateTime<Utc>>` | When the task was last modified. |
+| `extra` | `Extra` | Any other fields returned by the API. |

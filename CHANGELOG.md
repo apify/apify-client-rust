@@ -4,6 +4,35 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-06-25
+
+Updated to Apify OpenAPI specification `v2-2026-06-24T105326Z` (previously
+`v2-2026-06-23T113219Z`). A full operation- and parameter-level audit of every in-scope endpoint
+against the new specification found no changes to the in-scope API surface (same 131 paths,
+identical operations, parameters and request/response schemas); the spec update itself is a
+version bump only. This release also includes spec-compliance and documentation fixes surfaced
+by the review pass. The minor-version bump (rather than patch) reflects the breaking change to
+`ListRequestsOptions.filter` documented below.
+
+### Fixed
+- `ListRequestsOptions.filter` (for `GET /v2/request-queues/{queueId}/requests`) is now
+  `Option<Vec<String>>` and serialized comma-joined, matching the spec (an array of the enum
+  values `locked`/`pending`) and the JS reference. Previously it was a single `Option<String>`,
+  which could not express the multi-value union. This is a spec-compliance bugfix to a type that
+  did not match the specification; it is a breaking change to that field's type.
+
+### Changed
+- `API_SPEC_VERSION` bumped to `v2-2026-06-24T105326Z`.
+- Crate `version` bumped `0.2.4` → `0.3.0` (also exposed via `CLIENT_VERSION`); minor bump per
+  SemVer because of the breaking `filter` type change above.
+- `RunMetamorphOptions` and `RunChargeOptions` are now re-exported at the crate root, alongside
+  the other option/parameter structs (additive; completes the documented re-export surface).
+- Documentation: the `log_redirection` example now demonstrates redirecting a separate Actor's
+  run log (with a source prefix), model field tables added for `Task`/`Schedule`/`Webhook`/
+  `WebhookDispatch`, `monthly_usage` docs aligned on the non-panicking `Value::get` idiom, the
+  `last_run` example hardened against eventual consistency, the crate-root import surface
+  documented in full, and the `APIFY_TOKEN` convention explained.
+
 ## [0.2.4] - 2026-06-23
 
 Updated to Apify OpenAPI specification `v2-2026-06-23T113219Z` (previously

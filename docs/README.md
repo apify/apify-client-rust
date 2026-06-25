@@ -52,21 +52,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`ApifyClient::new` takes the API token as an argument — the client does **not** read it from the
+environment for you. By convention the token is kept in the `APIFY_TOKEN` environment variable
+(this is what every example in [`examples/`](../examples) reads, and what the integration-test
+suite and the Apify platform use), so production code typically does
+`ApifyClient::new(std::env::var("APIFY_TOKEN")?)`. The literal `"my-api-token"` above is only a
+placeholder for brevity.
+
 ## Imports
 
-The client, the builder, and every option/parameter struct (`ActorListOptions`, `ListOptions`,
-`StorageListOptions`, `StoreListOptions`, `RunListOptions`, `ActorStartOptions`,
-`DatasetListItemsOptions`, `DownloadItemsFormat`, `GetRecordOptions`, …), plus the common
-container `PaginationList`, are re-exported at the crate root, so you can import them directly
-from `apify_client`:
+The client, the builder, and **every** option/parameter struct are re-exported at the crate
+root, so you can import them directly from `apify_client` — you never need the longer
+`apify_client::clients::<module>::<Type>` path. The complete set of re-exported option/parameter
+types is:
+
+- Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`
+- Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
+- Key-value stores: `ListKeysOptions`, `GetRecordsOptions`, `GetRecordOptions`
+- Request queues: `ListRequestsOptions`
+- Store: `StoreListOptions`
+- Shared: `ListOptions`, `StorageListOptions`
+
+plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
+directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};
 ```
 
-You do **not** need the longer `apify_client::clients::<module>::<Type>` paths shown by
-`cargo doc`'s module tree for these option types — the short crate-root path is the supported
-way to import them.
+(The `apify_client::clients::<module>::<Type>` paths shown by `cargo doc`'s module tree also work,
+but the short crate-root path above is the supported, stable way to import these option types.)
 
 API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
 `RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
@@ -150,4 +166,4 @@ Each example in [`../examples`](../examples) is runnable with
 | `create_build_run_actor` | Create an Actor, build, run, fetch the run log. |
 | `run_and_last_run_storages` | Run an Actor, then read the last run's storages. |
 | `iterate_store` | Lazily iterate Store Actors. |
-| `log_redirection` | Stream (redirect) an Actor run's log live. |
+| `log_redirection` | Redirect a separate Actor's run log into your output live, prefixing each line with the source Actor's name. |

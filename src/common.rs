@@ -237,8 +237,12 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
     // JS reference reads `APIFY_IS_AT_HOME` (via `@apify/consts`), while `client_requirements`'s
     // worked example uses the bare name `isAtHome`. These two same-priority requirements
     // conflict, so we honour BOTH variable names (either being set marks the client "at home"),
-    // consistent with the Go sibling. The flag is rendered lowercase (`true`/`false`) to stay
-    // byte-consistent with the JS reference (it interpolates a JS boolean).
+    // consistent with the Go sibling. The flag is rendered lowercase (`true`/`false`): the
+    // authoritative JS reference (`apify-client-js` `src/http_client.ts`:
+    // `isAtHome/${isAtHome}` where `isAtHome` is a JS boolean) emits lowercase, and
+    // `client_requirements` mandates consistency with that reference. The capitalized
+    // `isAtHome/False` in the requirements' worked example is illustrative of the *format* only;
+    // the concrete reference output (lowercase) is the higher-priority constraint, so we match it.
     let is_at_home = if env_var_set("APIFY_IS_AT_HOME") || env_var_set("isAtHome") {
         "true"
     } else {
