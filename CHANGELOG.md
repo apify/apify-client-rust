@@ -20,6 +20,10 @@ by the review pass. The minor-version bump (rather than patch) reflects the brea
   values `locked`/`pending`) and the JS reference. Previously it was a single `Option<String>`,
   which could not express the multi-value union. This is a spec-compliance bugfix to a type that
   did not match the specification; it is a breaking change to that field's type.
+- The `User-Agent` `isAtHome` flag is now based **solely** on the `APIFY_IS_AT_HOME` environment
+  variable, as mandated by the requirements and matching the JS reference (which reads only that
+  variable). A previously-honored bare `isAtHome` environment variable is no longer consulted; it
+  was a non-standard accommodation not present in the requirements or the reference.
 
 ### Changed
 - `API_SPEC_VERSION` bumped to `v2-2026-06-24T105326Z`.
@@ -204,6 +208,8 @@ Initial release of the official Rust client for the Apify API.
   being set marks the client "at home". These two same-priority requirements conflicted, so the
   client honours both (consistent with the Go sibling). The flag is rendered lowercase
   (`true`/`false`) to stay byte-consistent with the JS reference.
+  _(Superseded in [0.3.0]: the flag is now based solely on `APIFY_IS_AT_HOME`; the bare `isAtHome`
+  variable is no longer consulted.)_
 - `get_record` now sends `attachment=true`, matching the reference client's `getRecord`
   (which sends `attachment=true` unconditionally). `get_record_with_options` takes a
   `GetRecordOptions { attachment, signature }`; `attachment` defaults to `true` when unset.
