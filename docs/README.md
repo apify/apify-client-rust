@@ -29,7 +29,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.4"
+apify-client = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -168,3 +168,4 @@ Each example in [`../examples`](../examples) is runnable with
 | `run_and_last_run_storages` | Run an Actor, then read the last run's storages. |
 | `iterate_store` | Lazily iterate Store Actors. |
 | `log_redirection` | Redirect a separate Actor's run log into your output live, prefixing each line with the source Actor's name. |
+| `raw_log` | Fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`. |

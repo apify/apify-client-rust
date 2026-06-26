@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // unwrapping; here we fall back to the run we already have.
     let last_run = match client
         .actor("apify/hello-world")
-        .last_run(Some("SUCCEEDED"))
+        .last_run(Some("SUCCEEDED"), None)
         .get()
         .await?
     {

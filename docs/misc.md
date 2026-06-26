@@ -50,7 +50,7 @@ and falls back to `name` (e.g. `actor.title.or(actor.name)`).
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<User>` | Account details (private for `me`, public otherwise). |
-| `monthly_usage()` | — | `Value` | Current account's monthly usage for the current month (`me` only). |
+| `monthly_usage()` | — | `Value` | Current account's monthly usage for the current billing cycle (`me` only). |
 | `monthly_usage_for_date(date)` | `Option<&str>` | `Value` | Monthly usage for the billing cycle containing the `YYYY-MM-DD` `date`; `None` == current month (`me` only). |
 | `limits()` | — | `Value` | Current account's limits (`me` only). |
 | `update_limits(limits)` | `&impl Serialize` | `()` | Updates the account's limits (`me` only). |

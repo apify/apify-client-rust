@@ -284,3 +284,60 @@ async fn log_get_sends_raw_query_param() {
         "default log get must not send a raw param, got {url}"
     );
 }
+
+/// `actor.last_run` / `task.last_run` thread the optional `status` and `origin` filters into
+/// the last-run request as query parameters, matching the JS reference's `lastRun({ status,
+/// origin })`. Passing `None` for a filter omits it.
+#[tokio::test]
+async fn last_run_sends_status_and_origin_query_params() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1","status":"SUCCEEDED"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    // Both filters set on the actor last run -> both query params present.
+    client
+        .actor("me~some-actor")
+        .last_run(Some("SUCCEEDED"), Some("API"))
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last")
+            && url.contains("status=SUCCEEDED")
+            && url.contains("origin=API"),
+        "expected status=SUCCEEDED and origin=API on the actor last-run request, got {url}"
+    );
+
+    // Only `origin` set on the task last run -> origin present, status absent.
+    client
+        .task("me~some-task")
+        .last_run(None, Some("SCHEDULER"))
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last") && url.contains("origin=SCHEDULER"),
+        "expected origin=SCHEDULER on the task last-run request, got {url}"
+    );
+    assert!(
+        !url.contains("status="),
+        "task last_run(None, ..) must not send a status param, got {url}"
+    );
+
+    // Neither filter set -> no `status`/`origin` params.
+    client
+        .actor("me~some-actor")
+        .last_run(None, None)
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("status=") && !url.contains("origin="),
+        "default last_run must not send status/origin params, got {url}"
+    );
+}

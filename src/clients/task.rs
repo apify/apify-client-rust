@@ -110,8 +110,15 @@ impl TaskClient {
         Ok(serde_json::from_slice(&response.body)?)
     }
 
-    /// Returns a client for the last run of this task, optionally filtered by status.
-    pub fn last_run(&self, status: Option<&str>) -> RunClient {
+    /// Returns a client for the last run of this task, optionally filtered by run status
+    /// and/or origin.
+    ///
+    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `origin`
+    /// filters by how the run was started (e.g. `"WEB"`, `"API"`, `"SCHEDULE"`). Both map to the
+    /// matching query parameters on `GET /v2/actor-tasks/{actorTaskId}/runs/last` and mirror the
+    /// reference client's `lastRun({ status, origin })`. Pass `None` for either to leave it
+    /// unfiltered.
+    pub fn last_run(&self, status: Option<&str>, origin: Option<&str>) -> RunClient {
         let mut client = RunClient::new(
             self.root.clone(),
             self.ctx.http.clone(),
@@ -120,7 +127,10 @@ impl TaskClient {
             "last",
         );
         if let Some(status) = status {
-            client.set_status_param(status);
+            client.set_base_param("status", status);
+        }
+        if let Some(origin) = origin {
+            client.set_base_param("origin", origin);
         }
         client
     }

@@ -19,7 +19,7 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Option<Value>` / `Value` | The task's saved input. |
-| `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run. |
+| `last_run(status, origin)` | `Option<&str>`, `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status and/or origin. |
 | `runs()` | — | `RunCollectionClient` | The task's runs. |
 | `webhooks()` | — | `WebhookCollectionClient` | The task's webhooks. |
 

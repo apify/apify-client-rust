@@ -83,11 +83,12 @@ impl RunClient {
         }
     }
 
-    /// Adds a `status` filter to this run client (used by `actor.last_run`).
-    pub(crate) fn set_status_param(&mut self, status: &str) {
+    /// Adds a base query parameter to this run client, inherited by its requests (used by
+    /// `actor.last_run` / `task.last_run` to thread the `status` and `origin` filters).
+    pub(crate) fn set_base_param(&mut self, key: &str, value: &str) {
         self.ctx
             .base_params
-            .push_raw("status".to_string(), status.to_string());
+            .push_raw(key.to_string(), value.to_string());
     }
 
     /// Fetches the run object, or `None` if it does not exist.

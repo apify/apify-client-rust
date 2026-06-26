@@ -23,7 +23,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
 | `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `serde_json::Value` | Validates input against a specific build's schema (`build` tag/number; `None` = default). |
-| `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run (optionally filtered). |
+| `last_run(status, origin)` | `Option<&str>`, `Option<&str>` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |
 | `runs()` | — | `RunCollectionClient` | The Actor's run collection. |
 | `version(n)` / `versions()` | `&str` / — | `ActorVersionClient` / collection | Version management. |

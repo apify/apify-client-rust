@@ -4,24 +4,53 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-06-26
+
+JS-reference parity fix surfaced by the review pass. Spec version unchanged
+(`v2-2026-06-25T142310Z`). The minor-version bump reflects a signature change to the pre-existing
+`last_run` methods (a parity bugfix — see Fixed below).
+
+### Fixed
+- `ActorClient::last_run` and `TaskClient::last_run` now accept an `origin` filter in addition to
+  `status` (`last_run(status, origin)`, both `Option<&str>`), matching the JS reference's
+  `lastRun({ status, origin })` (`apify-client-js/src/resource_clients/actor.ts`, `task.ts`).
+  `origin` is threaded as a base query parameter exactly like `status`, so
+  `actor.last_run(None, Some("API"))` sends `origin=API` on `GET /v2/actors/{actorId}/runs/last`
+  (and the task equivalent). The previous `status`-only signature was an unintended scope
+  reduction relative to the reference client. This is a breaking change to the `last_run`
+  signature (callers add a second argument; existing `last_run(Some(s))` becomes
+  `last_run(Some(s), None)`), hence the minor bump. Covered by the offline
+  `last_run_sends_status_and_origin_query_params` unit test.
+
+### Added
+- A `raw_log` example program (`examples/raw_log.rs`, covered by the `Test examples` CI step via
+  `tests/examples.rs::example_raw_log`) that runs an Actor and then fetches and streams its raw
+  log end-to-end via `LogClient::get_with_options` and `RunClient::get_streamed_log_with_options`
+  with `LogOptions { raw: Some(true) }`, exercising the raw-log path added in 0.4.0 against the
+  live API.
+
 ## [0.4.0] - 2026-06-26
 
 Updated to Apify OpenAPI specification `v2-2026-06-25T142310Z` (previously
 `v2-2026-06-24T105326Z`). An operation- and parameter-level audit of every in-scope endpoint in the
 new specification (with the JavaScript reference client as the parity authority for which
-parameters and options are exposed) confirmed the Rust client's in-scope typed API surface is
-complete and consistent — 131 paths, with one missing optional log parameter fixed below. This
-release also lands a comment-quality pass for the updated requirements. The minor-version bump
-reflects the additive public API below (new methods and a new option type; no breaking changes).
+parameters and options are exposed) covered all 131 paths and confirmed the Rust client's in-scope
+typed API surface, with one missing optional log parameter fixed below. (A later review found a
+second gap — the `last_run` `origin` filter — which is fixed in 0.5.0 above.) This release also
+lands a comment-quality pass for the updated requirements. The minor-version bump reflects the
+additive public API below (new methods and a new option type; no breaking changes).
 
 ### Added
 - `LogClient::get_with_options` and `LogClient::stream_with_options`, plus a new
   `LogOptions { raw: Option<bool> }` (re-exported at the crate root), exposing the spec's
   optional `raw` query parameter on the log endpoints (`GET /v2/logs/{buildOrRunId}`,
-  `GET /v2/actor-runs/{runId}/log`, and the actor/task last-run log variants — `raw` is not
-  defined on the build log endpoint, so it is intentionally not exposed there). When `raw=true`
-  the API returns the unprocessed log (without the per-line timestamps it otherwise adds). This
-  matches the JS reference's `LogOptions`, whose log redirection streams `{ raw: true }`.
+  `GET /v2/actor-runs/{runId}/log`, and the actor/task last-run log variants; `raw` is not
+  declared on the build log endpoint by the spec). `LogOptions` and these methods live on the
+  shared `LogClient`, which `run.log()`, `build.log()` and `client.log(id)` all return — so, as in
+  the JS reference (which likewise shares one log client across run and build logs), `raw` is
+  reachable on the build log too; the server simply ignores it where it has no effect. When
+  `raw=true` the API returns the unprocessed log (without the per-line timestamps it otherwise
+  adds). This matches the JS reference's `LogOptions`, whose log redirection streams `{ raw: true }`.
 - `RunClient::get_streamed_log_with_options` — the options-taking companion to the existing
   `get_streamed_log`, forwarding `LogOptions` (e.g. `raw`) to the underlying log stream.
 - The existing no-argument `LogClient::get` / `LogClient::stream` (and `RunClient`'s

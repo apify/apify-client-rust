@@ -66,3 +66,8 @@ fn example_log_redirection() {
 fn example_create_build_run_actor() {
     run_example("create_build_run_actor");
 }
+
+#[test]
+fn example_raw_log() {
+    run_example("raw_log");
+}
