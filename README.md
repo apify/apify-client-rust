@@ -179,7 +179,7 @@ run with `cargo run --example <name>`:
 - `create_build_run_actor` — create an Actor, build it, run it, fetch the run log.
 - `run_and_last_run_storages` — run an Actor, then access the last run and its storages.
 - `iterate_store` — lazily iterate Actors in the Apify Store.
-- `log_redirection` — run an Actor with its log streamed (redirected) live.
+- `log_redirection` — run a separate Actor and redirect its run log into your output live, with each line prefixed by the source Actor's name.
 
 See [`docs/`](docs) for the full API documentation.
 

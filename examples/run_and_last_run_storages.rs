@@ -17,13 +17,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("Run {} finished: {:?}", run.id, run.status);
 
-    // Fetch the Actor's last successful run.
-    let last_run = client
+    // Fetch the Actor's last successful run. `last_run` is scoped to *your own* runs of the Actor
+    // (the run we just made above), and the platform's run index is eventually consistent, so it
+    // can briefly return `None` right after a run finishes. Handle the `None` case rather than
+    // unwrapping; here we fall back to the run we already have.
+    let last_run = match client
         .actor("apify/hello-world")
         .last_run(Some("SUCCEEDED"))
         .get()
         .await?
-        .expect("there should be a last run");
+    {
+        Some(last_run) => last_run,
+        None => {
+            println!("Last run not indexed yet; using the run we just made.");
+            run
+        }
+    };
     println!("Last run id: {}", last_run.id);
 
     // Access the last run's storages via the run client.

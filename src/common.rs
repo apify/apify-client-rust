@@ -233,13 +233,15 @@ fn env_var_set(name: &str) -> bool {
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
     let os = std::env::consts::OS;
-    // The `isAtHome` flag signals whether the client runs on the Apify platform. The canonical
-    // JS reference reads `APIFY_IS_AT_HOME` (via `@apify/consts`), while `client_requirements`'s
-    // worked example uses the bare name `isAtHome`. These two same-priority requirements
-    // conflict, so we honour BOTH variable names (either being set marks the client "at home"),
-    // consistent with the Go sibling. The flag is rendered lowercase (`true`/`false`) to stay
-    // byte-consistent with the JS reference (it interpolates a JS boolean).
-    let is_at_home = if env_var_set("APIFY_IS_AT_HOME") || env_var_set("isAtHome") {
+    // The `isAtHome` flag signals whether the client runs on the Apify platform. It is based
+    // solely on the `APIFY_IS_AT_HOME` environment variable, as mandated by `client_requirements`
+    // ("based on the environment variable `APIFY_IS_AT_HOME`, `False` if env variable is missing")
+    // and matching the JS reference (`apify-client-js` reads only `APIFY_IS_AT_HOME` via
+    // `@apify/consts`). The flag is rendered lowercase (`true`/`false`) to match that reference,
+    // whose `src/http_client.ts` interpolates a JS boolean (`isAtHome/${isAtHome}`); the
+    // capitalized `isAtHome/False` in the requirements' worked example is illustrative of the
+    // *format* only, and the concrete reference output (lowercase) is the higher-priority constraint.
+    let is_at_home = if env_var_set("APIFY_IS_AT_HOME") {
         "true"
     } else {
         "false"
@@ -344,13 +346,12 @@ pub fn sign_storage_content(
 mod user_agent_tests {
     use super::build_user_agent;
 
-    // `build_user_agent` must honour BOTH the JS-consistent `APIFY_IS_AT_HOME` env var and the
-    // bare `isAtHome` name from the requirements doc (the two same-priority requirements were
-    // resolved by supporting both, consistent with the Go sibling). The value is the lowercase
-    // `true`/`false` the JS reference emits. Env vars are process-global, so this test owns both
-    // names for its duration and restores them afterwards.
+    // `build_user_agent` keys the flag solely on the `APIFY_IS_AT_HOME` env var (per the
+    // requirements and the JS reference). A bare `isAtHome` env var must NOT affect it. The value
+    // is the lowercase `true`/`false` the JS reference emits. Env vars are process-global, so this
+    // test owns both names for its duration and restores them afterwards.
     #[test]
-    fn is_at_home_reads_both_env_vars() {
+    fn is_at_home_reads_only_apify_is_at_home() {
         let prev_apify = std::env::var("APIFY_IS_AT_HOME").ok();
         let prev_literal = std::env::var("isAtHome").ok();
 
@@ -362,14 +363,14 @@ mod user_agent_tests {
             "no env var set must render isAtHome/false"
         );
 
-        // The bare `isAtHome` (requirements doc) variable flips it to true.
+        // A bare `isAtHome` env var must NOT flip the flag (it is not the mandated variable).
         std::env::set_var("isAtHome", "1");
         assert!(
-            build_user_agent(None).contains("isAtHome/true"),
-            "bare `isAtHome` env var must drive the flag"
+            build_user_agent(None).contains("isAtHome/false"),
+            "bare `isAtHome` env var must not affect the flag"
         );
 
-        // The JS-consistent `APIFY_IS_AT_HOME` variable also flips it to true.
+        // Only `APIFY_IS_AT_HOME` drives the flag.
         std::env::remove_var("isAtHome");
         std::env::set_var("APIFY_IS_AT_HOME", "1");
         assert!(

@@ -40,8 +40,10 @@ pub struct ListRequestsOptions {
     pub exclusive_start_id: Option<String>,
     /// Opaque pagination cursor returned by a previous call.
     pub cursor: Option<String>,
-    /// Server-side filter expression for the returned requests.
-    pub filter: Option<String>,
+    /// Restrict the returned requests to the given states. The spec defines this as an array of
+    /// the enum values `"locked"` and `"pending"`; multiple values are sent comma-joined (matching
+    /// the JS reference, which serializes `filter: Array<'locked' | 'pending'>` via `join(',')`).
+    pub filter: Option<Vec<String>>,
 }
 
 /// Client for a specific request queue.
@@ -270,7 +272,7 @@ impl RequestQueueClient {
             .add_int("limit", options.limit)
             .add_str("exclusiveStartId", options.exclusive_start_id)
             .add_str("cursor", options.cursor)
-            .add_str("filter", options.filter);
+            .add_csv("filter", options.filter.as_deref());
         get_resource_required(&self.ctx, Some("requests"), &params).await
     }
 

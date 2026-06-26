@@ -80,9 +80,13 @@ if let Some(user) = client.me().get().await? {
 ```
 
 `monthly_usage()` is shorthand for `monthly_usage_for_date(None)` (current cycle). The client
-unwraps the API's `{ data: ... }` envelope, so the returned `Value` has the shape
+unwraps the API's `{ data: ... }` envelope, so the returned `serde_json::Value` has the shape
 `{ usageCycle: { startAt, endAt }, monthlyServiceUsage, dailyServiceUsages, ... }`. Billing
-cycles are not calendar-month aligned — pass any day within a cycle to fetch that cycle:
+cycles are not calendar-month aligned — pass any day within a cycle to fetch that cycle.
+
+The return value is an untyped `serde_json::Value`; access its fields with the non-panicking
+`Value::get` (the same idiom as `examples/get_account.rs`) so a missing field yields `None`
+instead of panicking:
 
 ```rust,no_run
 use apify_client::ApifyClient;
@@ -95,8 +99,11 @@ let usage = client.me().monthly_usage().await?;
 
 // The cycle containing a specific day (YYYY-MM-DD).
 let march = client.me().monthly_usage_for_date(Some("2026-03-15")).await?;
-let cycle = &march["usageCycle"];
-println!("cycle {} .. {}", cycle["startAt"], cycle["endAt"]);
+if let Some(cycle) = march.get("usageCycle") {
+    let start = cycle.get("startAt").and_then(|v| v.as_str()).unwrap_or("?");
+    let end = cycle.get("endAt").and_then(|v| v.as_str()).unwrap_or("?");
+    println!("cycle {start} .. {end}");
+}
 # Ok(())
 # }
 ```

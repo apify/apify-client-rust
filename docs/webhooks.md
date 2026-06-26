@@ -25,3 +25,29 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 
 `WebhookDispatchCollectionClient`: `list(options)`.
 `WebhookDispatchClient`: `get()`.
+
+## The `Webhook` model
+
+Returned by `get`, `create`, `update`, `test` (via the resulting dispatch's `webhook_id`) and
+(as `PaginationList<Webhook>`) by `list`. Unknown fields returned by the API are preserved in
+`extra`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Unique webhook ID (always present); used to build a `client.webhook(&webhook.id)` client. |
+| `user_id` | `Option<String>` | ID of the user who owns the webhook. |
+| `request_url` | `Option<String>` | The URL that receives the webhook POST request. |
+| `event_types` | `Vec<String>` | Event types that trigger this webhook (e.g. `ACTOR.RUN.SUCCEEDED`). |
+| `extra` | `Extra` | Any other fields returned by the API (e.g. `condition`, `isAdHoc`, `payloadTemplate`). |
+
+## The `WebhookDispatch` model
+
+Returned by `WebhookClient::test`, `WebhookDispatchClient::get`, and (as
+`PaginationList<WebhookDispatch>`) by `WebhookDispatchCollectionClient::list`. Unknown fields
+returned by the API are preserved in `extra`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Unique dispatch ID (always present). |
+| `webhook_id` | `Option<String>` | ID of the webhook that produced this dispatch. |
+| `extra` | `Extra` | Any other fields returned by the API (e.g. `status`, `attempts`, `eventType`). |

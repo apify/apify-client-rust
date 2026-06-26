@@ -31,7 +31,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     store_client
         .set_record_json("OUTPUT", &json!({ "hello": "kvs" }))
         .await?;
-    let record = store_client.get_record("OUTPUT").await?.expect("record");
+    // A key just written to a key-value store is immediately readable — within-store
+    // read-after-write is strongly consistent — so this lookup is expected to return the record.
+    let record = store_client
+        .get_record("OUTPUT")
+        .await?
+        .expect("OUTPUT was just written and is readable within the same store");
     println!("KVS {} OUTPUT = {} bytes", store.id, record.value.len());
     store_client.delete().await?;
 
