@@ -251,4 +251,18 @@ impl RunClient {
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
         self.log().stream().await
     }
+
+    /// Opens a live stream of the run's log for redirection, applying the given
+    /// [`LogOptions`] (e.g. [`LogOptions::raw`] to stream the unprocessed log, which is the
+    /// form the JS reference's log redirection consumes internally).
+    ///
+    /// This is a Rust-specific convenience that simply forwards `LogOptions` to
+    /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
+    /// method's signature (which takes redirect options and returns a `StreamedLog` object).
+    pub async fn get_streamed_log_with_options(
+        &self,
+        options: crate::clients::log::LogOptions,
+    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        self.log().stream_with_options(options).await
+    }
 }

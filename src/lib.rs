@@ -66,6 +66,7 @@ pub use clients::actor::{ActorBuildOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
 pub use clients::key_value_store::{GetRecordOptions, GetRecordsOptions, ListKeysOptions};
+pub use clients::log::LogOptions;
 pub use clients::request_queue::ListRequestsOptions;
 pub use clients::run::{RunChargeOptions, RunMetamorphOptions, RunResurrectOptions};
 pub use clients::run_collection::RunListOptions;

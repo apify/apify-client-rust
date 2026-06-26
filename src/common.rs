@@ -233,14 +233,10 @@ fn env_var_set(name: &str) -> bool {
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
     let os = std::env::consts::OS;
-    // The `isAtHome` flag signals whether the client runs on the Apify platform. It is based
-    // solely on the `APIFY_IS_AT_HOME` environment variable, as mandated by `client_requirements`
-    // ("based on the environment variable `APIFY_IS_AT_HOME`, `False` if env variable is missing")
-    // and matching the JS reference (`apify-client-js` reads only `APIFY_IS_AT_HOME` via
-    // `@apify/consts`). The flag is rendered lowercase (`true`/`false`) to match that reference,
-    // whose `src/http_client.ts` interpolates a JS boolean (`isAtHome/${isAtHome}`); the
-    // capitalized `isAtHome/False` in the requirements' worked example is illustrative of the
-    // *format* only, and the concrete reference output (lowercase) is the higher-priority constraint.
+    // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
+    // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
+    // variable (`false` when the variable is missing), matching the JS reference, which reads
+    // only `APIFY_IS_AT_HOME` and renders a lowercase boolean.
     let is_at_home = if env_var_set("APIFY_IS_AT_HOME") {
         "true"
     } else {

@@ -255,3 +255,32 @@ async fn validate_input_sends_build_query_param() {
         "default validate_input must not send a build param, got {url}"
     );
 }
+
+/// `LogClient::get_with_options` sends the spec's optional `raw` query parameter, and the
+/// no-arg `get` omits it.
+#[tokio::test]
+async fn log_get_sends_raw_query_param() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"some log output".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    // With raw -> `raw=1` present in the run log URL.
+    client
+        .run("some-run-id")
+        .log()
+        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/log") && url.contains("raw=1"),
+        "expected raw=1 on the run log request, got {url}"
+    );
+
+    // Without options -> no `raw` param.
+    client.run("some-run-id").log().get().await.expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("raw="),
+        "default log get must not send a raw param, got {url}"
+    );
+}

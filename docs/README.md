@@ -29,7 +29,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.2"
+apify-client = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -72,6 +72,7 @@ types is:
 - Key-value stores: `ListKeysOptions`, `GetRecordsOptions`, `GetRecordOptions`
 - Request queues: `ListRequestsOptions`
 - Store: `StoreListOptions`
+- Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
 
 plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them

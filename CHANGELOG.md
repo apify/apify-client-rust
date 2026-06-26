@@ -4,6 +4,42 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-26
+
+Updated to Apify OpenAPI specification `v2-2026-06-25T142310Z` (previously
+`v2-2026-06-24T105326Z`). An operation- and parameter-level audit of every in-scope endpoint in the
+new specification (with the JavaScript reference client as the parity authority for which
+parameters and options are exposed) confirmed the Rust client's in-scope typed API surface is
+complete and consistent — 131 paths, with one missing optional log parameter fixed below. This
+release also lands a comment-quality pass for the updated requirements. The minor-version bump
+reflects the additive public API below (new methods and a new option type; no breaking changes).
+
+### Added
+- `LogClient::get_with_options` and `LogClient::stream_with_options`, plus a new
+  `LogOptions { raw: Option<bool> }` (re-exported at the crate root), exposing the spec's
+  optional `raw` query parameter on the log endpoints (`GET /v2/logs/{buildOrRunId}`,
+  `GET /v2/actor-runs/{runId}/log`, and the actor/task last-run log variants — `raw` is not
+  defined on the build log endpoint, so it is intentionally not exposed there). When `raw=true`
+  the API returns the unprocessed log (without the per-line timestamps it otherwise adds). This
+  matches the JS reference's `LogOptions`, whose log redirection streams `{ raw: true }`.
+- `RunClient::get_streamed_log_with_options` — the options-taking companion to the existing
+  `get_streamed_log`, forwarding `LogOptions` (e.g. `raw`) to the underlying log stream.
+- The existing no-argument `LogClient::get` / `LogClient::stream` (and `RunClient`'s
+  `get_streamed_log`) are unchanged and now delegate with default options, so this is purely
+  additive.
+- Tests: `log_get_sends_raw_query_param` (offline, asserts `raw=1` is sent only when requested),
+  and a raw-log assertion added to the `run_actor_and_read_outputs` integration flow.
+
+### Changed
+- `API_SPEC_VERSION` bumped to `v2-2026-06-25T142310Z`.
+- Crate `version` bumped `0.3.0` → `0.4.0` (also exposed via `CLIENT_VERSION`); minor bump per
+  SemVer for the additive log-options API above.
+- Documentation/comments: the `build_user_agent` `isAtHome` comment in `src/common.rs` was
+  tightened and corrected — it previously quoted the old requirement wording (capitalized
+  `False` / a capitalized worked example) which the requirements now render lowercase, making the
+  comment stale. The behaviour (lowercase `true`/`false`, keyed solely on `APIFY_IS_AT_HOME`) is
+  unchanged.
+
 ## [0.3.0] - 2026-06-25
 
 Updated to Apify OpenAPI specification `v2-2026-06-24T105326Z` (previously

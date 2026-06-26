@@ -117,7 +117,32 @@ Also reachable via `run.log()` and `build.log()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<String>` | The entire log as text. |
+| `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
 | `stream()` | — | `Stream<Item = Result<Vec<u8>>>` | Streams log chunks live (log redirection). |
+| `stream_with_options(options)` | `LogOptions` | `Stream<Item = Result<Vec<u8>>>` | As `stream()`, with options (e.g. `raw`). |
+
+`LogOptions` has a single field, `raw: Option<bool>`. When `Some(true)`, the API returns the
+raw log content without server-side processing (e.g. without the per-line timestamps it adds by
+default); leaving it `None` uses the default processed format. Fetch a run's raw log as text:
+
+```rust,no_run
+use apify_client::{ApifyClient, LogOptions};
+
+# async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let raw_log = client
+    .run(run_id)
+    .log()
+    .get_with_options(LogOptions { raw: Some(true) })
+    .await?;
+if let Some(text) = raw_log {
+    print!("{text}");
+}
+# Ok(())
+# }
+```
+
+The streaming variant takes the same options — `client.run(run_id).log().stream_with_options(LogOptions { raw: Some(true) }).await?`
+yields the raw log chunks (this is what log redirection uses).
 
 Consuming `stream()` requires the `futures_util::StreamExt` trait (from the `futures-util`
 crate) in scope to call `.next()` on the returned stream. Add it to your `Cargo.toml`:
