@@ -35,6 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("Last run id: {}", last_run.id);
 
+    // `last_run` can also filter by `origin` (how the run was started). Accepted origins are
+    // `DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER`. Runs started via the API (like the one above)
+    // have origin `API`, so this narrows to API-started runs; pass `None` to leave it unfiltered.
+    let api_last_run = client
+        .actor("apify/hello-world")
+        .last_run(Some("SUCCEEDED"), Some("API"))
+        .get()
+        .await?;
+    println!("Last API-origin run indexed: {}", api_last_run.is_some());
+
     // Access the last run's storages via the run client.
     let run_client = client.run(&last_run.id);
     let dataset = run_client

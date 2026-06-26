@@ -29,6 +29,14 @@ JS-reference parity fix surfaced by the review pass. Spec version unchanged
   with `LogOptions { raw: Some(true) }`, exercising the raw-log path added in 0.4.0 against the
   live API.
 
+### Documentation
+- Documented the accepted `last_run` `origin` values (the platform run origins `DEVELOPMENT`,
+  `WEB`, `API`, `SCHEDULER`) in `docs/runs.md` and referenced them from the `last_run` rows in
+  `docs/actors.md` / `docs/tasks.md`, mirroring how the `status` values are enumerated. Corrected
+  the `TaskClient::last_run` docstring's `origin` example from the invalid `"SCHEDULE"` to the
+  valid origin `"SCHEDULER"` (the actor docstring was already correct), and showed an
+  `origin`-filtered call in `examples/run_and_last_run_storages.rs`.
+
 ## [0.4.0] - 2026-06-26
 
 Updated to Apify OpenAPI specification `v2-2026-06-25T142310Z` (previously
