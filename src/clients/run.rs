@@ -18,6 +18,25 @@ use crate::models::ActorRun;
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
 
+/// Options for fetching an Actor's or task's last run
+/// ([`crate::clients::actor::ActorClient::last_run_with_options`] /
+/// [`crate::clients::task::TaskClient::last_run_with_options`]).
+///
+/// Both are sent as query parameters to the last-run endpoints
+/// (`GET /v2/actors/{actorId}/runs/last`, `GET /v2/actor-tasks/{actorTaskId}/runs/last`).
+/// `status` is the spec's documented optional filter on those endpoints; `origin` is not declared
+/// by the OpenAPI spec and is exposed only for parity with the reference client's
+/// `lastRun({ status, origin })`.
+#[derive(Debug, Default, Clone)]
+pub struct LastRunOptions {
+    /// Filter by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `None` leaves it
+    /// unfiltered.
+    pub status: Option<String>,
+    /// Filter by how the run was started; accepted values are the platform's run origins
+    /// (e.g. `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). `None` leaves it unfiltered.
+    pub origin: Option<String>,
+}
+
 /// Options for resurrecting a finished run.
 #[derive(Debug, Default, Clone)]
 pub struct RunResurrectOptions {

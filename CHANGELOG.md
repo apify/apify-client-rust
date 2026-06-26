@@ -4,51 +4,36 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
-## [0.5.0] - 2026-06-26
-
-JS-reference parity fix surfaced by the review pass. Spec version unchanged
-(`v2-2026-06-25T142310Z`). The minor-version bump reflects a signature change to the pre-existing
-`last_run` methods (a parity bugfix — see Fixed below).
-
-### Fixed
-- `ActorClient::last_run` and `TaskClient::last_run` now accept an `origin` filter in addition to
-  `status` (`last_run(status, origin)`, both `Option<&str>`), matching the JS reference's
-  `lastRun({ status, origin })` (`apify-client-js/src/resource_clients/actor.ts`, `task.ts`).
-  `origin` is threaded as a base query parameter exactly like `status`, so
-  `actor.last_run(None, Some("API"))` sends `origin=API` on `GET /v2/actors/{actorId}/runs/last`
-  (and the task equivalent). The previous `status`-only signature was an unintended scope
-  reduction relative to the reference client. This is a breaking change to the `last_run`
-  signature (callers add a second argument; existing `last_run(Some(s))` becomes
-  `last_run(Some(s), None)`), hence the minor bump. Covered by the offline
-  `last_run_sends_status_and_origin_query_params` unit test.
-
-### Added
-- A `raw_log` example program (`examples/raw_log.rs`, covered by the `Test examples` CI step via
-  `tests/examples.rs::example_raw_log`) that runs an Actor and then fetches and streams its raw
-  log end-to-end via `LogClient::get_with_options` and `RunClient::get_streamed_log_with_options`
-  with `LogOptions { raw: Some(true) }`, exercising the raw-log path added in 0.4.0 against the
-  live API.
-
-### Documentation
-- Documented the accepted `last_run` `origin` values (the platform run origins `DEVELOPMENT`,
-  `WEB`, `API`, `SCHEDULER`) in `docs/runs.md` and referenced them from the `last_run` rows in
-  `docs/actors.md` / `docs/tasks.md`, mirroring how the `status` values are enumerated. Corrected
-  the `TaskClient::last_run` docstring's `origin` example from the invalid `"SCHEDULE"` to the
-  valid origin `"SCHEDULER"` (the actor docstring was already correct), and showed an
-  `origin`-filtered call in `examples/run_and_last_run_storages.rs`.
-
 ## [0.4.0] - 2026-06-26
 
 Updated to Apify OpenAPI specification `v2-2026-06-25T142310Z` (previously
 `v2-2026-06-24T105326Z`). An operation- and parameter-level audit of every in-scope endpoint in the
 new specification (with the JavaScript reference client as the parity authority for which
 parameters and options are exposed) covered all 131 paths and confirmed the Rust client's in-scope
-typed API surface, with one missing optional log parameter fixed below. (A later review found a
-second gap — the `last_run` `origin` filter — which is fixed in 0.5.0 above.) This release also
-lands a comment-quality pass for the updated requirements. The minor-version bump reflects the
-additive public API below (new methods and a new option type; no breaking changes).
+typed API surface, with two missing optional parameters (the log `raw` parameter and the `last_run`
+`origin` filter) added below. This release also lands a comment-quality pass for the updated
+requirements. The minor-version bump reflects the additive public API below (new methods and new
+option types; no breaking changes to the pre-existing public interface).
 
 ### Added
+- `ActorClient::last_run_with_options` and `TaskClient::last_run_with_options`, plus a new
+  `LastRunOptions { status: Option<String>, origin: Option<String> }` (re-exported at the crate
+  root), adding an `origin` filter alongside `status` on the last-run endpoints
+  (`GET /v2/actors/{actorId}/runs/last`, `GET /v2/actor-tasks/{actorTaskId}/runs/last`). `status` is
+  the spec's documented filter on those endpoints; `origin` is not declared by the OpenAPI spec and
+  is exposed only for parity with the JS reference's `lastRun({ status, origin })`
+  (`apify-client-js/src/resource_clients/actor.ts`, `task.ts`). `origin` filters by how the run was
+  started (the platform run origins `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`), so
+  `actor.last_run_with_options(LastRunOptions { status: None, origin: Some("API".into()) })` sends
+  `origin=API`. The pre-existing `last_run(status: Option<&str>)` signature is unchanged and now
+  delegates to `last_run_with_options`, so this is purely additive. This mirrors the crate's own
+  `LogClient::get_with_options(LogOptions { .. })` convention and is consistent with the Go
+  sibling's additive `LastRunWithOptions(LastRunOptions{ Status, Origin })`. Covered by the offline
+  `last_run_sends_status_and_origin_query_params` unit test.
+- A `raw_log` example program (`examples/raw_log.rs`, covered by the `Test examples` CI step via
+  `tests/examples.rs::example_raw_log`) that runs an Actor and then fetches and streams its raw
+  log end-to-end via `LogClient::get_with_options` and `RunClient::get_streamed_log_with_options`
+  with `LogOptions { raw: Some(true) }`, exercising the raw-log path below against the live API.
 - `LogClient::get_with_options` and `LogClient::stream_with_options`, plus a new
   `LogOptions { raw: Option<bool> }` (re-exported at the crate root), exposing the spec's
   optional `raw` query parameter on the log endpoints (`GET /v2/logs/{buildOrRunId}`,
@@ -70,12 +55,21 @@ additive public API below (new methods and a new option type; no breaking change
 ### Changed
 - `API_SPEC_VERSION` bumped to `v2-2026-06-25T142310Z`.
 - Crate `version` bumped `0.3.0` → `0.4.0` (also exposed via `CLIENT_VERSION`); minor bump per
-  SemVer for the additive log-options API above.
+  SemVer for the additive APIs above (the log-options and last-run-options methods and the new
+  option types).
 - Documentation/comments: the `build_user_agent` `isAtHome` comment in `src/common.rs` was
   tightened and corrected — it previously quoted the old requirement wording (capitalized
   `False` / a capitalized worked example) which the requirements now render lowercase, making the
   comment stale. The behaviour (lowercase `true`/`false`, keyed solely on `APIFY_IS_AT_HOME`) is
   unchanged.
+
+### Documentation
+- Documented the accepted `last_run` `origin` values (the platform run origins `DEVELOPMENT`,
+  `WEB`, `API`, `SCHEDULER`) in `docs/runs.md` and referenced them from the `last_run` /
+  `last_run_with_options` rows in `docs/actors.md` / `docs/tasks.md`, mirroring how the `status`
+  values are enumerated. Corrected the `TaskClient::last_run` docstring's `origin` example from the
+  invalid `"SCHEDULE"` to the valid origin `"SCHEDULER"`, and showed an `origin`-filtered
+  `last_run_with_options` call in `examples/run_and_last_run_storages.rs`.
 
 ## [0.3.0] - 2026-06-25
 

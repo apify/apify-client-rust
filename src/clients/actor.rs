@@ -11,7 +11,7 @@ use crate::clients::base::{
 };
 use crate::clients::build::BuildClient;
 use crate::clients::build_collection::BuildCollectionClient;
-use crate::clients::run::RunClient;
+use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
 use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::common::{parse_data_envelope, QueryParams};
@@ -240,16 +240,29 @@ impl ActorClient {
         .await
     }
 
-    /// Returns a client for the last run of this Actor, optionally filtered by run status
-    /// and/or origin.
+    /// Returns a client for the last run of this Actor, optionally filtered by run status.
     ///
-    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `origin`
-    /// filters by how the run was started; accepted values are the platform's run origins
-    /// (e.g. `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). Both map
-    /// to the matching query parameters on `GET /v2/actors/{actorId}/runs/last` and mirror the
-    /// reference client's `lastRun({ status, origin })`. Pass `None` for either to leave it
-    /// unfiltered.
-    pub fn last_run(&self, status: Option<&str>, origin: Option<&str>) -> RunClient {
+    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); pass `None`
+    /// to leave it unfiltered. This maps to the `status` query parameter on
+    /// `GET /v2/actors/{actorId}/runs/last` and mirrors the reference client's `lastRun({ status })`.
+    /// To also filter by `origin`, use [`ActorClient::last_run_with_options`].
+    pub fn last_run(&self, status: Option<&str>) -> RunClient {
+        self.last_run_with_options(LastRunOptions {
+            status: status.map(str::to_owned),
+            origin: None,
+        })
+    }
+
+    /// Returns a client for the last run of this Actor, applying the given [`LastRunOptions`]
+    /// (e.g. [`LastRunOptions::status`] and/or [`LastRunOptions::origin`]).
+    ///
+    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`) and is the
+    /// spec's documented filter on `GET /v2/actors/{actorId}/runs/last`. `origin` filters by how
+    /// the run was started; accepted values are the platform's run origins (e.g. `"DEVELOPMENT"`,
+    /// `"WEB"`, `"API"`, `"SCHEDULER"`). `origin` is not declared by the OpenAPI spec and is sent
+    /// only for parity with the reference client's `lastRun({ status, origin })`. Both are sent as
+    /// query parameters; leave a field as `None` to omit it.
+    pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
         let mut client = RunClient::new(
             self.root.clone(),
             self.ctx.http.clone(),
@@ -257,10 +270,10 @@ impl ActorClient {
             "runs",
             "last",
         );
-        if let Some(status) = status {
+        if let Some(status) = options.status.as_deref() {
             client.set_base_param("status", status);
         }
-        if let Some(origin) = origin {
+        if let Some(origin) = options.origin.as_deref() {
             client.set_base_param("origin", origin);
         }
         client

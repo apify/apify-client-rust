@@ -68,7 +68,9 @@ pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, Down
 pub use clients::key_value_store::{GetRecordOptions, GetRecordsOptions, ListKeysOptions};
 pub use clients::log::LogOptions;
 pub use clients::request_queue::ListRequestsOptions;
-pub use clients::run::{RunChargeOptions, RunMetamorphOptions, RunResurrectOptions};
+pub use clients::run::{
+    LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
+};
 pub use clients::run_collection::RunListOptions;
 pub use clients::store_collection::StoreListOptions;
 

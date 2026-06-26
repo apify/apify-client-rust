@@ -96,7 +96,7 @@ async fn last_run_access() {
 
     let last = client
         .actor("apify/hello-world")
-        .last_run(Some("SUCCEEDED"), None)
+        .last_run(Some("SUCCEEDED"))
         .get()
         .await
         .expect("get last run");

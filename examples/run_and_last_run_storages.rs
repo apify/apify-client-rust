@@ -3,7 +3,7 @@
 //!
 //! Run with: `APIFY_TOKEN=... cargo run --example run_and_last_run_storages`
 
-use apify_client::ApifyClient;
+use apify_client::{ApifyClient, LastRunOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // unwrapping; here we fall back to the run we already have.
     let last_run = match client
         .actor("apify/hello-world")
-        .last_run(Some("SUCCEEDED"), None)
+        .last_run(Some("SUCCEEDED"))
         .get()
         .await?
     {
@@ -35,12 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("Last run id: {}", last_run.id);
 
-    // `last_run` can also filter by `origin` (how the run was started). Accepted origins are
-    // `DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER`. Runs started via the API (like the one above)
-    // have origin `API`, so this narrows to API-started runs; pass `None` to leave it unfiltered.
+    // `last_run_with_options` can additionally filter by `origin` (how the run was started).
+    // Accepted origins are `DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER`. Runs started via the API
+    // (like the one above) have origin `API`, so this narrows to API-started runs; leave a field
+    // as `None` to omit it.
     let api_last_run = client
         .actor("apify/hello-world")
-        .last_run(Some("SUCCEEDED"), Some("API"))
+        .last_run_with_options(LastRunOptions {
+            status: Some("SUCCEEDED".to_owned()),
+            origin: Some("API".to_owned()),
+        })
         .get()
         .await?;
     println!("Last API-origin run indexed: {}", api_last_run.is_some());

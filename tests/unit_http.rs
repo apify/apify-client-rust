@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError};
+use apify_client::{ApifyClient, ApifyClientError, LastRunOptions};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -285,9 +285,9 @@ async fn log_get_sends_raw_query_param() {
     );
 }
 
-/// `actor.last_run` / `task.last_run` thread the optional `status` and `origin` filters into
-/// the last-run request as query parameters, matching the JS reference's `lastRun({ status,
-/// origin })`. Passing `None` for a filter omits it.
+/// The status-only `last_run(status)` and the options-based `last_run_with_options` thread the
+/// optional `status` and `origin` filters into the last-run request as query parameters, matching
+/// the JS reference's `lastRun({ status, origin })`. Leaving a filter as `None` omits it.
 #[tokio::test]
 async fn last_run_sends_status_and_origin_query_params() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -296,10 +296,30 @@ async fn last_run_sends_status_and_origin_query_params() {
     )]);
     let client = client_with(backend.clone(), 0);
 
-    // Both filters set on the actor last run -> both query params present.
+    // The non-breaking status-only convenience sends just `status`.
     client
         .actor("me~some-actor")
-        .last_run(Some("SUCCEEDED"), Some("API"))
+        .last_run(Some("SUCCEEDED"))
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last") && url.contains("status=SUCCEEDED"),
+        "expected status=SUCCEEDED on the actor last-run request, got {url}"
+    );
+    assert!(
+        !url.contains("origin="),
+        "last_run(Some(..)) must not send an origin param, got {url}"
+    );
+
+    // Both filters set via options on the actor last run -> both query params present.
+    client
+        .actor("me~some-actor")
+        .last_run_with_options(LastRunOptions {
+            status: Some("SUCCEEDED".to_owned()),
+            origin: Some("API".to_owned()),
+        })
         .get()
         .await
         .expect("ok");
@@ -311,10 +331,13 @@ async fn last_run_sends_status_and_origin_query_params() {
         "expected status=SUCCEEDED and origin=API on the actor last-run request, got {url}"
     );
 
-    // Only `origin` set on the task last run -> origin present, status absent.
+    // Only `origin` set via options on the task last run -> origin present, status absent.
     client
         .task("me~some-task")
-        .last_run(None, Some("SCHEDULER"))
+        .last_run_with_options(LastRunOptions {
+            status: None,
+            origin: Some("SCHEDULER".to_owned()),
+        })
         .get()
         .await
         .expect("ok");
@@ -325,13 +348,13 @@ async fn last_run_sends_status_and_origin_query_params() {
     );
     assert!(
         !url.contains("status="),
-        "task last_run(None, ..) must not send a status param, got {url}"
+        "task last_run_with_options without status must not send a status param, got {url}"
     );
 
     // Neither filter set -> no `status`/`origin` params.
     client
         .actor("me~some-actor")
-        .last_run(None, None)
+        .last_run(None)
         .get()
         .await
         .expect("ok");

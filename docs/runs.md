@@ -37,11 +37,14 @@ values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TI
 `TIMED-OUT`; the terminal ones (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`) are what
 `is_terminal()` reports and what `wait_for_finish` polls for.
 
-The `last_run(status, origin)` methods on `ActorClient` ([Actors](actors.md)) and `TaskClient`
-([Actor tasks](tasks.md)) take these same `status` values plus an `origin` filter. `origin`
-restricts the last run by how it was started; accepted values are the platform's run origins, the
-most common being `DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER` (e.g.
-`last_run(Some("SUCCEEDED"), Some("WEB"))`). Pass `None` for either argument to leave it unfiltered.
+The `last_run(status)` methods on `ActorClient` ([Actors](actors.md)) and `TaskClient`
+([Actor tasks](tasks.md)) take these same `status` values (e.g. `last_run(Some("SUCCEEDED"))`); pass
+`None` to leave it unfiltered. To additionally filter by `origin`, use the companion
+`last_run_with_options(LastRunOptions { status, origin })`. `origin` restricts the last run by how
+it was started; accepted values are the platform's run origins, the most common being
+`DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER` (e.g.
+`last_run_with_options(LastRunOptions { status: Some("SUCCEEDED".into()), origin: Some("WEB".into()) })`).
+Leave a field as `None` to omit it.
 
 ## `ActorRun` fields
 
