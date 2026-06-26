@@ -23,6 +23,8 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
+| `get_streamed_log()` | — | `Stream<Item = Result<Vec<u8>>>` | Convenience for `log().stream()` — streams the run's log chunks live (log redirection). |
+| `get_streamed_log_with_options(options)` | `LogOptions` | `Stream<Item = Result<Vec<u8>>>` | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
 
 `RunResurrectOptions`: `build`, `memory_mbytes`, `timeout_secs`, `max_items`, `max_total_charge_usd`, `restart_on_error` (all optional).
 
@@ -34,6 +36,15 @@ collections are available via `actor.runs()` and `task.runs()`.
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and
 `TIMED-OUT`; the terminal ones (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`) are what
 `is_terminal()` reports and what `wait_for_finish` polls for.
+
+The `last_run(status)` methods on `ActorClient` ([Actors](actors.md)) and `TaskClient`
+([Actor tasks](tasks.md)) take these same `status` values (e.g. `last_run(Some("SUCCEEDED"))`); pass
+`None` to leave it unfiltered. To additionally filter by `origin`, use the companion
+`last_run_with_options(LastRunOptions { status, origin })`. `origin` restricts the last run by how
+it was started; accepted values are the platform's run origins, the most common being
+`DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER` (e.g.
+`last_run_with_options(LastRunOptions { status: Some("SUCCEEDED".into()), origin: Some("WEB".into()) })`).
+Leave a field as `None` to omit it.
 
 ## `ActorRun` fields
 

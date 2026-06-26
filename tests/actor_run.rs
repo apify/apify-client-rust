@@ -49,6 +49,16 @@ async fn run_actor_and_read_outputs() {
     let log = client.run(&run.id).log().get().await.expect("get run log");
     assert!(log.is_some(), "finished run should have a log");
 
+    // Fetch the raw log via the `raw` query parameter (LogOptions). The endpoint must accept
+    // it and still return the log content.
+    let raw_log = client
+        .run(&run.id)
+        .log()
+        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .await
+        .expect("get raw run log");
+    assert!(raw_log.is_some(), "finished run should have a raw log");
+
     // Read the run's default dataset. (The `hello-world` Actor writes its result to the
     // key-value store rather than the dataset, so the dataset may be empty — we only
     // assert that reading it succeeds.)

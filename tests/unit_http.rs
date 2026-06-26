@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError};
+use apify_client::{ApifyClient, ApifyClientError, LastRunOptions};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -253,5 +253,114 @@ async fn validate_input_sends_build_query_param() {
     assert!(
         !url.contains("build="),
         "default validate_input must not send a build param, got {url}"
+    );
+}
+
+/// `LogClient::get_with_options` sends the spec's optional `raw` query parameter, and the
+/// no-arg `get` omits it.
+#[tokio::test]
+async fn log_get_sends_raw_query_param() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"some log output".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    // With raw -> `raw=1` present in the run log URL.
+    client
+        .run("some-run-id")
+        .log()
+        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/log") && url.contains("raw=1"),
+        "expected raw=1 on the run log request, got {url}"
+    );
+
+    // Without options -> no `raw` param.
+    client.run("some-run-id").log().get().await.expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("raw="),
+        "default log get must not send a raw param, got {url}"
+    );
+}
+
+/// The status-only `last_run(status)` and the options-based `last_run_with_options` thread the
+/// optional `status` and `origin` filters into the last-run request as query parameters, matching
+/// the JS reference's `lastRun({ status, origin })`. Leaving a filter as `None` omits it.
+#[tokio::test]
+async fn last_run_sends_status_and_origin_query_params() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1","status":"SUCCEEDED"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    // The non-breaking status-only convenience sends just `status`.
+    client
+        .actor("me~some-actor")
+        .last_run(Some("SUCCEEDED"))
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last") && url.contains("status=SUCCEEDED"),
+        "expected status=SUCCEEDED on the actor last-run request, got {url}"
+    );
+    assert!(
+        !url.contains("origin="),
+        "last_run(Some(..)) must not send an origin param, got {url}"
+    );
+
+    // Both filters set via options on the actor last run -> both query params present.
+    client
+        .actor("me~some-actor")
+        .last_run_with_options(LastRunOptions {
+            status: Some("SUCCEEDED".to_owned()),
+            origin: Some("API".to_owned()),
+        })
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last")
+            && url.contains("status=SUCCEEDED")
+            && url.contains("origin=API"),
+        "expected status=SUCCEEDED and origin=API on the actor last-run request, got {url}"
+    );
+
+    // Only `origin` set via options on the task last run -> origin present, status absent.
+    client
+        .task("me~some-task")
+        .last_run_with_options(LastRunOptions {
+            status: None,
+            origin: Some("SCHEDULER".to_owned()),
+        })
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/runs/last") && url.contains("origin=SCHEDULER"),
+        "expected origin=SCHEDULER on the task last-run request, got {url}"
+    );
+    assert!(
+        !url.contains("status="),
+        "task last_run_with_options without status must not send a status param, got {url}"
+    );
+
+    // Neither filter set -> no `status`/`origin` params.
+    client
+        .actor("me~some-actor")
+        .last_run(None)
+        .get()
+        .await
+        .expect("ok");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("status=") && !url.contains("origin="),
+        "default last_run must not send status/origin params, got {url}"
     );
 }

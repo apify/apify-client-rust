@@ -18,6 +18,25 @@ use crate::models::ActorRun;
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
 
+/// Options for fetching an Actor's or task's last run
+/// ([`crate::clients::actor::ActorClient::last_run_with_options`] /
+/// [`crate::clients::task::TaskClient::last_run_with_options`]).
+///
+/// Both are sent as query parameters to the last-run endpoints
+/// (`GET /v2/actors/{actorId}/runs/last`, `GET /v2/actor-tasks/{actorTaskId}/runs/last`).
+/// `status` is the spec's documented optional filter on those endpoints; `origin` is not declared
+/// by the OpenAPI spec and is exposed only for parity with the reference client's
+/// `lastRun({ status, origin })`.
+#[derive(Debug, Default, Clone)]
+pub struct LastRunOptions {
+    /// Filter by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `None` leaves it
+    /// unfiltered.
+    pub status: Option<String>,
+    /// Filter by how the run was started; accepted values are the platform's run origins
+    /// (e.g. `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). `None` leaves it unfiltered.
+    pub origin: Option<String>,
+}
+
 /// Options for resurrecting a finished run.
 #[derive(Debug, Default, Clone)]
 pub struct RunResurrectOptions {
@@ -83,11 +102,12 @@ impl RunClient {
         }
     }
 
-    /// Adds a `status` filter to this run client (used by `actor.last_run`).
-    pub(crate) fn set_status_param(&mut self, status: &str) {
+    /// Adds a base query parameter to this run client, inherited by its requests (used by
+    /// `actor.last_run` / `task.last_run` to thread the `status` and `origin` filters).
+    pub(crate) fn set_base_param(&mut self, key: &str, value: &str) {
         self.ctx
             .base_params
-            .push_raw("status".to_string(), status.to_string());
+            .push_raw(key.to_string(), value.to_string());
     }
 
     /// Fetches the run object, or `None` if it does not exist.
@@ -250,5 +270,19 @@ impl RunClient {
         &self,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
         self.log().stream().await
+    }
+
+    /// Opens a live stream of the run's log for redirection, applying the given
+    /// [`LogOptions`] (e.g. [`LogOptions::raw`] to stream the unprocessed log, which is the
+    /// form the JS reference's log redirection consumes internally).
+    ///
+    /// This is a Rust-specific convenience that simply forwards `LogOptions` to
+    /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
+    /// method's signature (which takes redirect options and returns a `StreamedLog` object).
+    pub async fn get_streamed_log_with_options(
+        &self,
+        options: crate::clients::log::LogOptions,
+    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        self.log().stream_with_options(options).await
     }
 }

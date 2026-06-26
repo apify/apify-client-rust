@@ -29,7 +29,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.2"
+apify-client = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -67,11 +67,12 @@ root, so you can import them directly from `apify_client` — you never need the
 types is:
 
 - Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
-- Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`
+- Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordsOptions`, `GetRecordOptions`
 - Request queues: `ListRequestsOptions`
 - Store: `StoreListOptions`
+- Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
 
 plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
@@ -167,3 +168,4 @@ Each example in [`../examples`](../examples) is runnable with
 | `run_and_last_run_storages` | Run an Actor, then read the last run's storages. |
 | `iterate_store` | Lazily iterate Store Actors. |
 | `log_redirection` | Redirect a separate Actor's run log into your output live, prefixing each line with the source Actor's name. |
+| `raw_log` | Fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`. |
