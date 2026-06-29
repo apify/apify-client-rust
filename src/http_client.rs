@@ -241,9 +241,11 @@ impl HttpClient {
         // attempt up to the client's overall timeout budget.
         let base_timeout = request.timeout;
         let mut delay = self.retry.min_delay_between_retries;
-        let max_attempts = self.retry.max_retries + 1;
+        // `saturating_add` so an extreme `max_retries` can't overflow the attempt count.
+        let max_attempts = self.retry.max_retries.saturating_add(1);
 
-        for attempt in 1..=max_attempts {
+        let mut attempt = 1;
+        loop {
             // Grow per-attempt timeout with each attempt, capped at the overall budget.
             let mut attempt_request = request.clone();
             attempt_request.timeout = self.attempt_timeout(base_timeout, attempt);
@@ -274,14 +276,10 @@ impl HttpClient {
             // a factor of 2) and is capped at the overall request timeout so a single backoff
             // can never exceed the budget the whole request is allowed.
             sleep(randomized_delay(delay)).await;
-            delay = (delay * BACKOFF_FACTOR).min(self.retry.timeout);
+            // `saturating_mul` mirrors the saturating arithmetic in `attempt_timeout`.
+            delay = delay.saturating_mul(BACKOFF_FACTOR).min(self.retry.timeout);
+            attempt += 1;
         }
-
-        // Unreachable: the loop always returns on its final iteration, but the compiler
-        // cannot prove `max_attempts >= 1`, so provide a defensive fallback.
-        Err(ApifyClientError::InvalidResponse(
-            "request failed without a recorded error".to_string(),
-        ))
     }
 
     /// Per-attempt timeout: `min(overall_timeout, base * 2^(attempt-1))`.
@@ -386,23 +384,25 @@ fn next_jitter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static STATE: AtomicU64 = AtomicU64::new(0);
 
-    // Lazily seed from the clock on first use.
-    let mut current = STATE.load(Ordering::Relaxed);
-    if current == 0 {
+    const GOLDEN_GAMMA: u64 = 0x9E3779B97F4A7C15;
+
+    // Lazily seed from the clock on first use. A racing double-seed is harmless: both
+    // candidate seeds are valid SplitMix64 stream starting points.
+    if STATE.load(Ordering::Relaxed) == 0 {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E3779B97F4A7C15)
+            .unwrap_or(GOLDEN_GAMMA)
             | 1;
-        // Ignore the race: if two threads seed simultaneously both produce valid streams.
         let _ = STATE.compare_exchange(0, seed, Ordering::Relaxed, Ordering::Relaxed);
-        current = STATE.load(Ordering::Relaxed);
     }
 
-    // SplitMix64 step, advancing the shared state atomically.
-    let next = current.wrapping_add(0x9E3779B97F4A7C15);
-    STATE.store(next, Ordering::Relaxed);
-    let mut z = next;
+    // SplitMix64: advance the shared state by the golden-ratio increment in a single atomic
+    // read-modify-write (`fetch_add`) so concurrent callers each observe a distinct value —
+    // a plain load-then-store could hand two racing retries the same number. Then scramble.
+    let mut z = STATE
+        .fetch_add(GOLDEN_GAMMA, Ordering::Relaxed)
+        .wrapping_add(GOLDEN_GAMMA);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
     z ^ (z >> 31)

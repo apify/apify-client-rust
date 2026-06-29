@@ -97,9 +97,11 @@ let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
 // Current cycle.
 let usage = client.me().monthly_usage().await?;
 
-// The cycle containing a specific day (YYYY-MM-DD).
-let march = client.me().monthly_usage_for_date(Some("2026-03-15")).await?;
-if let Some(cycle) = march.get("usageCycle") {
+// The cycle containing a specific day (YYYY-MM-DD). Derive it from "now" rather than
+// hard-coding a date so the lookup always lands on a real cycle.
+let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+let dated = client.me().monthly_usage_for_date(Some(&day)).await?;
+if let Some(cycle) = dated.get("usageCycle") {
     let start = cycle.get("startAt").and_then(|v| v.as_str()).unwrap_or("?");
     let end = cycle.get("endAt").and_then(|v| v.as_str()).unwrap_or("?");
     println!("cycle {start} .. {end}");

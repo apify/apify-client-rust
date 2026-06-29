@@ -4,6 +4,21 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-06-29
+
+Synchronized with Apify OpenAPI specification `v2-2026-06-29T142258Z` (previously
+`v2-2026-06-25T142310Z`). A full operation- and parameter-level audit of every in-scope endpoint
+against the new specification (with the JavaScript reference client as the parity authority for the
+exposed surface) found the in-scope typed API surface unchanged: same paths, operations, query/header
+parameters, request bodies and response schemas. The recently added pay-per-event `charge` and
+`validate-input` operations remain covered and correct. The still-uncovered endpoints
+(`run-sync`/`run-sync-get-dataset-items`, `/v2/tools/*`, `/v2/browser-info`, and the keyed `POST`
+create variants that duplicate covered `PUT` writes) remain out of scope, matching the reference
+client. No public API surface change, so this is a patch release.
+
+### Changed
+- `API_SPEC_VERSION` bumped to `v2-2026-06-29T142258Z`.
+
 ## [0.4.1] - 2026-06-29
 
 Compliance pass against the updated client requirements (no OpenAPI spec change; still
