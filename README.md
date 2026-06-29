@@ -1,8 +1,8 @@
 # Apify API client for Rust
 
-> **Experimental — AI-generated and AI-maintained.** This client is experimental. It is
-> generated and maintained by AI, and is not (yet) an officially supported Apify product. Review
-> the code before relying on it in production and report issues on the repository.
+> **Official, but experimental — AI-generated and AI-maintained.** This is an official Apify
+> client, but it is experimental: it is generated and maintained by AI. Review the code before
+> relying on it in production and report issues on the repository.
 
 An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 It provides a resource-oriented, async interface that mirrors the official
@@ -129,14 +129,20 @@ GitHub release whose notes are the corresponding `CHANGELOG.md` section (falling
 one-liner if that section is missing), and finally runs `cargo publish`.
 
 The workflow **only runs from `master`** — it hard-fails on any other ref — and refuses to run if
-the resolved tag already exists, so a release can never clobber a prior one. It also fails early
-with a clear message if the `CARGO_REGISTRY_TOKEN` secret is missing. A `dry_run` input runs all
-checks but performs no publish, tag, or release.
+the resolved tag already exists, so a release can never clobber a prior one. A `dry_run` input runs
+all checks but performs no publish, tag, or release.
+
+Authentication to crates.io uses **Trusted Publishing** (OIDC): the job has `id-token: write`
+permission and `rust-lang/crates-io-auth-action@v1` exchanges the GitHub Actions identity for a
+short-lived crates.io token at publish time (auto-revoked when the job ends). No long-lived
+crates.io API token is stored as a repository secret; the only publishing secret used is the
+built-in `GITHUB_TOKEN` (for the tag push and GitHub release).
 
 Prerequisites and steps to cut a release:
 
-1. Configure the `CARGO_REGISTRY_TOKEN` repository secret with a crates.io API token (one-time
-   setup). The tag and GitHub release use the default `GITHUB_TOKEN`, so no other secret is needed.
+1. Configure a **Trusted Publisher** for the `apify-client` crate on crates.io (one-time setup),
+   pointing at this repository and the `rust-publish.yml` workflow. No `CARGO_REGISTRY_TOKEN` secret
+   is needed; the tag and GitHub release use the default `GITHUB_TOKEN`.
 2. Bump `version` in `Cargo.toml` and add a matching dated entry to `CHANGELOG.md` (the release
    notes are extracted from that section), then merge to `master`.
 3. Trigger the workflow from `master`.

@@ -4,6 +4,27 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-06-29
+
+Compliance pass against the updated client requirements (no OpenAPI spec change; still
+`v2-2026-06-25T142310Z`). No changes to the public API surface, so this is a patch release.
+
+### Changed
+- Documentation now states the client is **"official, but experimental"** (previously worded as
+  "not (yet) an officially supported Apify product"), keeping the AI-generated and AI-maintained
+  disclaimer. Updated consistently in the crate-level rustdoc (`src/lib.rs`), `README.md`,
+  `docs/README.md`, and the crate `description` in `Cargo.toml`, per the documentation requirement
+  that the docs clearly state the clients are official, but experimental and AI-generated/maintained.
+- The crates.io publish workflow (`.github/workflows/rust-publish.yml`) now authenticates with
+  **Trusted Publishing** (OIDC) via `rust-lang/crates-io-auth-action@v1` instead of a stored
+  `CARGO_REGISTRY_TOKEN` secret, per the publishing requirement to use a Trusted Publisher when the
+  language's distribution process supports it (crates.io does). The job gains `id-token: write`
+  permission to mint the OIDC token, which the action exchanges for a short-lived crates.io token
+  (auto-revoked at job end); the `cargo publish --dry-run` verification step needs no credentials.
+  A Trusted Publisher must be configured for the crate on crates.io (this repository + workflow
+  file). The only remaining repository secret used for publishing is the built-in `GITHUB_TOKEN`
+  (tag push and GitHub release creation).
+
 ## [0.4.0] - 2026-06-26
 
 Updated to Apify OpenAPI specification `v2-2026-06-25T142310Z` (previously

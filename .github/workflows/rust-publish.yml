@@ -8,6 +8,12 @@ name: Publish Rust client to crates.io
 # matching GitHub release. The release tag is derived from the single source of truth (the
 # `version` field in Cargo.toml, which is also what `CLIENT_VERSION` reads via CARGO_PKG_VERSION)
 # so the published crate version, the git tag, and the in-code client version can never disagree.
+#
+# Authentication to crates.io uses Trusted Publishing (OIDC) via `rust-lang/crates-io-auth-action`,
+# the registry's recommended mechanism — no long-lived crates.io API token is stored as a secret.
+# A Trusted Publisher must be configured for the crate on crates.io (this repository + this
+# workflow file). The only repository secret still used is the built-in GITHUB_TOKEN, for pushing
+# the tag and creating the GitHub release.
 on:
   workflow_dispatch:
     inputs:
@@ -23,9 +29,12 @@ concurrency:
   cancel-in-progress: false
 
 # The default GITHUB_TOKEN needs write access to push the release tag and create the GitHub
-# release. The crates.io registry token is provided separately as a repository secret.
+# release. `id-token: write` lets the job mint a short-lived OpenID Connect token that
+# `rust-lang/crates-io-auth-action` exchanges for an ephemeral crates.io publish token
+# (Trusted Publishing) — so no long-lived crates.io registry secret is stored in the repo.
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   publish:
@@ -107,23 +116,11 @@ jobs:
             exit 1
           fi
 
-      # Fail early with a clear message if the registry token is not configured, instead of
-      # letting `cargo publish` fail later with a less obvious authentication error.
-      - name: Require CARGO_REGISTRY_TOKEN secret
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
-            echo "::error::CARGO_REGISTRY_TOKEN secret is empty or missing; cannot publish to crates.io."
-            exit 1
-          fi
-
       # Always verify packaging works (this also runs as part of `cargo publish`, but doing it
       # explicitly surfaces packaging problems before any registry interaction or tag creation).
+      # No registry credentials are needed for `--dry-run`: it only packages and verifies the
+      # crate locally without contacting the registry for authentication.
       - name: Verify package (dry run)
-        env:
-          # The crates.io registry token is stored as a repository secret.
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --dry-run --verbose
 
       # Ordering rationale (deliberate): the git tag and GitHub release are created and pushed
@@ -200,10 +197,20 @@ jobs:
               --notes "${RELEASE_NOTES}"
           fi
 
+      # Trusted Publishing: exchange the GitHub Actions OIDC identity for a short-lived crates.io
+      # token instead of storing a long-lived registry secret. The action sets a `token` output
+      # and automatically revokes it in its post step when the job finishes. This requires a
+      # matching Trusted Publisher to be configured for the crate on crates.io (organization,
+      # repository and workflow file name).
+      - name: Authenticate to crates.io (Trusted Publishing)
+        id: auth
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: rust-lang/crates-io-auth-action@v1
+
       - name: Publish to crates.io
         # Skip the actual publish when the run was dispatched as a dry run.
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
-          # The crates.io registry token is stored as a repository secret.
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # Short-lived token minted by Trusted Publishing (no stored registry secret).
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --verbose
