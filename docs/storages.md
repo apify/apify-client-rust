@@ -70,6 +70,24 @@ let scratch = client.datasets().get_or_create(None).await?;
 `skip_failed_pages`. `DatasetDownloadOptions` adds `attachment`, `bom`, `delimiter`,
 `skip_header_row`, `xml_root`, `xml_row`, `feed_title`, `feed_description`.
 
+`DownloadItemsFormat` (re-exported at the crate root) selects the export format for
+`download_items`. Variants: `Json`, `Jsonl`, `Csv`, `Xlsx`, `Xml`, `Rss`, `Html`. The method
+returns the raw exported bytes (`Vec<u8>`) — for example, CSV text or the binary XLSX workbook —
+which you can write to a file or forward to another service:
+
+```rust,no_run
+# use apify_client::{ApifyClient, DownloadItemsFormat};
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let dataset = client.datasets().get_or_create(None).await?;
+let csv: Vec<u8> = client
+    .dataset(&dataset.id)
+    .download_items(DownloadItemsFormat::Csv, Default::default())
+    .await?;
+println!("exported {} bytes of CSV", csv.len());
+# Ok(())
+# }
+```
+
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
 `KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
@@ -120,6 +138,24 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
 | `unlock_requests()` | — | `Value` | Release all this client's locks. |
+
+The `forefront` boolean (on `add_request`, `update_request`, `batch_add_requests`,
+`prolong_request_lock`, `delete_request_lock`) controls queue ordering: `true` puts the
+request(s) at the **front** of the queue so they are handled before the existing backlog;
+`false` (the usual choice) appends them at the **back**.
+
+Some request-queue methods return an untyped `serde_json::Value` because the API responses are
+open-ended and most callers do not consume them structurally. Their shapes (read fields with
+`value.get("...")`):
+
+- `list_and_lock_head` → an object with `items` (the locked head requests), `limit`,
+  `queueModifiedAt`, `hadMultipleClients`, and the granted `lockSecs`.
+- `batch_add_requests` / `batch_delete_requests` → an object with `processedRequests` and
+  `unprocessedRequests` arrays.
+- `list_requests` → an object with `items` (the page of requests), `count`, `limit`, and
+  `exclusiveStartId` for cursor continuation.
+- `unlock_requests` → an object reporting how many locks were released (`unlockedCount`).
+- `get_statistics` (datasets) → per-field statistics keyed by field name.
 
 ### `RequestQueueRequest` and request-queue return types
 
