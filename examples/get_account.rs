@@ -3,6 +3,7 @@
 //! Run with: `APIFY_TOKEN=... cargo run --example get_account`
 
 use apify_client::ApifyClient;
+use chrono::Utc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Usage for the billing cycle that contains a specific `YYYY-MM-DD` date — pass `Some(date)`
     // to look up a particular cycle, or `None` for the current one. We derive the date from the
     // current day (rather than hard-coding one) so the lookup always lands on a real cycle.
-    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let date = Utc::now().format("%Y-%m-%d").to_string();
     let dated_usage = client.me().monthly_usage_for_date(Some(&date)).await?;
     if let Some(cycle) = dated_usage.get("usageCycle") {
         println!("Usage cycle containing {date}: {cycle}");

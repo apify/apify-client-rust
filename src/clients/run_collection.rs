@@ -39,6 +39,29 @@ impl RunCollectionClient {
     }
 
     /// Lists runs with offset/limit pagination and optional status/started-time filtering.
+    ///
+    /// Unlike other collections, run listing takes two arguments: the shared [`ListOptions`]
+    /// (offset/limit/desc) and a [`RunListOptions`] filter (status and start-time bounds).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use apify_client::{ApifyClient, ListOptions, RunListOptions};
+    ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = ApifyClient::new("my-api-token");
+    /// let runs = client
+    ///     .runs()
+    ///     .list(
+    ///         ListOptions { limit: Some(10), desc: Some(true), ..Default::default() },
+    ///         RunListOptions { status: vec!["SUCCEEDED".to_string()], ..Default::default() },
+    ///     )
+    ///     .await?;
+    /// for run in runs.items {
+    ///     println!("{}", run.id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list(
         &self,
         options: ListOptions,
