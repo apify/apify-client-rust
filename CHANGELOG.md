@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.3] - 2026-06-30
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-06-30T091455Z`.
+- Bumped crate version to `0.4.3`.
+
+### Documentation
+- `examples/get_account.rs`: import `chrono::Utc` explicitly so the snippet is self-contained.
+- `RunCollectionClient::list`: added a rustdoc example for the two-argument
+  `list(ListOptions, RunListOptions)` call.
+
 ## [0.4.2] - 2026-06-29
 
 Synchronized with Apify OpenAPI specification `v2-2026-06-29T142258Z` (previously
