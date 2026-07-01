@@ -6,26 +6,13 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [0.4.3] - 2026-06-30
 
-Synchronized with Apify OpenAPI specification `v2-2026-06-30T091455Z` (previously
-`v2-2026-06-29T142258Z`). An independent operation- and parameter-level audit of the new
-specification (131 paths / 231 operations) against the exposed client surface — with the
-`apify-client-js` reference client as the parity authority for which endpoints are in scope — found
-**no change to the in-scope API surface**: same paths, operations, query/header parameters, request
-bodies and response schemas. Spot-checks of the highest-churn endpoints (`POST /v2/actors/{actorId}/runs`,
-`GET /v2/store`, `GET /v2/datasets/{datasetId}/items`, `GET /v2/actor-runs` including the
-`startedAfter`/`startedBefore` filters, `POST /v2/actor-runs/{runId}/charge`,
-`POST /v2/actor-runs/{runId}/resurrect`) confirmed every documented parameter remains covered. The
-endpoints not exposed by the client (`run-sync` / `run-sync-get-dataset-items`,
-`/v2/tools/encode-and-sign` & `/v2/tools/decode-and-verify`, `/v2/browser-info`, and the keyed `POST`
-create variants that duplicate the covered `PUT` writes) remain out of scope, matching the reference
-client. No public API surface change, so this is a patch release.
-
 ### Changed
-- `API_SPEC_VERSION` bumped to `v2-2026-06-30T091455Z`.
+- Bumped `API_SPEC_VERSION` to `v2-2026-06-30T091455Z`.
+- Bumped crate version to `0.4.3`.
 
 ### Documentation
-- `examples/get_account.rs` now imports `chrono::Utc` explicitly so the snippet is self-contained.
-- Added a runnable rustdoc example to `RunCollectionClient::list` showing the two-argument
+- `examples/get_account.rs`: import `chrono::Utc` explicitly so the snippet is self-contained.
+- `RunCollectionClient::list`: added a rustdoc example for the two-argument
   `list(ListOptions, RunListOptions)` call.
 
 ## [0.4.2] - 2026-06-29
