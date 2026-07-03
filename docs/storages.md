@@ -65,10 +65,31 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/CSV/XLSX/XML/RSS/HTML. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
 
-`DatasetListItemsOptions`: `offset`, `limit`, `desc`, `fields`, `output_fields`, `omit`,
-`skip_empty`, `skip_hidden`, `clean`, `unwind`, `flatten`, `view`, `simplified`,
-`skip_failed_pages`. `DatasetDownloadOptions` adds `attachment`, `bom`, `delimiter`,
-`skip_header_row`, `xml_root`, `xml_row`, `feed_title`, `feed_description`.
+`DatasetListItemsOptions` (all optional):
+
+- `offset` / `limit` / `desc` — pagination window and reverse (newest-first) ordering.
+- `fields` — comma-separated allow-list of top-level fields to keep in each item.
+- `output_fields` — positionally renames the fields selected by `fields` in the output; requires
+  `fields`, and the two lists must have equal length (the i-th `output_fields` name becomes the
+  output name of the i-th `fields` entry).
+- `omit` — comma-separated fields to drop from each item.
+- `skip_empty` — omit items that are empty after field filtering.
+- `skip_hidden` — omit hidden fields (those whose names start with `#`).
+- `clean` — shorthand for `skip_hidden` + `skip_empty` (only non-empty, non-hidden items).
+- `unwind` — comma-separated fields whose array values are expanded into separate items.
+- `flatten` — comma-separated fields whose nested objects are flattened into dotted keys.
+- `view` — name of a dataset view to apply.
+- `simplified` — return the simplified form of the items.
+- `skip_failed_pages` — skip pages that failed to be scraped (crawler datasets).
+
+`DatasetDownloadOptions` adds format-specific export controls (all optional):
+
+- `attachment` — set the `Content-Disposition: attachment` header so browsers download the file.
+- `bom` — prepend a UTF-8 byte-order mark (useful for CSV opened in Excel).
+- `delimiter` — CSV field delimiter (default `,`).
+- `skip_header_row` — omit the CSV header row.
+- `xml_root` / `xml_row` — element names for the XML root and per-item rows.
+- `feed_title` / `feed_description` — title and description for RSS output.
 
 `DownloadItemsFormat` (re-exported at the crate root) selects the export format for
 `download_items`. Variants: `Json`, `Jsonl`, `Csv`, `Xlsx`, `Xml`, `Rss`, `Html`. The method
@@ -155,7 +176,6 @@ open-ended and most callers do not consume them structurally. Their shapes (read
 - `list_requests` → an object with `items` (the page of requests), `count`, `limit`, and
   `exclusiveStartId` for cursor continuation.
 - `unlock_requests` → an object reporting how many locks were released (`unlockedCount`).
-- `get_statistics` (datasets) → per-field statistics keyed by field name.
 
 ### `RequestQueueRequest` and request-queue return types
 

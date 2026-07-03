@@ -34,9 +34,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 Some snippets and examples need extra crates: add `serde_json = "1"` when you read
-dynamically-typed responses as `serde_json::Value` (as the README Quick start does), and
+dynamically-typed responses as `serde_json::Value` (as the README Quick start does),
 `futures-util = "0.3"` to consume `LogClient::stream()` (log streaming — see
-[Store, users and logs](misc.md#logs--clientlogbuild_or_run_id)).
+[Store, users and logs](misc.md#logs--clientlogbuild_or_run_id)), and `chrono = "0.4"` if you
+construct or read timestamp values yourself (model timestamp fields are `chrono::DateTime<Utc>`
+and `chrono` is not re-exported, so snippets calling `chrono::Utc::now()` — such as the
+`monthly_usage` and account examples — need it as a direct dependency).
 
 Create a client and call a resource:
 
