@@ -53,7 +53,14 @@ client-side polling budget:
 
 ### `ActorBuildOptions`
 
-`beta_packages`, `tag`, `use_cache`, `wait_for_finish` — all optional.
+All optional:
+
+- `tag` — build tag to assign to the resulting build (e.g. `latest`).
+- `use_cache` — reuse cached Docker layers from previous builds to speed the build up.
+- `beta_packages` — build against the beta versions of the Apify SDK/CLI packages instead of the
+  stable ones.
+- `wait_for_finish` — maximum number of seconds the server waits for the build to finish before
+  responding (a server-side wait, not client-side polling).
 
 ### Input validation
 
