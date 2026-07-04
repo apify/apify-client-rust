@@ -6,27 +6,14 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [0.4.5] - 2026-07-03
 
-Synchronized with Apify OpenAPI specification `v2-2026-07-02T131926Z` (previously
-`v2-2026-07-01T115402Z`). An operation- and parameter-level audit of every in-scope endpoint
-against the new specification (with the JavaScript reference client as the parity authority for the
-exposed surface) found the in-scope typed API surface unchanged: same 131 paths, same operations,
-identical query/header parameters, request bodies and response schemas. No public API surface
-change, so this is a patch release.
-
 ### Changed
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-02T131926Z`.
 - Bumped crate version to `0.4.5`.
 
 ### Documentation
-- `README.md` / `docs/README.md`: added `chrono = "0.4"` to the extra-dependency instructions
-  (needed by snippets that read/construct timestamps; `chrono` is not re-exported), which also
-  corrects the README's "Two more dependencies" count.
-- `docs/storages.md`: removed a stray `get_statistics` bullet that was misplaced in the
-  request-queue return-types list (the method is documented in the dataset methods table), and
-  expanded the `DatasetListItemsOptions` / `DatasetDownloadOptions` field lists from name-only
-  lists into per-field descriptions; corrected the `output_fields` description to match the spec
-  (positional rename of the fields selected by `fields`).
-- `docs/actors.md`: expanded the `ActorBuildOptions` field list into per-field descriptions.
+- Added `chrono` to the extra-dependency install instructions.
+- Expanded the `DatasetListItemsOptions`/`DatasetDownloadOptions` and `ActorBuildOptions` field lists into per-field descriptions, and corrected the `output_fields` description.
+- Removed a stray `get_statistics` bullet from the request-queue return-types list.
 
 ## [0.4.4] - 2026-07-01
 
