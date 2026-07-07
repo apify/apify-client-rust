@@ -126,12 +126,11 @@ impl TaskClient {
     /// Returns a client for the last run of this task, applying the given [`LastRunOptions`]
     /// (e.g. [`LastRunOptions::status`] and/or [`LastRunOptions::origin`]).
     ///
-    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`) and is the
-    /// spec's documented filter on `GET /v2/actor-tasks/{actorTaskId}/runs/last`. `origin` filters
-    /// by how the run was started; accepted values are the platform's run origins (e.g.
-    /// `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). `origin` is not declared by the OpenAPI
-    /// spec and is sent only for parity with the reference client's `lastRun({ status, origin })`.
-    /// Both are sent as query parameters; leave a field as `None` to omit it.
+    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); `origin` filters
+    /// by how the run was started, with accepted values being the platform's run origins (e.g.
+    /// `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). Both are documented optional query
+    /// parameters on `GET /v2/actor-tasks/{actorTaskId}/runs/last` and match the reference client's
+    /// `lastRun({ status, origin })`; leave a field as `None` to omit it.
     pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
         let mut client = RunClient::new(
             self.root.clone(),
