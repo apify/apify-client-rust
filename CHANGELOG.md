@@ -4,6 +4,19 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.7] - 2026-07-07
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-07T132551Z`.
+- Bumped crate version to `0.4.7`.
+
+### Documentation
+- Corrected the `last_run`/`LastRunOptions` rustdoc comments: `origin` is now a documented query
+  parameter on the last-run endpoints in the OpenAPI spec (the comments previously said it was
+  undeclared).
+- Fixed the `README.md` `monthly_usage` link to point at the Users section of `docs/misc.md`
+  instead of the Logs section.
+
 ## [0.4.6] - 2026-07-07
 
 ### Changed

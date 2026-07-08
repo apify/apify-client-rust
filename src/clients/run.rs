@@ -24,9 +24,8 @@ const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
 ///
 /// Both are sent as query parameters to the last-run endpoints
 /// (`GET /v2/actors/{actorId}/runs/last`, `GET /v2/actor-tasks/{actorTaskId}/runs/last`).
-/// `status` is the spec's documented optional filter on those endpoints; `origin` is not declared
-/// by the OpenAPI spec and is exposed only for parity with the reference client's
-/// `lastRun({ status, origin })`.
+/// `status` and `origin` are both documented optional filters on those endpoints and match the
+/// reference client's `lastRun({ status, origin })`.
 #[derive(Debug, Default, Clone)]
 pub struct LastRunOptions {
     /// Filter by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `None` leaves it
