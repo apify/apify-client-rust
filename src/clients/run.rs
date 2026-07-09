@@ -88,13 +88,7 @@ pub struct RunClient {
 }
 
 impl RunClient {
-    pub(crate) fn new(
-        _root: crate::client::ApifyClient,
-        http: HttpClient,
-        base_url: &str,
-        resource_path: &str,
-        id: &str,
-    ) -> Self {
+    pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
         Self {
             ctx: ResourceContext::single(http, base_url, resource_path, id),
             id: id.to_string(),
@@ -124,10 +118,11 @@ impl RunClient {
         delete_resource(&self.ctx, None).await
     }
 
-    /// Aborts the run. `gracefully` is optional, matching the reference client's optional
-    /// `gracefully` option and the Go sibling's `Option<bool>`: `Some(true)` lets the run
-    /// perform cleanup first, `Some(false)` aborts immediately, and `None` omits the parameter
-    /// entirely so the server applies its default (immediate abort).
+    /// Aborts the run. `gracefully` maps to the endpoint's optional `gracefully` query
+    /// parameter (as in the JS reference's `abort({ gracefully })`); the `Option<bool>` models
+    /// its tri-state: `Some(true)` lets the run perform cleanup first, `Some(false)` aborts
+    /// immediately, and `None` omits the parameter entirely so the server applies its default
+    /// (immediate abort).
     pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params.add_bool("gracefully", gracefully);
@@ -272,8 +267,9 @@ impl RunClient {
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
-    /// [`LogOptions`] (e.g. [`LogOptions::raw`] to stream the unprocessed log, which is the
-    /// form the JS reference's log redirection consumes internally).
+    /// [`LogOptions`](crate::clients::log::LogOptions) (e.g.
+    /// [`LogOptions::raw`](crate::clients::log::LogOptions::raw) to stream the unprocessed log,
+    /// which is the form the JS reference's log redirection consumes internally).
     ///
     /// This is a Rust-specific convenience that simply forwards `LogOptions` to
     /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`

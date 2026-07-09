@@ -262,13 +262,7 @@ impl ActorClient {
     /// parameters on `GET /v2/actors/{actorId}/runs/last` and match the reference client's
     /// `lastRun({ status, origin })`; leave a field as `None` to omit it.
     pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
-        let mut client = RunClient::new(
-            self.root.clone(),
-            self.ctx.http.clone(),
-            &self.ctx.url(None),
-            "runs",
-            "last",
-        );
+        let mut client = RunClient::new(self.ctx.http.clone(), &self.ctx.url(None), "runs", "last");
         if let Some(status) = options.status.as_deref() {
             client.set_base_param("status", status);
         }

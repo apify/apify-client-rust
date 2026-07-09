@@ -202,8 +202,8 @@ impl RequestQueueClient {
     }
 
     /// Adds multiple requests to the queue, automatically splitting the input into chunks of
-    /// at most [`MAX_REQUESTS_PER_BATCH_OPERATION`] requests per API call (the API rejects
-    /// larger batches). The per-chunk responses are merged into a single result whose
+    /// at most 25 requests per API call (the API rejects larger batches). The per-chunk
+    /// responses are merged into a single result whose
     /// `processedRequests` / `unprocessedRequests` arrays concatenate every chunk's, matching
     /// the reference client's client-side chunking.
     pub async fn batch_add_requests(

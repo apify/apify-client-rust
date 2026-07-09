@@ -239,13 +239,7 @@ impl ApifyClient {
 
     /// Returns a client for a specific Actor run.
     pub fn run(&self, id: impl Into<String>) -> RunClient {
-        RunClient::new(
-            self.clone(),
-            self.http(),
-            &self.base_url,
-            "actor-runs",
-            &id.into(),
-        )
+        RunClient::new(self.http(), &self.base_url, "actor-runs", &id.into())
     }
 
     // ----- Dataset accessors ----------------------------------------------

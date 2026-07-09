@@ -6,8 +6,8 @@
 //!
 //! An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 //!
-//! It provides a resource-oriented interface that mirrors the official
-//! [JavaScript](https://github.com/apify/apify-client-js) and Python clients: start from
+//! It provides a resource-oriented interface consistent with the official
+//! [JavaScript reference client](https://github.com/apify/apify-client-js): start from
 //! an [`ApifyClient`], then drill down into resources (Actors, runs, datasets, key-value
 //! stores, request queues, tasks, schedules, webhooks, the store, users and logs).
 //!

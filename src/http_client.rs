@@ -8,8 +8,8 @@
 //!
 //! [`HttpClient`] wraps a backend and adds the cross-cutting concerns shared by every
 //! endpoint: authentication, the `User-Agent` header, query-parameter serialization,
-//! timeouts and retries with exponential backoff (mirroring the JavaScript and Python
-//! reference clients).
+//! timeouts and retries with exponential backoff (consistent with the JavaScript reference
+//! client).
 
 use std::collections::HashMap;
 use std::sync::Arc;

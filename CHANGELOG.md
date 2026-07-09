@@ -4,6 +4,18 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.8] - 2026-07-09
+
+### Changed
+- Removed the unused root-client parameter from the internal `RunClient::new` constructor.
+- Bumped crate version to `0.4.8`.
+
+### Documentation
+- Rephrased the `RunClient::abort` and crate/`http_client` module rustdoc to reference only the
+  JavaScript reference client.
+- Fixed three broken rustdoc intra-doc links (`RunClient::get_streamed_log_with_options` `LogOptions`
+  references and the `RequestQueueClient::batch_add_requests` batch-limit reference).
+
 ## [0.4.7] - 2026-07-07
 
 ### Changed
