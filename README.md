@@ -32,9 +32,11 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 - `futures-util = "0.3"` — to consume the crate's `Stream`-returning methods: `LogClient::stream()`
   / `RunClient::get_streamed_log()` (log streaming/redirection) and the lazy pagination streams
   `StoreCollectionClient::iterate()` / `RequestQueueClient::paginate_requests()`. It provides the
-  `StreamExt` trait (used with `futures_util::pin_mut!`) exercised by the
-  [`log_redirection`](examples/log_redirection.rs) and [`iterate_store`](examples/iterate_store.rs)
-  examples. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
+  `StreamExt` trait, which every stream consumer needs for `.next()`. The lazy pagination streams
+  (`iterate` / `paginate_requests`) additionally require `futures_util::pin_mut!` before iterating;
+  the log streams are `Unpin` and are consumed directly without it. Both patterns are exercised by
+  the [`log_redirection`](examples/log_redirection.rs) (no `pin_mut!`) and
+  [`iterate_store`](examples/iterate_store.rs) (`pin_mut!`) examples. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
   fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `chrono::DateTime<Utc>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the

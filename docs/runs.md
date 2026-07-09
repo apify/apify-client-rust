@@ -9,6 +9,12 @@ collections are available via `actor.runs()` and `task.runs()`.
 |---|---|---|---|
 | `list(options, filter)` | `ListOptions`, `RunListOptions { status, started_after, started_before }` | `PaginationList<ActorRun>` | Lists runs, optionally filtered by status and start time. |
 
+`RunListOptions` fields:
+
+- `status`: `Vec<RunStatus>` — only return runs whose status is one of these (e.g. `RunStatus::Succeeded`); sent as a comma-separated list. An empty vec (the default) applies no status filter.
+- `started_after`: `Option<String>` — only return runs started at or after this ISO 8601 timestamp. Honored by the run list (`client.runs()`) and the Actor-scoped run list (`actor.runs()`); ignored server-side on the task-scoped list (`task.runs()`), whose spec does not define it.
+- `started_before`: `Option<String>` — only return runs started at or before this ISO 8601 timestamp. Honored by the run list (`client.runs()`) and the Actor-scoped run list (`actor.runs()`); ignored server-side on the task-scoped list (`task.runs()`), whose spec does not define it.
+
 ## `RunClient`
 
 | Method | Arguments | Returns | Description |

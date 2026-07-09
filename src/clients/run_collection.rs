@@ -19,9 +19,13 @@ pub struct RunListOptions {
     /// accepts multiple statuses; they are sent as a comma-separated list. Empty means no
     /// status filter. Matches the reference client, whose `status` accepts a string or array.
     pub status: Vec<RunStatus>,
-    /// Only return runs started at or after this ISO 8601 timestamp. (Actor-scoped lists only.)
+    /// Only return runs started at or after this ISO 8601 timestamp. Honored by the run list
+    /// (`client.runs()`) and the Actor-scoped run list (`actor.runs()`); ignored server-side on
+    /// the task-scoped list (`task.runs()`), whose spec does not define it.
     pub started_after: Option<String>,
-    /// Only return runs started at or before this ISO 8601 timestamp. (Actor-scoped lists only.)
+    /// Only return runs started at or before this ISO 8601 timestamp. Honored by the run list
+    /// (`client.runs()`) and the Actor-scoped run list (`actor.runs()`); ignored server-side on
+    /// the task-scoped list (`task.runs()`), whose spec does not define it.
     pub started_before: Option<String>,
 }
 

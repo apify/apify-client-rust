@@ -37,6 +37,12 @@ to [Semantic Versioning](https://semver.org/).
   the `docs/README.md` Imports section.
 - Corrected the documented "Returns" type of the log/run streaming methods to
   `Result<impl Stream<...>>` (they are `async`) and aligned the stream item type alias to `Result`.
+- Added a per-field type + description list for `RunListOptions` (`status: Vec<RunStatus>`,
+  `started_after` / `started_before`: `Option<String>`) in `docs/runs.md`, matching the sibling
+  option structs.
+- Clarified the `futures-util` guidance in `README.md`: `StreamExt` is needed by every stream
+  consumer, while `futures_util::pin_mut!` is only required for the lazy `iterate` /
+  `paginate_requests` streams — the log streams are `Unpin` and consumed without it.
 
 ## [0.4.8] - 2026-07-09
 
