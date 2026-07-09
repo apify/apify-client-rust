@@ -13,7 +13,7 @@
 `pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`.
 
 `iterate` returns a [`Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html)
-that yields `ApifyClientResult<ActorStoreListItem>` items, fetching the next page on demand and
+that yields `Result<ActorStoreListItem>` items, fetching the next page on demand and
 completing once the listing is exhausted. Pin it (e.g. with `futures_util::pin_mut!`) and drive it
 with `StreamExt::next`. Like the other `Stream`-returning methods, this needs the `futures-util`
 crate in scope (the [Logs](#logs--clientlogbuild_or_run_id) section below has the `Cargo.toml`
@@ -125,8 +125,8 @@ Also reachable via `run.log()` and `build.log()`.
 |---|---|---|---|
 | `get()` | — | `Option<String>` | The entire log as text. |
 | `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
-| `stream()` | — | `Stream<Item = Result<Vec<u8>>>` | Streams log chunks live (log redirection). |
-| `stream_with_options(options)` | `LogOptions` | `Stream<Item = Result<Vec<u8>>>` | As `stream()`, with options (e.g. `raw`). |
+| `stream()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` | Streams log chunks live (log redirection); `async`, so `.await?` the returned stream. |
+| `stream_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` | As `stream()`, with options (e.g. `raw`). |
 
 `LogOptions` has a single field, `raw: Option<bool>`. When `Some(true)`, the API returns the
 raw log content without server-side processing (e.g. without the per-line timestamps it adds by

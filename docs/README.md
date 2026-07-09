@@ -70,10 +70,10 @@ root, so you can import them directly from `apify_client` — you never need the
 types is:
 
 - Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
-- Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
+- Runs: `RunListOptions`, `RunAbortOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordsOptions`, `GetRecordOptions`
-- Request queues: `ListRequestsOptions`
+- Request queues: `ListRequestsOptions`, `AddRequestOptions`, `BatchAddRequestsOptions`, `ProlongRequestLockOptions`, `DeleteRequestLockOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
@@ -90,12 +90,19 @@ but the short crate-root path above is the supported, stable way to import these
 
 API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
 `RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
-`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the `apify_client::models`
-module and are imported from there:
+`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) and the typed run-status enums
+`RunStatus` and `RunOrigin` live in the `apify_client::models` module and are imported from
+there:
 
 ```rust,no_run
 use apify_client::models::RequestQueueRequest;
 ```
+
+For convenience, `RunStatus` and `RunOrigin` are additionally re-exported at the crate root, so
+you can also import them directly (e.g. `use apify_client::{RunStatus, RunOrigin};`). `RunStatus`
+is the type of the `ActorRun::status` / `Build::status` fields and the `status` filter on the
+`last_run` and run-list options; `RunOrigin` describes how a run was started and is used by the
+`origin` filter on the `last_run` options (`LastRunOptions::origin`).
 
 ## `ApifyClient` and the builder
 

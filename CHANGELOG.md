@@ -31,6 +31,13 @@ to [Semantic Versioning](https://semver.org/).
 - `RunAbortOptions`, `AddRequestOptions`, `BatchAddRequestsOptions`, `ProlongRequestLockOptions`
   and `DeleteRequestLockOptions` option structs.
 
+### Documentation
+- Listed the new option structs (`RunAbortOptions`, `AddRequestOptions`, `BatchAddRequestsOptions`,
+  `ProlongRequestLockOptions`, `DeleteRequestLockOptions`) and the `RunStatus` / `RunOrigin` enums in
+  the `docs/README.md` Imports section.
+- Corrected the documented "Returns" type of the log/run streaming methods to
+  `Result<impl Stream<...>>` (they are `async`) and aligned the stream item type alias to `Result`.
+
 ## [0.4.8] - 2026-07-09
 
 ### Changed
