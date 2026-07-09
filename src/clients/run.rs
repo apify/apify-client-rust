@@ -13,7 +13,7 @@ use crate::clients::request_queue::RequestQueueClient;
 use crate::common::{to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
-use crate::models::ActorRun;
+use crate::models::{ActorRun, RunOrigin, RunStatus};
 
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
@@ -28,12 +28,22 @@ const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
 /// reference client's `lastRun({ status, origin })`.
 #[derive(Debug, Default, Clone)]
 pub struct LastRunOptions {
-    /// Filter by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `None` leaves it
-    /// unfiltered.
-    pub status: Option<String>,
-    /// Filter by how the run was started; accepted values are the platform's run origins
-    /// (e.g. `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). `None` leaves it unfiltered.
-    pub origin: Option<String>,
+    /// Filter by run status (e.g. [`RunStatus::Succeeded`]). `None` leaves it unfiltered.
+    pub status: Option<RunStatus>,
+    /// Filter by how the run was started (e.g. [`RunOrigin::Api`]). `None` leaves it unfiltered.
+    pub origin: Option<RunOrigin>,
+}
+
+/// Options for aborting a run via [`RunClient::abort`].
+///
+/// Matches the JS reference's `abort({ gracefully })`.
+#[derive(Debug, Default, Clone)]
+pub struct RunAbortOptions {
+    /// Whether to abort the run gracefully. `Some(true)` lets the run perform its cleanup
+    /// (the platform sends the container a signal and waits ~30s before killing it),
+    /// `Some(false)` aborts immediately, and `None` omits the parameter so the server applies
+    /// its default (immediate abort).
+    pub gracefully: Option<bool>,
 }
 
 /// Options for resurrecting a finished run.
@@ -118,14 +128,10 @@ impl RunClient {
         delete_resource(&self.ctx, None).await
     }
 
-    /// Aborts the run. `gracefully` maps to the endpoint's optional `gracefully` query
-    /// parameter (as in the JS reference's `abort({ gracefully })`); the `Option<bool>` models
-    /// its tri-state: `Some(true)` lets the run perform cleanup first, `Some(false)` aborts
-    /// immediately, and `None` omits the parameter entirely so the server applies its default
-    /// (immediate abort).
-    pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
+    /// Aborts the run, optionally gracefully (see [`RunAbortOptions`]).
+    pub async fn abort(&self, options: RunAbortOptions) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
-        params.add_bool("gracefully", gracefully);
+        params.add_bool("gracefully", options.gracefully);
         post_action(&self.ctx, Some("abort"), &params, None, None).await
     }
 

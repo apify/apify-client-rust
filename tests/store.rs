@@ -3,6 +3,7 @@
 mod common;
 
 use apify_client::clients::store_collection::StoreListOptions;
+use futures_util::StreamExt;
 
 /// Simple GET: listing Store Actors.
 #[tokio::test(flavor = "multi_thread")]
@@ -23,14 +24,16 @@ async fn list_store() {
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_store() {
     let client = require_client!();
-    let mut iter = client.store().iterate(StoreListOptions {
+    let stream = client.store().iterate(StoreListOptions {
         limit: Some(5),
         ..Default::default()
     });
+    futures_util::pin_mut!(stream);
 
-    // Pull a handful of items; the iterator should fetch pages transparently.
+    // Pull a handful of items; the stream should fetch pages transparently.
     let mut seen = 0;
-    while let Some(_actor) = iter.next().await.expect("iterate store") {
+    while let Some(actor) = stream.next().await {
+        actor.expect("iterate store");
         seen += 1;
         if seen >= 12 {
             break;

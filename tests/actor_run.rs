@@ -5,6 +5,8 @@
 
 mod common;
 
+use apify_client::RunStatus;
+
 /// Simple GET: listing the account's runs.
 #[tokio::test(flavor = "multi_thread")]
 async fn list_runs() {
@@ -31,8 +33,8 @@ async fn run_actor_and_read_outputs() {
         .expect("call hello-world actor");
 
     assert_eq!(
-        run.status.as_deref(),
-        Some("SUCCEEDED"),
+        run.status,
+        Some(RunStatus::Succeeded),
         "hello-world run should succeed"
     );
 
@@ -96,7 +98,7 @@ async fn last_run_access() {
 
     let last = client
         .actor("apify/hello-world")
-        .last_run(Some("SUCCEEDED"))
+        .last_run(Some(RunStatus::Succeeded))
         .get()
         .await
         .expect("get last run");

@@ -23,8 +23,8 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
 | `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `serde_json::Value` | Validates input against a specific build's schema (`build` tag/number; `None` = default). |
-| `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
-| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
+| `last_run(status)` | `Option<RunStatus>` | `RunClient` | Client for the last run, optionally filtered by status. See [Actor runs](runs.md) for the `RunStatus` variants. |
+| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the `RunStatus` / `RunOrigin` variants (common origins: `Development`, `Web`, `Api`, `Scheduler`). |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |
 | `runs()` | — | `RunCollectionClient` | The Actor's run collection. |
 | `version(n)` / `versions()` | `&str` / — | `ActorVersionClient` / collection | Version management. |
@@ -136,7 +136,7 @@ if let Some(actor) = client.actor("apify~hello-world").get().await? {
 |---|---|---|
 | `id` | `String` | Unique build ID (always present); used to build a `client.build(&build.id)` client. |
 | `act_id` | `Option<String>` | ID of the Actor that was built. |
-| `status` | `Option<String>` | Current build status; the terminal values match the run statuses. |
+| `status` | `Option<RunStatus>` | Current build status (see [`RunStatus`](runs.md); shared with runs). |
 | `started_at` | `Option<DateTime<Utc>>` | When the build started. |
 | `finished_at` | `Option<DateTime<Utc>>` | When the build finished. |
 | `build_number` | `Option<String>` | Build number, e.g. `0.1.2`. |

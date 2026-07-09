@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError, LastRunOptions};
+use apify_client::{ApifyClient, ApifyClientError, LastRunOptions, RunOrigin, RunStatus};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -299,7 +299,7 @@ async fn last_run_sends_status_and_origin_query_params() {
     // The non-breaking status-only convenience sends just `status`.
     client
         .actor("me~some-actor")
-        .last_run(Some("SUCCEEDED"))
+        .last_run(Some(RunStatus::Succeeded))
         .get()
         .await
         .expect("ok");
@@ -317,8 +317,8 @@ async fn last_run_sends_status_and_origin_query_params() {
     client
         .actor("me~some-actor")
         .last_run_with_options(LastRunOptions {
-            status: Some("SUCCEEDED".to_owned()),
-            origin: Some("API".to_owned()),
+            status: Some(RunStatus::Succeeded),
+            origin: Some(RunOrigin::Api),
         })
         .get()
         .await
@@ -336,7 +336,7 @@ async fn last_run_sends_status_and_origin_query_params() {
         .task("me~some-task")
         .last_run_with_options(LastRunOptions {
             status: None,
-            origin: Some("SCHEDULER".to_owned()),
+            origin: Some(RunOrigin::Scheduler),
         })
         .get()
         .await

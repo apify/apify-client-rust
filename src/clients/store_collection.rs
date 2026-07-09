@@ -1,5 +1,9 @@
 //! Client for browsing the Apify Store (`/v2/store`).
 
+use std::collections::VecDeque;
+
+use futures_util::Stream;
+
 use crate::clients::base::{list_resource, ResourceContext};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
@@ -58,17 +62,53 @@ impl StoreCollectionClient {
 
     /// Lazily iterates all Store Actors matching `options`, fetching pages on demand.
     ///
-    /// Returns a [`StoreActorIterator`] whose [`next`](StoreActorIterator::next) method
-    /// yields one Actor at a time, transparently fetching subsequent pages.
-    pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        StoreActorIterator {
+    /// Returns a [`Stream`] that yields one Actor at a time (as
+    /// `ApifyClientResult<ActorStoreListItem>`), transparently fetching subsequent pages. Pin it
+    /// (e.g. with [`futures_util::pin_mut!`]) and drive it with
+    /// [`StreamExt::next`](futures_util::StreamExt::next).
+    pub fn iterate(
+        &self,
+        options: StoreListOptions,
+    ) -> impl Stream<Item = ApifyClientResult<ActorStoreListItem>> {
+        let state = StoreIterState {
             client: self.clone(),
             options,
-            buffer: std::collections::VecDeque::new(),
+            buffer: VecDeque::new(),
             next_offset: 0,
             total: None,
             exhausted: false,
-        }
+        };
+        futures_util::stream::try_unfold(state, |mut state| async move {
+            if let Some(item) = state.buffer.pop_front() {
+                return Ok(Some((item, state)));
+            }
+            if state.exhausted {
+                return Ok(None);
+            }
+
+            // Honour a caller-provided starting offset on the first fetch.
+            let start_offset = state.options.offset.unwrap_or(0) + state.next_offset;
+            let mut page_options = state.options.clone();
+            page_options.offset = Some(start_offset);
+
+            let page = state.client.list(page_options).await?;
+            if state.total.is_none() {
+                state.total = Some(page.total);
+            }
+            if page.items.is_empty() {
+                return Ok(None);
+            }
+
+            state.next_offset += page.items.len() as i64;
+            // Stop once we have walked past the total number of available items.
+            if let Some(total) = state.total {
+                if start_offset + page.items.len() as i64 >= total {
+                    state.exhausted = true;
+                }
+            }
+            state.buffer.extend(page.items);
+            Ok(state.buffer.pop_front().map(|item| (item, state)))
+        })
     }
 
     fn build_params(&self, options: &StoreListOptions) -> QueryParams {
@@ -88,52 +128,13 @@ impl StoreCollectionClient {
     }
 }
 
-/// A lazy, page-fetching iterator over Apify Store Actors.
-///
-/// Created by [`StoreCollectionClient::iterate`]. Each call to [`next`](Self::next)
-/// returns the next Actor, fetching another page from the API when the local buffer is
-/// exhausted, until all matching Actors have been yielded.
-pub struct StoreActorIterator {
+/// Internal pagination state driving the [`StoreCollectionClient::iterate`] stream: the
+/// current page buffer plus the cursor needed to fetch the next page.
+struct StoreIterState {
     client: StoreCollectionClient,
     options: StoreListOptions,
-    buffer: std::collections::VecDeque<ActorStoreListItem>,
+    buffer: VecDeque<ActorStoreListItem>,
     next_offset: i64,
     total: Option<i64>,
     exhausted: bool,
-}
-
-impl StoreActorIterator {
-    /// Returns the next Store Actor, or `None` when the listing is exhausted.
-    pub async fn next(&mut self) -> ApifyClientResult<Option<ActorStoreListItem>> {
-        if let Some(item) = self.buffer.pop_front() {
-            return Ok(Some(item));
-        }
-        if self.exhausted {
-            return Ok(None);
-        }
-
-        // Honour a caller-provided starting offset on the first fetch.
-        let start_offset = self.options.offset.unwrap_or(0) + self.next_offset;
-        let mut page_options = self.options.clone();
-        page_options.offset = Some(start_offset);
-
-        let page = self.client.list(page_options).await?;
-        if self.total.is_none() {
-            self.total = Some(page.total);
-        }
-        if page.items.is_empty() {
-            self.exhausted = true;
-            return Ok(None);
-        }
-
-        self.next_offset += page.items.len() as i64;
-        // Stop once we have walked past the total number of available items.
-        if let Some(total) = self.total {
-            if start_offset + page.items.len() as i64 >= total {
-                self.exhausted = true;
-            }
-        }
-        self.buffer.extend(page.items);
-        Ok(self.buffer.pop_front())
-    }
 }

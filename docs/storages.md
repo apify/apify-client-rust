@@ -147,23 +147,23 @@ println!("exported {} bytes of CSV", csv.len());
 | `update(fields)` | `&impl Serialize` | `RequestQueue` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the queue. |
 | `list_head(limit)` | `Option<i64>` | `RequestQueueHead` | Requests at the head. |
-| `add_request(request, forefront)` | `&RequestQueueRequest`, `bool` | `RequestQueueOperationInfo` | Adds a request. |
+| `add_request(request, options)` | `&RequestQueueRequest`, `AddRequestOptions { forefront }` | `RequestQueueOperationInfo` | Adds a request. |
 | `get_request(id)` | `&str` | `Option<RequestQueueRequest>` | Reads a request. |
-| `update_request(request, forefront)` | `&RequestQueueRequest`, `bool` | `RequestQueueOperationInfo` | Updates a request. |
+| `update_request(request, options)` | `&RequestQueueRequest`, `AddRequestOptions { forefront }` | `RequestQueueOperationInfo` | Updates a request. |
 | `delete_request(id)` | `&str` | `()` | Deletes a request. |
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Locks head requests. |
-| `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add. |
+| `batch_add_requests(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions { forefront }` | `Value` | Batch add. |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
 | `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
-| `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
-| `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |
-| `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
+| `paginate_requests(page_limit)` | `Option<i64>` | `impl Stream<Item = Result<RequestQueueRequest>>` | Lazy request stream. |
+| `prolong_request_lock(id, options)` | `&str`, `ProlongRequestLockOptions { lock_secs, forefront }` | `Value` | Extend a lock. |
+| `delete_request_lock(id, options)` | `&str`, `DeleteRequestLockOptions { forefront }` | `()` | Release a lock. |
 | `unlock_requests()` | — | `Value` | Release all this client's locks. |
 
-The `forefront` boolean (on `add_request`, `update_request`, `batch_add_requests`,
-`prolong_request_lock`, `delete_request_lock`) controls queue ordering: `true` puts the
-request(s) at the **front** of the queue so they are handled before the existing backlog;
-`false` (the usual choice) appends them at the **back**.
+The `forefront` option (an `Option<bool>` on `AddRequestOptions`, `BatchAddRequestsOptions`,
+`ProlongRequestLockOptions` and `DeleteRequestLockOptions`) controls queue ordering: `Some(true)`
+puts the request(s) at the **front** of the queue so they are handled before the existing backlog;
+`None` / `Some(false)` (the usual choice) appends them at the **back**.
 
 Some request-queue methods return an untyped `serde_json::Value` because the API responses are
 open-ended and most callers do not consume them structurally. Their shapes (read fields with
@@ -208,11 +208,30 @@ let request = RequestQueueRequest {
     user_data: None,
     extra: Default::default(),
 };
-let info = queue_client.add_request(&request, false).await?;
+let info = queue_client.add_request(&request, Default::default()).await?;
 println!("added request {}", info.request_id);
 
 let head = queue_client.list_head(Some(10)).await?;
 println!("{} request(s) at the head", head.items.len());
+# Ok(())
+# }
+```
+
+`paginate_requests(page_limit)` returns an `impl Stream` yielding one `RequestQueueRequest` at a
+time, fetching pages on demand. Consume it with the same `futures_util::pin_mut!` + `StreamExt::next`
+pattern as the Store [`iterate`](misc.md#apify-store--clientstore) stream (and add `futures-util` to
+your `Cargo.toml`):
+
+```rust,no_run
+# use apify_client::ApifyClient;
+use futures_util::StreamExt;
+# async fn run(client: ApifyClient, queue_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let stream = client.request_queue(queue_id).paginate_requests(Some(100));
+futures_util::pin_mut!(stream);
+while let Some(request) = stream.next().await {
+    let request = request?;
+    println!("{}", request.url);
+}
 # Ok(())
 # }
 ```

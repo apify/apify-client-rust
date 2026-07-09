@@ -16,7 +16,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `get()` | — | `Option<ActorRun>` | Fetches the run. |
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
-| `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
+| `abort(options)` | `RunAbortOptions { gracefully }` | `ActorRun` | Aborts the run. `gracefully` is `None` (server default, immediate), `Some(true)` (graceful) or `Some(false)` (immediate). |
 | `metamorph(target, input, options)` | `&str`, `Option<&impl Serialize>`, `RunMetamorphOptions` | `ActorRun` | Transforms the run into another Actor. |
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
 | `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a finished run. |
@@ -32,18 +32,22 @@ collections are available via `actor.runs()` and `task.runs()`.
 
 `RunChargeOptions`: `event_name` (required), `count` (defaults to `1`), `idempotency_key` (auto-generated when omitted).
 
-`ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
-values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and
-`TIMED-OUT`; the terminal ones (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`) are what
-`is_terminal()` reports and what `wait_for_finish` polls for.
+`RunAbortOptions`: `gracefully` (`Option<bool>`, defaults to `None`).
+
+`ActorRun.status` is an `Option<RunStatus>` — a typed enum (from `apify_client::models`, also
+re-exported at the crate root) whose variants are `Ready`, `Running`, `Succeeded`, `Failed`,
+`TimingOut`, `TimedOut`, `Aborting`, `Aborted`, and a forward-compatible `Other(String)` catch-all
+for values not known to this client version. The terminal statuses (`Succeeded`, `Failed`,
+`Aborted`, `TimedOut`) are what `RunStatus::is_terminal()` / `ActorRun::is_terminal()` report and
+what `wait_for_finish` polls for.
 
 The `last_run(status)` methods on `ActorClient` ([Actors](actors.md)) and `TaskClient`
-([Actor tasks](tasks.md)) take these same `status` values (e.g. `last_run(Some("SUCCEEDED"))`); pass
-`None` to leave it unfiltered. To additionally filter by `origin`, use the companion
-`last_run_with_options(LastRunOptions { status, origin })`. `origin` restricts the last run by how
-it was started; accepted values are the platform's run origins, the most common being
-`DEVELOPMENT`, `WEB`, `API`, and `SCHEDULER` (e.g.
-`last_run_with_options(LastRunOptions { status: Some("SUCCEEDED".into()), origin: Some("WEB".into()) })`).
+([Actor tasks](tasks.md)) take an `Option<RunStatus>` (e.g. `last_run(Some(RunStatus::Succeeded))`);
+pass `None` to leave it unfiltered. To additionally filter by `origin`, use the companion
+`last_run_with_options(LastRunOptions { status, origin })`. `origin` is an `Option<RunOrigin>` —
+another typed enum with variants such as `Development`, `Web`, `Api`, `Scheduler` (plus
+`Other(String)`) — restricting the last run by how it was started (e.g.
+`last_run_with_options(LastRunOptions { status: Some(RunStatus::Succeeded), origin: Some(RunOrigin::Web) })`).
 Leave a field as `None` to omit it.
 
 ## `ActorRun` fields
@@ -58,7 +62,7 @@ Leave a field as `None` to omit it.
 | `act_id` | `Option<String>` | ID of the Actor that produced the run. |
 | `actor_task_id` | `Option<String>` | ID of the task that started the run, if any. |
 | `user_id` | `Option<String>` | ID of the user who owns the run. |
-| `status` | `Option<String>` | Current run status (see the status values above). |
+| `status` | `Option<RunStatus>` | Current run status (see the status values above). |
 | `status_message` | `Option<String>` | Optional human-readable status message. |
 | `started_at` | `Option<DateTime<Utc>>` | When the run started. |
 | `finished_at` | `Option<DateTime<Utc>>` | When the run finished (absent while running). |

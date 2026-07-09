@@ -21,7 +21,7 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.4"
+apify-client = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -29,9 +29,12 @@ serde_json = "1"          # for the `serde_json::Value` responses used in the Qu
 The Quick start below reads dynamically-typed records with `serde_json::Value`, so a fresh
 project needs `serde_json`. Two more dependencies are needed only for specific features:
 
-- `futures-util = "0.3"` — to consume `LogClient::stream()` (log streaming/redirection); it
-  provides the `StreamExt` trait used by the [`log_redirection`](examples/log_redirection.rs)
-  example. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
+- `futures-util = "0.3"` — to consume the crate's `Stream`-returning methods: `LogClient::stream()`
+  / `RunClient::get_streamed_log()` (log streaming/redirection) and the lazy pagination streams
+  `StoreCollectionClient::iterate()` / `RequestQueueClient::paginate_requests()`. It provides the
+  `StreamExt` trait (used with `futures_util::pin_mut!`) exercised by the
+  [`log_redirection`](examples/log_redirection.rs) and [`iterate_store`](examples/iterate_store.rs)
+  examples. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
   fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `chrono::DateTime<Utc>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the
@@ -41,7 +44,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.4", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.5", default-features = false, features = ["rustls"] }
 ```
 
 ## Quick start

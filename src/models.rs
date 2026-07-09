@@ -6,13 +6,196 @@
 //! `#[serde(flatten)]`, so new API fields never break deserialization.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 /// Convenience alias for the catch-all map of unmodelled JSON fields.
 pub type Extra = HashMap<String, Value>;
+
+/// Lifecycle status of an Actor run or build.
+///
+/// Models the platform's job statuses as a typed enum rather than a bare string, so callers
+/// can `match` on it exhaustively. Any status not known to this client version is preserved
+/// verbatim in [`RunStatus::Other`], keeping deserialization forward-compatible with new
+/// platform statuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunStatus {
+    /// The run is initializing and has not started yet.
+    Ready,
+    /// The run is currently executing.
+    Running,
+    /// The run finished successfully.
+    Succeeded,
+    /// The run failed.
+    Failed,
+    /// The run is in the process of timing out.
+    TimingOut,
+    /// The run timed out.
+    TimedOut,
+    /// The run is in the process of being aborted.
+    Aborting,
+    /// The run was aborted.
+    Aborted,
+    /// A status not recognized by this client version, preserved verbatim.
+    Other(String),
+}
+
+impl RunStatus {
+    /// Returns the API wire representation of this status (e.g. `"SUCCEEDED"`, `"TIMED-OUT"`).
+    pub fn as_str(&self) -> &str {
+        match self {
+            RunStatus::Ready => "READY",
+            RunStatus::Running => "RUNNING",
+            RunStatus::Succeeded => "SUCCEEDED",
+            RunStatus::Failed => "FAILED",
+            RunStatus::TimingOut => "TIMING-OUT",
+            RunStatus::TimedOut => "TIMED-OUT",
+            RunStatus::Aborting => "ABORTING",
+            RunStatus::Aborted => "ABORTED",
+            RunStatus::Other(value) => value.as_str(),
+        }
+    }
+
+    /// Returns `true` if this is a terminal status — the run/build has finished and its status
+    /// will not change further (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            RunStatus::Succeeded | RunStatus::Failed | RunStatus::Aborted | RunStatus::TimedOut
+        )
+    }
+}
+
+impl From<&str> for RunStatus {
+    fn from(value: &str) -> Self {
+        match value {
+            "READY" => RunStatus::Ready,
+            "RUNNING" => RunStatus::Running,
+            "SUCCEEDED" => RunStatus::Succeeded,
+            "FAILED" => RunStatus::Failed,
+            // Accept both the hyphenated wire form the API sends and the underscored spelling
+            // used for the platform's status constant names, mapping both to one variant.
+            "TIMING-OUT" | "TIMING_OUT" => RunStatus::TimingOut,
+            "TIMED-OUT" | "TIMED_OUT" => RunStatus::TimedOut,
+            "ABORTING" => RunStatus::Aborting,
+            "ABORTED" => RunStatus::Aborted,
+            other => RunStatus::Other(other.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for RunStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for RunStatus {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RunStatus {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(RunStatus::from(raw.as_str()))
+    }
+}
+
+/// How an Actor run was started (the run's `meta.origin`).
+///
+/// Like [`RunStatus`], this is a typed enum with an [`RunOrigin::Other`] catch-all for values
+/// not known to this client version. Used to filter the last run by origin (see
+/// [`crate::clients::run::LastRunOptions`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOrigin {
+    /// Started from the development UI.
+    Development,
+    /// Started from the Apify Console web UI.
+    Web,
+    /// Started via the API.
+    Api,
+    /// Started by a schedule.
+    Scheduler,
+    /// Started by an automated test.
+    Test,
+    /// Started by a webhook.
+    Webhook,
+    /// Started by another Actor.
+    Actor,
+    /// Started from the Apify CLI.
+    Cli,
+    /// Started by the Actor Standby mode.
+    Standby,
+    /// Started by a CI/CD pipeline.
+    Ci,
+    /// Started via the Model Context Protocol.
+    Mcp,
+    /// An origin not recognized by this client version, preserved verbatim.
+    Other(String),
+}
+
+impl RunOrigin {
+    /// Returns the API wire representation of this origin (e.g. `"API"`, `"SCHEDULER"`).
+    pub fn as_str(&self) -> &str {
+        match self {
+            RunOrigin::Development => "DEVELOPMENT",
+            RunOrigin::Web => "WEB",
+            RunOrigin::Api => "API",
+            RunOrigin::Scheduler => "SCHEDULER",
+            RunOrigin::Test => "TEST",
+            RunOrigin::Webhook => "WEBHOOK",
+            RunOrigin::Actor => "ACTOR",
+            RunOrigin::Cli => "CLI",
+            RunOrigin::Standby => "STANDBY",
+            RunOrigin::Ci => "CI",
+            RunOrigin::Mcp => "MCP",
+            RunOrigin::Other(value) => value.as_str(),
+        }
+    }
+}
+
+impl From<&str> for RunOrigin {
+    fn from(value: &str) -> Self {
+        match value {
+            "DEVELOPMENT" => RunOrigin::Development,
+            "WEB" => RunOrigin::Web,
+            "API" => RunOrigin::Api,
+            "SCHEDULER" => RunOrigin::Scheduler,
+            "TEST" => RunOrigin::Test,
+            "WEBHOOK" => RunOrigin::Webhook,
+            "ACTOR" => RunOrigin::Actor,
+            "CLI" => RunOrigin::Cli,
+            "STANDBY" => RunOrigin::Standby,
+            "CI" => RunOrigin::Ci,
+            "MCP" => RunOrigin::Mcp,
+            other => RunOrigin::Other(other.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for RunOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for RunOrigin {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RunOrigin {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(RunOrigin::from(raw.as_str()))
+    }
+}
 
 /// An Actor on the Apify platform.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -64,9 +247,9 @@ pub struct ActorRun {
     /// ID of the user who owns the run.
     #[serde(default)]
     pub user_id: Option<String>,
-    /// Current run status, e.g. `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`.
+    /// Current run status (see [`RunStatus`]).
     #[serde(default)]
-    pub status: Option<String>,
+    pub status: Option<RunStatus>,
     /// Optional human-readable status message.
     #[serde(default)]
     pub status_message: Option<String>,
@@ -96,17 +279,10 @@ pub struct ActorRun {
     pub extra: Extra,
 }
 
-/// Terminal run/build statuses, used by wait-for-finish helpers.
-pub(crate) const TERMINAL_STATUSES: &[&str] =
-    &["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT", "TIMED_OUT"];
-
 impl ActorRun {
-    /// Returns `true` if the run has reached a terminal state.
+    /// Returns `true` if the run has reached a terminal state (see [`RunStatus::is_terminal`]).
     pub fn is_terminal(&self) -> bool {
-        self.status
-            .as_deref()
-            .map(|s| TERMINAL_STATUSES.contains(&s))
-            .unwrap_or(false)
+        self.status.as_ref().is_some_and(RunStatus::is_terminal)
     }
 }
 
@@ -119,9 +295,9 @@ pub struct Build {
     /// ID of the Actor that was built.
     #[serde(default)]
     pub act_id: Option<String>,
-    /// Current build status.
+    /// Current build status (see [`RunStatus`]).
     #[serde(default)]
-    pub status: Option<String>,
+    pub status: Option<RunStatus>,
     /// When the build started.
     #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
@@ -137,12 +313,9 @@ pub struct Build {
 }
 
 impl Build {
-    /// Returns `true` if the build has reached a terminal state.
+    /// Returns `true` if the build has reached a terminal state (see [`RunStatus::is_terminal`]).
     pub fn is_terminal(&self) -> bool {
-        self.status
-            .as_deref()
-            .map(|s| TERMINAL_STATUSES.contains(&s))
-            .unwrap_or(false)
+        self.status.as_ref().is_some_and(RunStatus::is_terminal)
     }
 }
 

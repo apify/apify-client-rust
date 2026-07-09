@@ -4,7 +4,7 @@ use crate::clients::base::{list_resource, ResourceContext};
 use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
-use crate::models::ActorRun;
+use crate::models::{ActorRun, RunStatus};
 
 /// Filtering options for [`RunCollectionClient::list`], covering the spec query parameters of
 /// `GET /v2/actor-runs` and `GET /v2/actors/{actorId}/runs`.
@@ -15,10 +15,10 @@ use crate::models::ActorRun;
 /// task-scoped list. This deliberate reference-parity reuse keeps the API surface uniform.
 #[derive(Debug, Default, Clone)]
 pub struct RunListOptions {
-    /// Only return runs with one of these statuses (e.g. `SUCCEEDED`, `RUNNING`). The API
+    /// Only return runs with one of these statuses (e.g. [`RunStatus::Succeeded`]). The API
     /// accepts multiple statuses; they are sent as a comma-separated list. Empty means no
     /// status filter. Matches the reference client, whose `status` accepts a string or array.
-    pub status: Vec<String>,
+    pub status: Vec<RunStatus>,
     /// Only return runs started at or after this ISO 8601 timestamp. (Actor-scoped lists only.)
     pub started_after: Option<String>,
     /// Only return runs started at or before this ISO 8601 timestamp. (Actor-scoped lists only.)
@@ -46,6 +46,7 @@ impl RunCollectionClient {
     /// # Example
     /// ```no_run
     /// use apify_client::{ApifyClient, ListOptions, RunListOptions};
+    /// use apify_client::models::RunStatus;
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = ApifyClient::new("my-api-token");
@@ -53,7 +54,7 @@ impl RunCollectionClient {
     ///     .runs()
     ///     .list(
     ///         ListOptions { limit: Some(10), desc: Some(true), ..Default::default() },
-    ///         RunListOptions { status: vec!["SUCCEEDED".to_string()], ..Default::default() },
+    ///         RunListOptions { status: vec![RunStatus::Succeeded], ..Default::default() },
     ///     )
     ///     .await?;
     /// for run in runs.items {
@@ -67,12 +68,17 @@ impl RunCollectionClient {
         options: ListOptions,
         filter: RunListOptions,
     ) -> ApifyClientResult<PaginationList<ActorRun>> {
+        let statuses: Vec<String> = filter
+            .status
+            .iter()
+            .map(|s| s.as_str().to_string())
+            .collect();
         let mut params = QueryParams::new();
         params
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc)
-            .add_csv("status", Some(&filter.status))
+            .add_csv("status", Some(&statuses))
             .add_str("startedAfter", filter.started_after)
             .add_str("startedBefore", filter.started_before);
         list_resource(&self.ctx, None, &params).await

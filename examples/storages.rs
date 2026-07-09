@@ -51,7 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user_data: None,
         extra: Default::default(),
     };
-    let added = queue_client.add_request(&request, false).await?;
+    let added = queue_client
+        .add_request(&request, Default::default())
+        .await?;
     println!("RQ {} added request {}", queue.id, added.request_id);
     let head = queue_client.list_head(Some(10)).await?;
     println!("RQ head has {} request(s)", head.items.len());

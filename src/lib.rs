@@ -67,12 +67,18 @@ pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
 pub use clients::key_value_store::{GetRecordOptions, GetRecordsOptions, ListKeysOptions};
 pub use clients::log::LogOptions;
-pub use clients::request_queue::ListRequestsOptions;
+pub use clients::request_queue::{
+    AddRequestOptions, BatchAddRequestsOptions, DeleteRequestLockOptions, ListRequestsOptions,
+    ProlongRequestLockOptions,
+};
 pub use clients::run::{
-    LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
+    LastRunOptions, RunAbortOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
 pub use clients::store_collection::StoreListOptions;
+
+// Re-export the typed run status/origin enums for ergonomic access.
+pub use models::{RunOrigin, RunStatus};
 
 // Compile-test the code snippets in the README and the external `docs/` pages so every
 // in-documentation code snippet stays valid and runnable. Pulling each Markdown file in as

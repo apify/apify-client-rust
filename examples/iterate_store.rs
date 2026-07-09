@@ -3,6 +3,7 @@
 //! Run with: `APIFY_TOKEN=... cargo run --example iterate_store`
 
 use apify_client::{ApifyClient, StoreListOptions};
+use futures_util::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,13 +12,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Iterate the store, fetching pages of 5 on demand (`limit` is the per-page size, not a
     // total cap). The loop below stops after the first 10 actors regardless of page size.
-    let mut iter = client.store().iterate(StoreListOptions {
+    let stream = client.store().iterate(StoreListOptions {
         limit: Some(5),
         ..Default::default()
     });
+    futures_util::pin_mut!(stream);
 
     let mut count = 0;
-    while let Some(actor) = iter.next().await? {
+    while let Some(actor) = stream.next().await {
+        let actor = actor?;
         println!("{}: {:?}", actor.id, actor.title.or(actor.name));
         count += 1;
         if count >= 10 {

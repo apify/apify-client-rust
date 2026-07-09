@@ -4,6 +4,33 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-07-09
+
+### Changed
+- **Breaking:** `ActorRun::status` and `Build::status` are now `Option<RunStatus>` (a typed enum
+  with an `Other(String)` catch-all) instead of `Option<String>`.
+- **Breaking:** `RunClient::abort` now takes a `RunAbortOptions { gracefully }` instead of a
+  positional `Option<bool>`.
+- **Breaking:** `RequestQueueClient` request-ordering methods now take options structs instead of a
+  positional `forefront: bool`: `add_request` / `update_request` take `AddRequestOptions`,
+  `batch_add_requests` takes `BatchAddRequestsOptions`, `prolong_request_lock` takes
+  `ProlongRequestLockOptions { lock_secs, forefront }`, and `delete_request_lock` takes
+  `DeleteRequestLockOptions`.
+- **Breaking:** `LastRunOptions::status` / `RunListOptions::status` are now typed as `RunStatus`,
+  `LastRunOptions::origin` as `RunOrigin`, and `ActorClient::last_run` / `TaskClient::last_run`
+  now take `Option<RunStatus>`.
+- **Breaking:** `StoreCollectionClient::iterate` and `RequestQueueClient::paginate_requests` now
+  return an `impl Stream` (driven with `StreamExt::next`) instead of a bespoke iterator type with an
+  async `next()` method; the `StoreActorIterator` and `RequestQueueRequestsIterator` types were
+  removed.
+- Bumped crate version to `0.5.0`.
+
+### Added
+- `RunStatus` and `RunOrigin` typed enums (re-exported at the crate root), with `is_terminal` on
+  `RunStatus`.
+- `RunAbortOptions`, `AddRequestOptions`, `BatchAddRequestsOptions`, `ProlongRequestLockOptions`
+  and `DeleteRequestLockOptions` option structs.
+
 ## [0.4.8] - 2026-07-09
 
 ### Changed

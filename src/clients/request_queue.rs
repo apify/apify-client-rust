@@ -1,5 +1,8 @@
 //! Client for a single request queue (`/v2/request-queues/{queueId}` and variants).
 
+use std::collections::VecDeque;
+
+use futures_util::Stream;
 use serde::Serialize;
 
 use crate::clients::base::{
@@ -44,6 +47,42 @@ pub struct ListRequestsOptions {
     /// the enum values `"locked"` and `"pending"`; multiple values are sent comma-joined (matching
     /// the JS reference, which serializes `filter: Array<'locked' | 'pending'>` via `join(',')`).
     pub filter: Option<Vec<String>>,
+}
+
+/// Options for [`RequestQueueClient::add_request`] and [`RequestQueueClient::update_request`].
+///
+/// Matches the JS reference's `addRequest(request, { forefront })`.
+#[derive(Debug, Default, Clone)]
+pub struct AddRequestOptions {
+    /// If `Some(true)`, add the request to the **front** of the queue so it is handled before
+    /// the existing backlog. `None` / `Some(false)` appends it at the back (the usual choice).
+    pub forefront: Option<bool>,
+}
+
+/// Options for [`RequestQueueClient::batch_add_requests`].
+#[derive(Debug, Default, Clone)]
+pub struct BatchAddRequestsOptions {
+    /// If `Some(true)`, add the requests to the **front** of the queue. See
+    /// [`AddRequestOptions::forefront`].
+    pub forefront: Option<bool>,
+}
+
+/// Options for [`RequestQueueClient::prolong_request_lock`].
+///
+/// `lock_secs` is required; matches the JS reference's `prolongRequestLock(id, { lockSecs, forefront })`.
+#[derive(Debug, Clone)]
+pub struct ProlongRequestLockOptions {
+    /// Number of seconds to extend the lock by.
+    pub lock_secs: i64,
+    /// If `Some(true)`, move the request to the **front** of the queue once its lock later expires.
+    pub forefront: Option<bool>,
+}
+
+/// Options for [`RequestQueueClient::delete_request_lock`].
+#[derive(Debug, Default, Clone)]
+pub struct DeleteRequestLockOptions {
+    /// If `Some(true)`, move the request to the **front** of the queue when the lock is released.
+    pub forefront: Option<bool>,
 }
 
 /// Client for a specific request queue.
@@ -103,14 +142,14 @@ impl RequestQueueClient {
         get_resource_required(&self.ctx, Some("head"), &params).await
     }
 
-    /// Adds a single request to the queue. If `forefront` is true, adds it to the front.
+    /// Adds a single request to the queue (see [`AddRequestOptions`]).
     pub async fn add_request(
         &self,
         request: &RequestQueueRequest,
-        forefront: bool,
+        options: AddRequestOptions,
     ) -> ApifyClientResult<RequestQueueOperationInfo> {
         let mut params = self.base_params();
-        params.add_bool("forefront", Some(forefront));
+        params.add_bool("forefront", options.forefront);
         let body = serde_json::to_vec(request)?;
         post_with_body(
             &self.ctx,
@@ -132,11 +171,11 @@ impl RequestQueueClient {
         .await
     }
 
-    /// Updates a request (which must include its `id`).
+    /// Updates a request (which must include its `id`). See [`AddRequestOptions`].
     pub async fn update_request(
         &self,
         request: &RequestQueueRequest,
-        forefront: bool,
+        options: AddRequestOptions,
     ) -> ApifyClientResult<RequestQueueOperationInfo> {
         let id = request.id.clone().ok_or_else(|| {
             crate::error::ApifyClientError::InvalidArgument(
@@ -144,7 +183,7 @@ impl RequestQueueClient {
             )
         })?;
         let mut params = self.base_params();
-        params.add_bool("forefront", Some(forefront));
+        params.add_bool("forefront", options.forefront);
         let url = params.apply_to_url(
             &self
                 .ctx
@@ -209,13 +248,13 @@ impl RequestQueueClient {
     pub async fn batch_add_requests(
         &self,
         requests: &[RequestQueueRequest],
-        forefront: bool,
+        options: BatchAddRequestsOptions,
     ) -> ApifyClientResult<serde_json::Value> {
         let mut processed: Vec<serde_json::Value> = Vec::new();
         let mut unprocessed: Vec<serde_json::Value> = Vec::new();
 
         for chunk in requests.chunks(MAX_REQUESTS_PER_BATCH_OPERATION) {
-            let chunk_result = self.batch_add_chunk(chunk, forefront).await?;
+            let chunk_result = self.batch_add_chunk(chunk, options.forefront).await?;
             merge_request_array(&mut processed, &chunk_result, "processedRequests");
             merge_request_array(&mut unprocessed, &chunk_result, "unprocessedRequests");
         }
@@ -230,10 +269,10 @@ impl RequestQueueClient {
     async fn batch_add_chunk(
         &self,
         requests: &[RequestQueueRequest],
-        forefront: bool,
+        forefront: Option<bool>,
     ) -> ApifyClientResult<serde_json::Value> {
         let mut params = self.base_params();
-        params.add_bool("forefront", Some(forefront));
+        params.add_bool("forefront", forefront);
         let body = serde_json::to_vec(requests)?;
         post_with_body(
             &self.ctx,
@@ -276,20 +315,16 @@ impl RequestQueueClient {
         get_resource_required(&self.ctx, Some("requests"), &params).await
     }
 
-    /// Prolongs the lock on a request for another `lock_secs` seconds.
-    ///
-    /// If `forefront` is `true`, the request moves to the front of the queue when its lock
-    /// later expires.
+    /// Prolongs the lock on a request (see [`ProlongRequestLockOptions`]).
     pub async fn prolong_request_lock(
         &self,
         id: &str,
-        lock_secs: i64,
-        forefront: bool,
+        options: ProlongRequestLockOptions,
     ) -> ApifyClientResult<serde_json::Value> {
         let mut params = self.base_params();
         params
-            .add_int("lockSecs", Some(lock_secs))
-            .add_bool("forefront", Some(forefront));
+            .add_int("lockSecs", Some(options.lock_secs))
+            .add_bool("forefront", options.forefront);
         let url = params.apply_to_url(
             &self
                 .ctx
@@ -309,12 +344,15 @@ impl RequestQueueClient {
         crate::common::parse_data_envelope(&response.body)
     }
 
-    /// Releases the lock on a request so other clients can process it.
-    ///
-    /// If `forefront` is `true`, the request moves to the front of the queue.
-    pub async fn delete_request_lock(&self, id: &str, forefront: bool) -> ApifyClientResult<()> {
+    /// Releases the lock on a request so other clients can process it (see
+    /// [`DeleteRequestLockOptions`]).
+    pub async fn delete_request_lock(
+        &self,
+        id: &str,
+        options: DeleteRequestLockOptions,
+    ) -> ApifyClientResult<()> {
         let mut params = self.base_params();
-        params.add_bool("forefront", Some(forefront));
+        params.add_bool("forefront", options.forefront);
         let url = params.apply_to_url(
             &self
                 .ctx
@@ -335,18 +373,60 @@ impl RequestQueueClient {
 
     /// Lazily paginates over all requests in the queue, fetching pages on demand.
     ///
-    /// Returns a [`RequestQueueRequestsIterator`]; call its `next()` to get one request at a
-    /// time. Pagination uses the API's opaque `nextCursor` token: the first page may be
-    /// anchored with `exclusiveStartId`, but every subsequent page is fetched with `cursor`
-    /// (matching the JS reference). `cursor` and `exclusiveStartId` are mutually exclusive.
-    pub fn paginate_requests(&self, page_limit: Option<i64>) -> RequestQueueRequestsIterator {
-        RequestQueueRequestsIterator {
+    /// Returns a [`Stream`] yielding one request at a time (as
+    /// `ApifyClientResult<RequestQueueRequest>`). Pagination uses the API's opaque `nextCursor`
+    /// token: the first page uses neither anchor and every subsequent page is fetched with
+    /// `cursor` (matching the JS reference; `cursor` and `exclusiveStartId` are mutually
+    /// exclusive). Pin it (e.g. with [`futures_util::pin_mut!`]) and drive it with
+    /// [`StreamExt::next`](futures_util::StreamExt::next).
+    pub fn paginate_requests(
+        &self,
+        page_limit: Option<i64>,
+    ) -> impl Stream<Item = ApifyClientResult<RequestQueueRequest>> {
+        let state = RequestQueuePaginationState {
             client: self.clone(),
             page_limit,
-            buffer: std::collections::VecDeque::new(),
+            buffer: VecDeque::new(),
             next_cursor: None,
             exhausted: false,
-        }
+        };
+        futures_util::stream::try_unfold(state, |mut state| async move {
+            if let Some(item) = state.buffer.pop_front() {
+                return Ok(Some((item, state)));
+            }
+            if state.exhausted {
+                return Ok(None);
+            }
+
+            let page = state
+                .client
+                .list_requests(ListRequestsOptions {
+                    limit: state.page_limit,
+                    cursor: state.next_cursor.clone(),
+                    ..Default::default()
+                })
+                .await?;
+
+            // Parse the items and the next cursor from the (untyped) page.
+            let items: Vec<RequestQueueRequest> = page
+                .get("items")
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?
+                .unwrap_or_default();
+
+            if items.is_empty() {
+                return Ok(None);
+            }
+
+            // Advance the cursor; stop when the API stops returning one.
+            match page.get("nextCursor").and_then(|v| v.as_str()) {
+                Some(cursor) if !cursor.is_empty() => state.next_cursor = Some(cursor.to_string()),
+                _ => state.exhausted = true,
+            }
+
+            state.buffer.extend(items);
+            Ok(state.buffer.pop_front().map(|item| (item, state)))
+        })
     }
 
     /// Unlocks all requests currently locked by this client (identified by `client_key`).
@@ -362,62 +442,13 @@ impl RequestQueueClient {
     }
 }
 
-/// A lazy, page-fetching iterator over the requests in a queue.
-///
-/// Created by [`RequestQueueClient::paginate_requests`]. Each call to [`next`](Self::next)
-/// returns the next request, fetching another page from the API when the local buffer is
-/// exhausted, until all requests have been yielded.
-pub struct RequestQueueRequestsIterator {
+/// Internal pagination state driving the [`RequestQueueClient::paginate_requests`] stream: the
+/// current page buffer plus the opaque cursor used to fetch the next page.
+struct RequestQueuePaginationState {
     client: RequestQueueClient,
     page_limit: Option<i64>,
-    buffer: std::collections::VecDeque<RequestQueueRequest>,
+    buffer: VecDeque<RequestQueueRequest>,
     /// Opaque pagination token returned by the previous page, fed back as `cursor`.
     next_cursor: Option<String>,
     exhausted: bool,
-}
-
-impl RequestQueueRequestsIterator {
-    /// Returns the next request, or `None` when all requests have been yielded.
-    pub async fn next(&mut self) -> ApifyClientResult<Option<RequestQueueRequest>> {
-        if let Some(item) = self.buffer.pop_front() {
-            return Ok(Some(item));
-        }
-        if self.exhausted {
-            return Ok(None);
-        }
-
-        // The first page may be anchored by exclusiveStartId; every later page is fetched
-        // with the opaque `cursor` token (mutually exclusive with exclusiveStartId), matching
-        // the JS reference. Here we only ever paginate from the queue head, so the first page
-        // uses neither and subsequent pages use `cursor`.
-        let page = self
-            .client
-            .list_requests(ListRequestsOptions {
-                limit: self.page_limit,
-                cursor: self.next_cursor.clone(),
-                ..Default::default()
-            })
-            .await?;
-
-        // Parse the items and the next cursor from the (untyped) page.
-        let items: Vec<RequestQueueRequest> = page
-            .get("items")
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()?
-            .unwrap_or_default();
-
-        if items.is_empty() {
-            self.exhausted = true;
-            return Ok(None);
-        }
-
-        // Advance the cursor; stop when the API stops returning one.
-        match page.get("nextCursor").and_then(|v| v.as_str()) {
-            Some(cursor) if !cursor.is_empty() => self.next_cursor = Some(cursor.to_string()),
-            _ => self.exhausted = true,
-        }
-
-        self.buffer.extend(items);
-        Ok(self.buffer.pop_front())
-    }
 }

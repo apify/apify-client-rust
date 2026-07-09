@@ -19,8 +19,8 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Option<Value>` / `Value` | The task's saved input. |
-| `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
-| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
+| `last_run(status)` | `Option<RunStatus>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the `RunStatus` variants. |
+| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the `RunStatus` / `RunOrigin` variants (common origins: `Development`, `Web`, `Api`, `Scheduler`). |
 | `runs()` | — | `RunCollectionClient` | The task's runs. |
 | `webhooks()` | — | `WebhookCollectionClient` | The task's webhooks. |
 

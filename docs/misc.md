@@ -7,21 +7,26 @@
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `StoreListOptions` | `PaginationList<ActorStoreListItem>` | One page of Store Actors. |
-| `iterate(options)` | `StoreListOptions` | `StoreActorIterator` | Lazy, page-fetching iterator. |
+| `iterate(options)` | `StoreListOptions` | `impl Stream<Item = Result<ActorStoreListItem>>` | Lazy, page-fetching stream. |
 
 `StoreListOptions`: `offset`, `limit`, `search`, `sort_by`, `category`, `username`,
-`pricing_model`.
+`pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`.
 
-`StoreActorIterator::next()` is `async` and fallible — it returns
-`ApifyClientResult<Option<ActorStoreListItem>>` (i.e. `Result<Option<ActorStoreListItem>, ApifyClientError>`),
-fetching the next page on demand and yielding `Ok(None)` once the listing is exhausted. Drive it
-with `.await?`:
+`iterate` returns a [`Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html)
+that yields `ApifyClientResult<ActorStoreListItem>` items, fetching the next page on demand and
+completing once the listing is exhausted. Pin it (e.g. with `futures_util::pin_mut!`) and drive it
+with `StreamExt::next`. Like the other `Stream`-returning methods, this needs the `futures-util`
+crate in scope (the [Logs](#logs--clientlogbuild_or_run_id) section below has the `Cargo.toml`
+entry):
 
 ```rust,no_run
 # use apify_client::{ApifyClient, StoreListOptions};
+use futures_util::StreamExt;
 # async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
-let mut iter = client.store().iterate(StoreListOptions::default());
-while let Some(actor) = iter.next().await? {
+let stream = client.store().iterate(StoreListOptions::default());
+futures_util::pin_mut!(stream);
+while let Some(actor) = stream.next().await {
+    let actor = actor?;
     // `title` is the human-readable name; fall back to the technical `name`.
     println!("{}: {:?}", actor.id, actor.title.or(actor.name));
 }
@@ -30,7 +35,7 @@ while let Some(actor) = iter.next().await? {
 ```
 
 `ActorStoreListItem` (from `apify_client::models`) is the element type yielded by both `list`
-and the iterator. Its fields:
+and the stream. Its fields:
 
 | Field | Type | Description |
 |---|---|---|
@@ -146,8 +151,10 @@ if let Some(text) = raw_log {
 The streaming variant takes the same options — `client.run(run_id).log().stream_with_options(LogOptions { raw: Some(true) }).await?`
 yields the raw log chunks (this is what log redirection uses).
 
-Consuming `stream()` requires the `futures_util::StreamExt` trait (from the `futures-util`
-crate) in scope to call `.next()` on the returned stream. Add it to your `Cargo.toml`:
+Consuming any of the client's `Stream`-returning methods — `stream()` here, plus the lazy
+pagination `store().iterate()` and `request_queue().paginate_requests()` — requires the
+`futures_util::StreamExt` trait (from the `futures-util` crate) in scope to call `.next()` on the
+returned stream. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]

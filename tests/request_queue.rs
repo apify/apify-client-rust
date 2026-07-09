@@ -3,6 +3,8 @@
 mod common;
 
 use apify_client::models::RequestQueueRequest;
+use apify_client::ProlongRequestLockOptions;
+use futures_util::StreamExt;
 use serde_json::json;
 
 /// Simple GET: listing request queues should succeed.
@@ -77,7 +79,7 @@ async fn request_queue_crud_flow() {
         extra: Default::default(),
     };
     let added = queue_client
-        .add_request(&request, false)
+        .add_request(&request, Default::default())
         .await
         .expect("add request");
     assert!(!added.request_id.is_empty());
@@ -154,16 +156,18 @@ async fn request_queue_paginate_multiple_pages() {
             extra: Default::default(),
         };
         queue_client
-            .add_request(&request, false)
+            .add_request(&request, Default::default())
             .await
             .expect("add request");
         expected_urls.insert(url);
     }
 
     // Paginate with a page size of 2, forcing several pages (and thus the cursor path).
-    let mut iter = queue_client.paginate_requests(Some(2));
+    let stream = queue_client.paginate_requests(Some(2));
+    futures_util::pin_mut!(stream);
     let mut seen = std::collections::HashSet::new();
-    while let Some(req) = iter.next().await.expect("paginate page") {
+    while let Some(req) = stream.next().await {
+        let req = req.expect("paginate page");
         // Each request must be yielded exactly once.
         assert!(
             seen.insert(req.url.clone()),
@@ -214,7 +218,7 @@ async fn request_queue_lock_lifecycle() {
         extra: Default::default(),
     };
     let added = queue_client
-        .add_request(&request, false)
+        .add_request(&request, Default::default())
         .await
         .expect("add request");
 
@@ -241,8 +245,9 @@ async fn request_queue_lock_lifecycle() {
     assert!(filtered.get("items").is_some());
 
     // Lazily paginate requests; we added one, so at least one should be yielded.
-    let mut iter = queue_client.paginate_requests(Some(10));
-    let first = iter.next().await.expect("paginate requests");
+    let stream = queue_client.paginate_requests(Some(10));
+    futures_util::pin_mut!(stream);
+    let first = stream.next().await.transpose().expect("paginate requests");
     assert!(first.is_some(), "pagination should yield the added request");
 
     // Lock the head.
@@ -254,11 +259,17 @@ async fn request_queue_lock_lifecycle() {
 
     // Prolong, then release the lock on the added request.
     queue_client
-        .prolong_request_lock(&added.request_id, 60, false)
+        .prolong_request_lock(
+            &added.request_id,
+            ProlongRequestLockOptions {
+                lock_secs: 60,
+                forefront: None,
+            },
+        )
         .await
         .expect("prolong lock");
     queue_client
-        .delete_request_lock(&added.request_id, false)
+        .delete_request_lock(&added.request_id, Default::default())
         .await
         .expect("delete lock");
 

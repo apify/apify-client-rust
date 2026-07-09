@@ -14,7 +14,7 @@ use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
-use crate::models::{ActorRun, Task};
+use crate::models::{ActorRun, RunStatus, Task};
 
 /// Client for a specific Actor task.
 #[derive(Debug, Clone)]
@@ -112,13 +112,13 @@ impl TaskClient {
 
     /// Returns a client for the last run of this task, optionally filtered by run status.
     ///
-    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); pass `None`
-    /// to leave it unfiltered. This maps to the `status` query parameter on
+    /// `status` filters by run status (e.g. [`RunStatus::Succeeded`]); pass `None` to leave it
+    /// unfiltered. This maps to the `status` query parameter on
     /// `GET /v2/actor-tasks/{actorTaskId}/runs/last` and mirrors the reference client's
     /// `lastRun({ status })`. To also filter by `origin`, use [`TaskClient::last_run_with_options`].
-    pub fn last_run(&self, status: Option<&str>) -> RunClient {
+    pub fn last_run(&self, status: Option<RunStatus>) -> RunClient {
         self.last_run_with_options(LastRunOptions {
-            status: status.map(str::to_owned),
+            status,
             origin: None,
         })
     }
@@ -126,18 +126,17 @@ impl TaskClient {
     /// Returns a client for the last run of this task, applying the given [`LastRunOptions`]
     /// (e.g. [`LastRunOptions::status`] and/or [`LastRunOptions::origin`]).
     ///
-    /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); `origin` filters
-    /// by how the run was started, with accepted values being the platform's run origins (e.g.
-    /// `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). Both are documented optional query
+    /// `status` filters by run status (e.g. [`RunStatus::Succeeded`]); `origin` filters by how the
+    /// run was started (e.g. [`crate::models::RunOrigin::Api`]). Both are documented optional query
     /// parameters on `GET /v2/actor-tasks/{actorTaskId}/runs/last` and match the reference client's
     /// `lastRun({ status, origin })`; leave a field as `None` to omit it.
     pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
         let mut client = RunClient::new(self.ctx.http.clone(), &self.ctx.url(None), "runs", "last");
-        if let Some(status) = options.status.as_deref() {
-            client.set_base_param("status", status);
+        if let Some(status) = &options.status {
+            client.set_base_param("status", status.as_str());
         }
-        if let Some(origin) = options.origin.as_deref() {
-            client.set_base_param("origin", origin);
+        if let Some(origin) = &options.origin {
+            client.set_base_param("origin", origin.as_str());
         }
         client
     }
