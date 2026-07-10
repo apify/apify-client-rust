@@ -29,16 +29,14 @@ impl ActorEnvVarCollectionClient {
     ///
     /// The env-var listing is not offset-paginated (the API returns every variable in a single
     /// page), so this yields all variables from that one page and then completes. It exists for
-    /// interface parity with the other collection clients and the reference client.
+    /// interface parity with the other collection clients and the reference client. Built with
+    /// [`ListIterator::new_single_page`], which fetches exactly once and never re-requests.
     pub fn iterate(&self) -> ListIterator<ActorEnvVar> {
         let client = self.clone();
-        ListIterator::new(
-            0,
-            Box::new(move |_offset| {
-                let client = client.clone();
-                Box::pin(async move { client.list().await })
-            }),
-        )
+        ListIterator::new_single_page(Box::new(move |_offset| {
+            let client = client.clone();
+            Box::pin(async move { client.list().await })
+        }))
     }
 
     /// Creates a new environment variable.
