@@ -350,7 +350,7 @@ impl KeyValueStoreKeysIterator {
         // (defensive parity with `ListIterator`).
         if let Some(rem) = self.remaining {
             if received > rem {
-                items.truncate(rem.max(0) as usize);
+                items.truncate(rem as usize);
             }
         }
         if let Some(rem) = self.remaining.as_mut() {

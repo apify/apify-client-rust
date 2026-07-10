@@ -182,7 +182,7 @@ impl<T> ListIterator<T> {
         let mut items = page.items;
         if let Some(rem) = self.remaining {
             if received > rem {
-                items.truncate(rem.max(0) as usize);
+                items.truncate(rem as usize);
             }
         }
 

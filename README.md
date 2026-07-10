@@ -14,7 +14,8 @@ It provides a resource-oriented, async interface that mirrors the official
 - Resource clients for Actors, runs, builds, tasks, datasets, key-value stores, request
   queues, schedules, webhooks, the Apify Store, users and logs.
 - Convenience helpers: run/wait, log streaming (redirection; needs the `futures-util` crate —
-  see [Installation](#installation)), lazy Store iteration.
+  see [Installation](#installation)), lazy Store iteration, and `set_status_message` for
+  updating the current Actor run's status (see [`docs/README.md`](docs/README.md#convenience-methods)).
 - A replaceable HTTP transport for testing or custom runtimes.
 
 ## Installation

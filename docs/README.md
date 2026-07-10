@@ -171,6 +171,32 @@ reach those values the client maps Rust's native `std::env::consts::OS` spelling
 (`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
 (`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
 
+### Convenience methods
+
+Beyond the resource accessors, `ApifyClient` exposes one convenience method:
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `set_status_message(message, is_terminal)` | `message: &str`, `is_terminal: bool` | `ActorRun` | Sets the status message of the *current* Actor run. |
+
+`set_status_message` updates the run identified by the `ACTOR_RUN_ID` environment variable, so it
+only works when called from inside an Actor run. `message` is the human-readable status text; when
+`is_terminal` is `true` the message becomes final and is not overwritten by later updates. It
+returns the updated [`ActorRun`](runs.md), or
+[`ApifyClientError::InvalidArgument`](#error-handling) if `ACTOR_RUN_ID` is not set.
+
+```rust,no_run
+use apify_client::ApifyClient;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = ApifyClient::new("my-api-token");
+    // Called from inside an Actor run (reads ACTOR_RUN_ID from the environment).
+    client.set_status_message("Processing input…", false).await?;
+    Ok(())
+}
+```
+
 ## Resource clients
 
 Accessor methods on `ApifyClient` return resource clients — the collection accessor (plural)

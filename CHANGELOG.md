@@ -32,6 +32,10 @@ to [Semantic Versioning](https://semver.org/).
   per-page size with `ListIterator::with_chunk_size` instead. The `StoreActorIterator` type alias
   itself is unchanged.
 - Corrected the `src/models.rs` module doc to describe forward-compatibility accurately.
+- Documented `ApifyClient::set_status_message` and `BuildClient::get_openapi_definition` in the
+  `docs/` pages and README.
+- Simplified the total-cap truncation in the offset and key-value-store iterators (removed a
+  dead `.max(0)` clamp on an already-positive remaining count).
 - Bumped crate version to `0.6.0`.
 
 ### Removed
