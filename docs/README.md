@@ -85,7 +85,8 @@ types is:
 - Shared: `ListOptions`, `StorageListOptions`
 - Client configuration: `RequestCompression`
 
-plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
+plus the common container `PaginationList`, the query helper `QueryParams`, and `ListIterator`
+(the return type of every collection client's `iterate()` method). Import any of them
 directly from `apify_client`:
 
 ```rust,no_run

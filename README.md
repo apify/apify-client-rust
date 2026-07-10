@@ -36,7 +36,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
   [`raw_log`](examples/raw_log.rs) examples import `futures_util::StreamExt` for this. See
   [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
-  fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `chrono::DateTime<Utc>`
+  fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `Option<chrono::DateTime<Utc>>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the
   `monthly_usage` example in [`docs/misc.md`](docs/misc.md#users--clientme--clientuserid) and the
   account example) need it as a direct dependency.

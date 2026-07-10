@@ -239,8 +239,14 @@ impl DatasetClient {
     /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
     /// transparently paging. The caller's `options.limit` caps the total number of items yielded
     /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
-    /// Filtering options such as `skip_empty`/`clean`/`skip_hidden` are honoured across pages
-    /// without truncating the result.
+    ///
+    /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) are forwarded on every page
+    /// request. Paging advances the offset by the number of items each page returns, exactly
+    /// like the reference JavaScript client (`currentOffset += items.length`). When a filter
+    /// drops items from a page, that post-filter count is smaller than the raw window, so the
+    /// next page starts at an offset that overlaps the previous window and some items may be
+    /// yielded more than once. If you need every filtered item exactly once, apply the filter
+    /// client-side over an unfiltered iteration instead.
     pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
         &self,
         options: DatasetListItemsOptions,

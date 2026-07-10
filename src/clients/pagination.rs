@@ -293,12 +293,13 @@ mod tests {
 
     #[tokio::test]
     async fn non_final_short_page_with_reported_total_does_not_truncate() {
-        // Regression test for the dataset-items filtering case (Finding 1): every page is "short"
-        // — it returns fewer items than the page size the API reports (as `skip_empty`/`clean` do,
-        // where a full raw window omits filtered-out items) — while the endpoint reports a large
-        // total. The old `received < page.limit` termination stopped after page 1 and silently
-        // dropped the rest; total-driven termination must keep going and yield every item, ending
-        // only on the empty page.
+        // Guards the termination logic, NOT filter de-duplication: every page is "short" — it
+        // returns fewer items than the page size the API reports — while the endpoint reports a
+        // large total. The old `received < page.limit` termination stopped after page 1 and
+        // silently dropped the rest; total-driven termination must keep going and yield every
+        // item, ending only on the empty page. (This fetcher advances offset by the page size
+        // and never overlaps windows, so it does not model the sparse-window duplicate behaviour
+        // documented on `iterate_items`; it only proves a short page is not treated as terminal.)
         let all: Vec<i64> = (0..6).collect();
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
@@ -358,6 +359,38 @@ mod tests {
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4]);
         // Pages: [0,1] [2,3] [4] — the last page is trimmed to the remaining budget of 1.
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn cap_truncates_page_that_exceeds_remaining_budget() {
+        // Exercises the cap-truncation branch (`received > rem`): the endpoint ignores the
+        // requested page limit and returns MORE items than the caller's total cap allows. The
+        // iterator must trim the over-long page to the remaining budget and yield exactly `limit`
+        // items, fetching only once.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let fetch: PageFetcher<i64> = Box::new(move |offset, _limit| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                // Always return 5 items regardless of the requested limit.
+                Ok(PaginationList {
+                    total: 100,
+                    offset,
+                    limit: 5,
+                    count: 5,
+                    desc: false,
+                    items: vec![0, 1, 2, 3, 4],
+                })
+            })
+        });
+        // Total cap of 3, but the page delivers 5 → must be truncated to [0, 1, 2].
+        let iter = ListIterator::new(0, Some(3), fetch);
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2]);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cap reached on the first (over-long) page, so no second fetch"
+        );
     }
 
     #[tokio::test]
