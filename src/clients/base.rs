@@ -3,7 +3,7 @@
 //! [`ResourceContext`] holds the resolved URL and the [`HttpClient`] for a single
 //! resource (or sub-resource). The free functions in this module implement the CRUD
 //! and wait-for-finish primitives once, so that every resource client stays small and
-//! consistent (the DRY principle the requirements call for).
+//! consistent (the DRY principle).
 
 use std::time::Duration;
 

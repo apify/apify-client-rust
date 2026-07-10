@@ -26,9 +26,14 @@ type PageFetcher<T> = Box<dyn Fn(i64) -> PageFuture<T> + Send + Sync>;
 ///
 /// Created by a collection client's `iterate()` method. Each call to [`next`](Self::next)
 /// returns the next item, transparently fetching the following page from the API once the
-/// local buffer drains, until every item across all pages has been yielded. The caller's
-/// per-page `limit` (if any) is honoured as the page size; iteration always walks the full
-/// result set regardless.
+/// local buffer drains, until every item across all pages has been yielded.
+///
+/// The caller's `limit` (if any) is the **page size**, not a cap on the total number of items
+/// yielded: iteration always walks the full result set regardless. This mirrors the reference
+/// JavaScript client's `AsyncIterable`, where `limit` likewise controls page size while the
+/// iterable spans every page. There is intentionally no first-class "take N items" option — a
+/// caller wanting only the first N should stop calling [`next`](Self::next) after N items
+/// rather than expect `limit` to bound the stream.
 ///
 /// # Example
 /// ```no_run
