@@ -42,6 +42,37 @@ async fn get_key_value_store() {
     assert_eq!(fetched.id, store.id);
 }
 
+/// Iteration: the key-value store collection iterator yields a just-created store across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_key_value_stores() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-iter");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let iter = client
+        .key_value_stores()
+        .iterate(apify_client::StorageListOptions {
+            desc: Some(true),
+            limit: Some(10),
+            ..Default::default()
+        });
+    let target = store.id.clone();
+    assert!(
+        common::iter_contains(iter, move |s| s.id == target).await,
+        "key-value store iteration should yield the created store"
+    );
+}
+
 /// Record keys containing characters that are valid for the API (`!`, `'`, `(`, `)`) but
 /// reserved in a URL path must round-trip correctly, proving the path segment is
 /// percent-encoded rather than interpolated raw.

@@ -4,13 +4,24 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
-## [0.5.1] - 2026-07-10
+## [0.6.0] - 2026-07-10
+
+### Added
+- Lazy async pagination iterators on every collection client, via a shared generic
+  `ListIterator<T>` (exported at the crate root). New `iterate()` methods on the actor, actor
+  version, environment-variable, build, run, dataset, key-value-store, request-queue, schedule,
+  task, webhook, and webhook-dispatch collection clients, plus `DatasetClient::iterate_items()`
+  for dataset items. Each yields one item at a time, fetching pages on demand — the idiomatic
+  counterpart to the reference client's async-iterable list results.
 
 ### Changed
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`
   error responses and relaxed field nullability/optionality) needs no code change: error
   responses are handled generically and response models are forward-compatible.
-- Bumped crate version to `0.5.1`.
+- `StoreCollectionClient::iterate` now uses the shared `ListIterator`; `StoreActorIterator` is
+  a type alias for `ListIterator<ActorStoreListItem>` (existing usage is unaffected).
+- Corrected the `src/models.rs` module doc to describe forward-compatibility accurately.
+- Bumped crate version to `0.6.0`.
 
 ## [0.5.0] - 2026-07-10
 

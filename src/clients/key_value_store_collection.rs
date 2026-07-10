@@ -1,6 +1,7 @@
 //! Client for the key-value store collection (`/v2/key-value-stores`).
 
 use crate::clients::base::{get_or_create_named, list_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{PaginationList, QueryParams, StorageListOptions};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -28,6 +29,21 @@ impl KeyValueStoreCollectionClient {
         let mut params = QueryParams::new();
         options.apply(&mut params);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all key-value stores matching `options`, fetching pages on demand.
+    pub fn iterate(&self, options: StorageListOptions) -> ListIterator<KeyValueStore> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        ListIterator::new(
+            start,
+            Box::new(move |offset| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                Box::pin(async move { client.list(options).await })
+            }),
+        )
     }
 
     /// Gets the store with the given `name`, creating it if it does not exist.

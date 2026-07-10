@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::clients::base::{create_resource, list_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -29,6 +30,21 @@ impl TaskCollectionClient {
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all tasks matching `options`, fetching pages on demand.
+    pub fn iterate(&self, options: ListOptions) -> ListIterator<Task> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        ListIterator::new(
+            start,
+            Box::new(move |offset| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                Box::pin(async move { client.list(options).await })
+            }),
+        )
     }
 
     /// Creates a new task from the given definition.

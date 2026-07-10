@@ -51,6 +51,35 @@ async fn get_task() {
     assert_eq!(fetched.id, task.id);
 }
 
+/// Iteration: the task collection iterator yields a just-created task across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_tasks() {
+    let client = require_client!();
+    let name = common::unique_name("task-iter");
+    let task = client
+        .tasks()
+        .create(&task_definition(&name))
+        .await
+        .expect("create task");
+
+    let cleanup_client = client.clone();
+    let id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&id).delete().await;
+    });
+
+    let iter = client.tasks().iterate(apify_client::ListOptions {
+        desc: Some(true),
+        limit: Some(10),
+        ..Default::default()
+    });
+    let target = task.id.clone();
+    assert!(
+        common::iter_contains(iter, move |t| t.id == target).await,
+        "task iteration should yield the created task"
+    );
+}
+
 /// Complex flow: create a task for the public hello-world Actor, get it, update its input,
 /// list its runs, and delete it.
 #[tokio::test(flavor = "multi_thread")]

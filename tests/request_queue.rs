@@ -43,6 +43,37 @@ async fn get_request_queue() {
     assert_eq!(fetched.id, queue.id);
 }
 
+/// Iteration: the request queue collection iterator yields a just-created queue across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_request_queues() {
+    let client = require_client!();
+    let name = common::unique_name("rq-iter");
+    let queue = client
+        .request_queues()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&id).delete().await;
+    });
+
+    let iter = client
+        .request_queues()
+        .iterate(apify_client::StorageListOptions {
+            desc: Some(true),
+            limit: Some(10),
+            ..Default::default()
+        });
+    let target = queue.id.clone();
+    assert!(
+        common::iter_contains(iter, move |q| q.id == target).await,
+        "request queue iteration should yield the created queue"
+    );
+}
+
 /// Complex flow: create -> get -> add request -> read request -> list head -> update -> delete.
 #[tokio::test(flavor = "multi_thread")]
 async fn request_queue_crud_flow() {

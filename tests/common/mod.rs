@@ -116,6 +116,32 @@ impl Drop for Cleanup {
     }
 }
 
+/// Upper bound on how many items an iteration test pulls while searching for a specific
+/// just-created resource. Iteration tests sort newest-first, so the target is normally in the
+/// first page; the cap only guards against an unbounded scan on a busy shared account.
+pub const ITER_SEARCH_CAP: usize = 1000;
+
+/// Drives a lazy [`ListIterator`](apify_client::ListIterator) looking for an item matching
+/// `pred`, pulling at most [`ITER_SEARCH_CAP`] items. Returns `true` as soon as a match is
+/// found. Used by the per-collection iteration tests to confirm a just-created resource is
+/// reachable through the iterator (exercising the transparent page-fetching path).
+pub async fn iter_contains<T, F>(mut iter: apify_client::ListIterator<T>, mut pred: F) -> bool
+where
+    F: FnMut(&T) -> bool,
+{
+    let mut pulled = 0usize;
+    while let Some(item) = iter.next().await.expect("iteration should not error") {
+        if pred(&item) {
+            return true;
+        }
+        pulled += 1;
+        if pulled >= ITER_SEARCH_CAP {
+            break;
+        }
+    }
+    false
+}
+
 /// Generates a unique, collision-resistant resource name for test isolation.
 ///
 /// The name embeds the test-specific `prefix`, a random UUID fragment, and is kept short

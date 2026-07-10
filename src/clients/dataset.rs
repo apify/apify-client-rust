@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::clients::base::{delete_resource, get_resource, update_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{parse_data_envelope, sign_storage_content, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
@@ -230,6 +231,28 @@ impl DatasetClient {
             desc: options.desc.unwrap_or(false),
             items,
         })
+    }
+
+    /// Lazily iterates over all items in the dataset, fetching pages on demand.
+    ///
+    /// The idiomatic-Rust counterpart of the reference client's async-iterable
+    /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
+    /// transparently paging with the caller's `options` (its `limit` acts as the page size).
+    pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
+        &self,
+        options: DatasetListItemsOptions,
+    ) -> ListIterator<T> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        ListIterator::new(
+            start,
+            Box::new(move |offset| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                Box::pin(async move { client.list_items::<T>(options).await })
+            }),
+        )
     }
 
     /// Downloads dataset items serialized in the given `format`, returning the raw bytes.

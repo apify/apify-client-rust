@@ -74,6 +74,102 @@ async fn get_actor() {
     assert_eq!(fetched.id, actor.id);
 }
 
+/// Iteration: the Actor collection iterator yields a just-created Actor across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_actors() {
+    let client = require_client!();
+    let name = actor_name("actor-iter");
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&id).delete().await;
+    });
+
+    // Restrict to the caller's own Actors, newest-first, with a small page size.
+    let iter = client.actors().iterate(apify_client::ActorListOptions {
+        my: Some(true),
+        desc: Some(true),
+        limit: Some(10),
+        ..Default::default()
+    });
+    let target = actor.id.clone();
+    assert!(
+        common::iter_contains(iter, move |a| a.id == target).await,
+        "actor iteration should yield the created actor"
+    );
+}
+
+/// Iteration: the Actor version iterator yields the Actor's initial version.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_actor_versions() {
+    let client = require_client!();
+    let name = actor_name("ver-iter");
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&id).delete().await;
+    });
+
+    let iter = client
+        .actor(&actor.id)
+        .versions()
+        .iterate(Default::default());
+    assert!(
+        common::iter_contains(iter, |v| v.version_number == "0.0").await,
+        "version iteration should yield the initial 0.0 version"
+    );
+}
+
+/// Iteration: the environment-variable iterator yields a variable we just created.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_actor_env_vars() {
+    use apify_client::models::ActorEnvVar;
+
+    let client = require_client!();
+    let name = actor_name("envit");
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&id).delete().await;
+    });
+
+    let version_client = client.actor(&actor.id).version("0.0");
+    version_client
+        .env_vars()
+        .create(&ActorEnvVar {
+            name: "ITER_VAR".to_string(),
+            value: Some("v".to_string()),
+            is_secret: Some(false),
+            extra: Default::default(),
+        })
+        .await
+        .expect("create env var");
+
+    let iter = version_client.env_vars().iterate();
+    assert!(
+        common::iter_contains(iter, |e| e.name == "ITER_VAR").await,
+        "env-var iteration should yield the created variable"
+    );
+}
+
 /// Complex flow: create an Actor with a single version, get it, update it, list builds,
 /// and delete it.
 #[tokio::test(flavor = "multi_thread")]

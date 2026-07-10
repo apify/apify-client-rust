@@ -1,10 +1,18 @@
 //! Client for browsing the Apify Store (`/v2/store`).
 
 use crate::clients::base::{list_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorStoreListItem;
+
+/// A lazy, page-fetching iterator over Apify Store Actors.
+///
+/// Returned by [`StoreCollectionClient::iterate`]. This is an alias for the shared
+/// [`ListIterator`]; call its `next()` to yield one Actor at a time, fetching further pages
+/// from the API transparently until the listing is exhausted.
+pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 
 /// Options for searching the Apify Store.
 #[derive(Debug, Default, Clone)]
@@ -58,17 +66,20 @@ impl StoreCollectionClient {
 
     /// Lazily iterates all Store Actors matching `options`, fetching pages on demand.
     ///
-    /// Returns a [`StoreActorIterator`] whose [`next`](StoreActorIterator::next) method
-    /// yields one Actor at a time, transparently fetching subsequent pages.
+    /// Returns a [`StoreActorIterator`] whose `next()` method yields one Actor at a time,
+    /// transparently fetching subsequent pages.
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        StoreActorIterator {
-            client: self.clone(),
-            options,
-            buffer: std::collections::VecDeque::new(),
-            next_offset: 0,
-            total: None,
-            exhausted: false,
-        }
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        ListIterator::new(
+            start,
+            Box::new(move |offset| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                Box::pin(async move { client.list(options).await })
+            }),
+        )
     }
 
     fn build_params(&self, options: &StoreListOptions) -> QueryParams {
@@ -85,55 +96,5 @@ impl StoreCollectionClient {
             .add_bool("allowsAgenticUsers", options.allows_agentic_users)
             .add_str("responseFormat", options.response_format.clone());
         params
-    }
-}
-
-/// A lazy, page-fetching iterator over Apify Store Actors.
-///
-/// Created by [`StoreCollectionClient::iterate`]. Each call to [`next`](Self::next)
-/// returns the next Actor, fetching another page from the API when the local buffer is
-/// exhausted, until all matching Actors have been yielded.
-pub struct StoreActorIterator {
-    client: StoreCollectionClient,
-    options: StoreListOptions,
-    buffer: std::collections::VecDeque<ActorStoreListItem>,
-    next_offset: i64,
-    total: Option<i64>,
-    exhausted: bool,
-}
-
-impl StoreActorIterator {
-    /// Returns the next Store Actor, or `None` when the listing is exhausted.
-    pub async fn next(&mut self) -> ApifyClientResult<Option<ActorStoreListItem>> {
-        if let Some(item) = self.buffer.pop_front() {
-            return Ok(Some(item));
-        }
-        if self.exhausted {
-            return Ok(None);
-        }
-
-        // Honour a caller-provided starting offset on the first fetch.
-        let start_offset = self.options.offset.unwrap_or(0) + self.next_offset;
-        let mut page_options = self.options.clone();
-        page_options.offset = Some(start_offset);
-
-        let page = self.client.list(page_options).await?;
-        if self.total.is_none() {
-            self.total = Some(page.total);
-        }
-        if page.items.is_empty() {
-            self.exhausted = true;
-            return Ok(None);
-        }
-
-        self.next_offset += page.items.len() as i64;
-        // Stop once we have walked past the total number of available items.
-        if let Some(total) = self.total {
-            if start_offset + page.items.len() as i64 >= total {
-                self.exhausted = true;
-            }
-        }
-        self.buffer.extend(page.items);
-        Ok(self.buffer.pop_front())
     }
 }

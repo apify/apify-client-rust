@@ -1,6 +1,7 @@
 //! Client for the webhook dispatch collection (`/v2/webhook-dispatches`).
 
 use crate::clients::base::{list_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -37,5 +38,20 @@ impl WebhookDispatchCollectionClient {
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all webhook dispatches matching `options`, fetching pages on demand.
+    pub fn iterate(&self, options: ListOptions) -> ListIterator<WebhookDispatch> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        ListIterator::new(
+            start,
+            Box::new(move |offset| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                Box::pin(async move { client.list(options).await })
+            }),
+        )
     }
 }

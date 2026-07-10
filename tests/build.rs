@@ -16,6 +16,64 @@ async fn list_builds() {
     assert!(page.total >= 0);
 }
 
+/// Iteration: the build collection iterator yields a build we just started.
+///
+/// Scoped to a fresh Actor's builds so the collection is small and deterministic. The build is
+/// started but not awaited — it appears in the listing immediately regardless of its state.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_builds() {
+    let client = require_client!();
+    let name = common::unique_name("build-iter").replace('-', "");
+    let name = format!("b{}", &name[..name.len().min(20)]);
+
+    let definition = json!({
+        "name": name,
+        "isPublic": false,
+        "versions": [{
+            "versionNumber": "0.0",
+            "sourceType": "SOURCE_FILES",
+            "buildTag": "latest",
+            "sourceFiles": [
+                {
+                    "name": "Dockerfile",
+                    "format": "TEXT",
+                    "content": "FROM apify/actor-node:20\nCOPY . ./\nCMD node main.js"
+                },
+                { "name": "main.js", "format": "TEXT", "content": "console.log('iter');" }
+            ]
+        }]
+    });
+
+    let actor = client
+        .actors()
+        .create(&definition)
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
+    let actor_client = client.actor(&actor.id);
+    let build = actor_client
+        .build("0.0", Default::default())
+        .await
+        .expect("start build");
+
+    let iter = actor_client.builds().iterate(apify_client::ListOptions {
+        desc: Some(true),
+        limit: Some(10),
+        ..Default::default()
+    });
+    let target = build.id.clone();
+    assert!(
+        common::iter_contains(iter, move |b| b.id == target).await,
+        "build iteration should yield the started build"
+    );
+}
+
 /// Complex flow: create an Actor, build it, wait for the build to finish, fetch the build
 /// and its log, then clean up.
 #[tokio::test(flavor = "multi_thread")]

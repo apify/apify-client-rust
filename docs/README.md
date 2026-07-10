@@ -35,7 +35,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.5"
+apify-client = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -179,6 +179,33 @@ lists/creates, and the single-resource accessor (singular) operates on one resou
 
 Each resource has a dedicated page, linked under **Resource clients** in the [Contents](#contents)
 above (Actors, runs, builds, tasks, storages, schedules, webhooks, and store/users/logs).
+
+### Iterating collections
+
+A collection's `list(...)` method returns a single `PaginationList` page. To walk every item
+across all pages without tracking offsets yourself, call `iterate(...)` instead: it returns a
+lazy `ListIterator` (re-exported at the crate root) that fetches the next page from the API on
+demand as you consume items. Every collection client provides it (`actors`, `builds`, `runs`,
+`tasks`, `datasets`, `key_value_stores`, `request_queues`, `schedules`, `webhooks`,
+`webhook_dispatches`, `store`, and the nested Actor `versions`/`env_vars`), and `DatasetClient`
+exposes `iterate_items()` for dataset items. Any per-call `limit` is used as the page size.
+
+```rust,no_run
+use apify_client::{ApifyClient, ActorListOptions};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = ApifyClient::new("my-api-token");
+    let mut actors = client.actors().iterate(ActorListOptions {
+        my: Some(true),
+        ..Default::default()
+    });
+    while let Some(actor) = actors.next().await? {
+        println!("{}", actor.id);
+    }
+    Ok(())
+}
+```
 
 ## Error handling
 

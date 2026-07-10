@@ -1,9 +1,10 @@
 //! Data models for Apify API resources.
 //!
 //! Each resource is modelled with the fields most commonly used by clients, mirroring
-//! the reference JavaScript client. To remain forward-compatible with additive changes
-//! to the API, every model captures any unknown fields in an `extra` map via
-//! `#[serde(flatten)]`, so new API fields never break deserialization.
+//! the reference JavaScript client. To remain forward-compatible with additive changes to
+//! the API, none of the models set `deny_unknown_fields`, so unknown API fields are ignored
+//! rather than breaking deserialization. Most resource models additionally capture any unknown
+//! fields in an `extra` map via `#[serde(flatten)]` so they remain accessible to callers.
 
 use std::collections::HashMap;
 
