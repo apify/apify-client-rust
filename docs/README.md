@@ -96,12 +96,34 @@ use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItem
 but the short crate-root path above is the supported, stable way to import these option types.)
 
 API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
-`RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
-`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the `apify_client::models`
-module and are imported from there:
+`KeyValueStoreKey`, `KeyValueStoreKeysPage`, `KeyValueStoreRecord`, `RequestQueue`,
+`RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`, `Task`, `Schedule`,
+`Webhook`, `WebhookDispatch`, `ActorStoreListItem`, `User`, …) all live in the
+`apify_client::models` module and are imported from there:
 
 ```rust,no_run
 use apify_client::models::RequestQueueRequest;
+```
+
+Every model exposes an `extra: Extra` field that captures any response fields not otherwise
+modelled; `Extra` is a type alias for `std::collections::HashMap<String, serde_json::Value>`, also
+in `apify_client::models`. When constructing a model, set `extra: Default::default()` (an empty
+map); read passthrough fields from a returned model's `extra` by key:
+
+```rust,no_run
+use apify_client::models::Extra;
+
+// `extra` is a HashMap<String, serde_json::Value>; look up any passthrough field by key.
+fn some_field(extra: &Extra) -> Option<&serde_json::Value> {
+    extra.get("someFieldNotModelled")
+}
+```
+
+The error type `ApifyClientError` (and its companions `ApiError`, `ApifyClientResult`) is
+re-exported at the crate root — see [Error handling](#error-handling) for import and matching:
+
+```rust,no_run
+use apify_client::ApifyClientError;
 ```
 
 ## `ApifyClient` and the builder
@@ -140,7 +162,10 @@ The `User-Agent` header has the form
 `ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where the `{os}`
 token matches the reference client's `os.platform()` value (e.g. `darwin`, `win32`, `linux`) so it
 is identical across all Apify clients, and `isAtHome` reflects the `APIFY_IS_AT_HOME` environment
-variable (the platform variable the reference clients read; rendered lowercase to match them).
+variable (the platform variable the reference clients read; rendered lowercase to match them). To
+reach those values the client maps Rust's native `std::env::consts::OS` spellings to Node's
+(`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
+(`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
 
 ## Resource clients
 

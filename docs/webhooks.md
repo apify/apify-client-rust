@@ -28,9 +28,10 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 
 ## The `Webhook` model
 
-Returned by `get`, `create`, `update`, `test` (via the resulting dispatch's `webhook_id`) and
-(as `PaginationList<Webhook>`) by `list`. Unknown fields returned by the API are preserved in
-`extra`.
+`Webhook` and `WebhookDispatch` live in `apify_client::models`
+(`use apify_client::models::{Webhook, WebhookDispatch};`). Returned by `get`, `create`, `update`,
+`test` (via the resulting dispatch's `webhook_id`) and (as `PaginationList<Webhook>`) by `list`.
+Unknown fields returned by the API are preserved in `extra`.
 
 | Field | Type | Description |
 |---|---|---|

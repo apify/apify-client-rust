@@ -234,8 +234,8 @@ fn env_var_set(name: &str) -> bool {
 pub fn build_user_agent(suffix: Option<&str>) -> String {
     // The OS token must be byte-for-byte identical across all Apify clients, which means it must
     // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
-    // own spellings (`macos`, `windows`, `solaris`), so map those to the Node `os.platform()`
-    // tokens (`darwin`, `win32`, `sunos`); the rest already agree.
+    // own spellings (`macos`, `windows`, `solaris`, `illumos`), so map those to the Node
+    // `os.platform()` tokens (`darwin`, `win32`, `sunos`); the rest already agree.
     let os = map_os_to_node_platform(std::env::consts::OS);
     // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
     // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
@@ -265,16 +265,16 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
 ///
 /// The User-Agent OS field must be identical across every Apify client, and the reference client
 /// derives it from Node's `os.platform()`. Rust and Node agree on most tokens (`linux`, `android`,
-/// `freebsd`, `openbsd`, `netbsd`, `aix`, ...), which pass through unchanged; the three that differ
-/// are translated to Node's spelling. Any unknown value passes through as-is (best effort).
+/// `freebsd`, `openbsd`, `netbsd`, `aix`, ...), which pass through unchanged; the four Rust
+/// spellings that differ (`macos`, `windows`, `solaris`, `illumos`) are translated to Node's
+/// spelling. Note both `solaris` and `illumos` map to Node's single `sunos` token. Any unknown
+/// value passes through as-is (best effort).
 fn map_os_to_node_platform(os: &str) -> &str {
     match os {
-        // Rust `macos` == Node `darwin`.
         "macos" => "darwin",
-        // Rust `windows` == Node `win32`.
         "windows" => "win32",
-        // Rust `solaris` == Node `sunos`.
         "solaris" => "sunos",
+        "illumos" => "sunos",
         other => other,
     }
 }
@@ -453,13 +453,15 @@ mod user_agent_tests {
         }
     }
 
-    // The Rust->Node platform mapping must translate the three tokens that differ and leave every
-    // shared token untouched, so the emitted value is byte-for-byte identical to the reference.
+    // The Rust->Node platform mapping must translate the four tokens that differ (both `solaris`
+    // and `illumos` collapse to Node's `sunos`) and leave every shared token untouched, so the
+    // emitted value is byte-for-byte identical to the reference.
     #[test]
     fn os_token_maps_rust_spellings_to_node_platform() {
         assert_eq!(map_os_to_node_platform("macos"), "darwin");
         assert_eq!(map_os_to_node_platform("windows"), "win32");
         assert_eq!(map_os_to_node_platform("solaris"), "sunos");
+        assert_eq!(map_os_to_node_platform("illumos"), "sunos");
         // Tokens Rust and Node already share must pass through unchanged.
         for shared in ["linux", "android", "freebsd", "openbsd", "netbsd", "aix"] {
             assert_eq!(map_os_to_node_platform(shared), shared);

@@ -91,7 +91,7 @@ Build a customized client with `ApifyClient::builder()`:
 
 ```rust,no_run
 use std::time::Duration;
-use apify_client::ApifyClient;
+use apify_client::{ApifyClient, RequestCompression};
 
 let client = ApifyClient::builder()
     .token("my-api-token")
@@ -101,8 +101,26 @@ let client = ApifyClient::builder()
     .min_delay_between_retries(Duration::from_millis(500)) // default: 500ms
     .timeout(Duration::from_secs(360))      // default: 360s
     .user_agent_suffix("my-app/1.0")
+    .request_compression(RequestCompression::Brotli) // default: Brotli; or RequestCompression::Gzip
     .build();
 ```
+
+### Request compression
+
+Request bodies of at least 1024 bytes are compressed once (before retries) and sent with the
+matching `Content-Encoding` header. The default is Brotli (`br`); select
+`RequestCompression::Gzip` (`gzip`) for environments or intermediaries that do not handle brotli.
+`RequestCompression` is re-exported at the crate root
+(`use apify_client::RequestCompression;`).
+
+### User-Agent
+
+Every request carries a `User-Agent` of the form
+`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}`, plus any
+`user_agent_suffix` you set. The `{os}` token matches the reference clients' `os.platform()` value
+(the client maps Rust's `macos`/`windows`/`solaris`/`illumos` to `darwin`/`win32`/`sunos`;
+`linux`, `android`, and the rest pass through), so it is identical across all Apify clients.
+`isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable.
 
 ## Resource clients
 
