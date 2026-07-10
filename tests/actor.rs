@@ -92,12 +92,14 @@ async fn iterate_actors() {
     });
 
     // Restrict to the caller's own Actors, newest-first, with a small page size.
-    let iter = client.actors().iterate(apify_client::ActorListOptions {
-        my: Some(true),
-        desc: Some(true),
-        limit: Some(10),
-        ..Default::default()
-    });
+    let iter = client
+        .actors()
+        .iterate(apify_client::ActorListOptions {
+            my: Some(true),
+            desc: Some(true),
+            ..Default::default()
+        })
+        .with_chunk_size(5);
     let target = actor.id.clone();
     assert!(
         common::iter_contains(iter, move |a| a.id == target).await,

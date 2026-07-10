@@ -33,7 +33,7 @@ impl ActorEnvVarCollectionClient {
     /// [`ListIterator::new_single_page`], which fetches exactly once and never re-requests.
     pub fn iterate(&self) -> ListIterator<ActorEnvVar> {
         let client = self.clone();
-        ListIterator::new_single_page(Box::new(move |_offset| {
+        ListIterator::new_single_page(Box::new(move |_offset, _page_limit| {
             let client = client.clone();
             Box::pin(async move { client.list().await })
         }))

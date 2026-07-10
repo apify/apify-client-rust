@@ -237,19 +237,25 @@ impl DatasetClient {
     ///
     /// The idiomatic-Rust counterpart of the reference client's async-iterable
     /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
-    /// transparently paging with the caller's `options` (its `limit` acts as the page size).
+    /// transparently paging. The caller's `options.limit` caps the total number of items yielded
+    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
+    /// Filtering options such as `skip_empty`/`clean`/`skip_hidden` are honoured across pages
+    /// without truncating the result.
     pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
         &self,
         options: DatasetListItemsOptions,
     ) -> ListIterator<T> {
         let client = self.clone();
         let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
         ListIterator::new(
             start,
-            Box::new(move |offset| {
+            total_limit,
+            Box::new(move |offset, page_limit| {
                 let client = client.clone();
                 let mut options = options.clone();
                 options.offset = Some(offset);
+                options.limit = page_limit;
                 Box::pin(async move { client.list_items::<T>(options).await })
             }),
         )

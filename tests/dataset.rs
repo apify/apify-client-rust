@@ -62,11 +62,13 @@ async fn iterate_datasets() {
     });
 
     // Newest-first with a small page size so the iterator must fetch at least one page.
-    let iter = client.datasets().iterate(apify_client::StorageListOptions {
-        desc: Some(true),
-        limit: Some(10),
-        ..Default::default()
-    });
+    let iter = client
+        .datasets()
+        .iterate(apify_client::StorageListOptions {
+            desc: Some(true),
+            ..Default::default()
+        })
+        .with_chunk_size(5);
     let target = dataset.id.clone();
     assert!(
         common::iter_contains(iter, move |d| d.id == target).await,
@@ -98,11 +100,11 @@ async fn iterate_dataset_items() {
         .await
         .expect("push items");
 
-    let mut iter =
-        dataset_client.iterate_items::<serde_json::Value>(apify_client::DatasetListItemsOptions {
-            limit: Some(2),
-            ..Default::default()
-        });
+    // A page size of 2 forces three pages; `limit` is a total-item cap (left unset here) rather
+    // than the page size, so every pushed item must still be yielded across pages.
+    let mut iter = dataset_client
+        .iterate_items::<serde_json::Value>(apify_client::DatasetListItemsOptions::default())
+        .with_chunk_size(2);
     let mut seen = std::collections::HashSet::new();
     while let Some(item) = iter.next().await.expect("iterate items") {
         let n = item["n"].as_i64().expect("item has n");

@@ -1,11 +1,11 @@
 //! Generic lazy pagination shared by every collection client.
 //!
 //! The reference JavaScript client returns an `AsyncIterable` from every collection `list()`
-//! (via its base `_listPaginated`), so callers can iterate across all pages without manually
-//! tracking offsets. Rust cannot return a value that is simultaneously a `Future` and a
-//! `Stream`, so the idiomatic equivalent here is a dedicated `iterate()` method on each
-//! collection client that returns a [`ListIterator`]. The paging logic lives here once so every
-//! client stays a thin wrapper over it (don't-repeat-yourself).
+//! (via its base `_listPaginatedFromCallback`), so callers can iterate across all pages without
+//! manually tracking offsets. Rust cannot return a value that is simultaneously a `Future` and a
+//! `Stream`, so the idiomatic equivalent here is a dedicated `iterate()` method on each collection
+//! client that returns a [`ListIterator`]. The paging logic lives here once so every client stays
+//! a thin wrapper over it (don't-repeat-yourself).
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -18,22 +18,41 @@ use crate::error::ApifyClientResult;
 /// for any concrete collection client without being generic over its (unnameable) future type.
 type PageFuture<T> = Pin<Box<dyn Future<Output = ApifyClientResult<PaginationList<T>>> + Send>>;
 
-/// Fetches the page starting at the given absolute `offset`. Implementations capture a clone of
-/// the collection client and the caller's list options, overriding only the offset per page.
-type PageFetcher<T> = Box<dyn Fn(i64) -> PageFuture<T> + Send + Sync>;
+/// Fetches one page: the arguments are the absolute `offset` to start at and the per-page `limit`
+/// to request (`None` = let the API pick its default page size). Implementations capture a clone of
+/// the collection client and the caller's list options, overriding only the offset and limit per
+/// page.
+type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Sync>;
+
+/// Returns the smaller of two optional positive limits, treating a non-positive value as "no
+/// limit" (`None`). Mirrors the reference client's `minForLimitParam`, where the API treats `0`
+/// as an absent limit.
+fn min_positive_limit(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+    let a = a.filter(|&x| x > 0);
+    let b = b.filter(|&x| x > 0);
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
+}
 
 /// A lazy, page-fetching async iterator over an offset/limit-paginated list endpoint.
 ///
 /// Created by a collection client's `iterate()` method. Each call to [`next`](Self::next)
 /// returns the next item, transparently fetching the following page from the API once the
-/// local buffer drains, until every item across all pages has been yielded.
+/// local buffer drains, until the listing is exhausted (or the caller's total-item cap is hit).
 ///
-/// The caller's `limit` (if any) is the **page size**, not a cap on the total number of items
-/// yielded: iteration always walks the full result set regardless. This mirrors the reference
-/// JavaScript client's `AsyncIterable`, where `limit` likewise controls page size while the
-/// iterable spans every page. There is intentionally no first-class "take N items" option — a
-/// caller wanting only the first N should stop calling [`next`](Self::next) after N items
-/// rather than expect `limit` to bound the stream.
+/// # `limit` vs. page size
+///
+/// The caller's `limit` (from the list options passed to `iterate()`) is a **cap on the total
+/// number of items the iterator yields**, matching the reference JavaScript client's
+/// `_listPaginatedFromCallback`, where `options.limit` bounds the whole async-iterable and a
+/// separate `chunkSize` controls page size. Leaving `limit` unset (or `0`) iterates the entire
+/// listing. The page size is a distinct concern: set it with [`with_chunk_size`](Self::with_chunk_size);
+/// when unset, the API's default page size is used. So `iterate(opts{ limit: 10 })` yields at most
+/// 10 items, and `iterate(opts).with_chunk_size(50)` fetches 50 per request while yielding
+/// everything.
 ///
 /// # Example
 /// ```no_run
@@ -53,6 +72,12 @@ pub struct ListIterator<T> {
     buffer: VecDeque<T>,
     /// Absolute offset of the next page to request.
     next_offset: i64,
+    /// Number of items still allowed under the caller's total-item cap; `None` = uncapped.
+    /// Decremented by each page's item count as pages are fetched.
+    remaining: Option<i64>,
+    /// Page size to request per fetch (the reference client's `chunkSize`); `None` = let the API
+    /// choose its default page size.
+    chunk_size: Option<i64>,
     /// When `true`, the underlying endpoint is not offset-paginated: the first fetch returns the
     /// whole result set, so the iterator stops after it rather than requesting a second page.
     single_page: bool,
@@ -61,13 +86,16 @@ pub struct ListIterator<T> {
 }
 
 impl<T> ListIterator<T> {
-    /// Builds an iterator that starts at `start_offset` and fetches offset-paginated pages via
-    /// `fetch`, walking every page until the listing is exhausted.
-    pub(crate) fn new(start_offset: i64, fetch: PageFetcher<T>) -> Self {
+    /// Builds an iterator that starts at `start_offset`, yields at most `total_limit` items across
+    /// all pages (`None`/`0` = uncapped), and fetches offset-paginated pages via `fetch`.
+    pub(crate) fn new(start_offset: i64, total_limit: Option<i64>, fetch: PageFetcher<T>) -> Self {
+        let cap = total_limit.filter(|&l| l > 0);
         Self {
             fetch,
             buffer: VecDeque::new(),
             next_offset: start_offset,
+            remaining: cap,
+            chunk_size: None,
             single_page: false,
             exhausted: false,
         }
@@ -80,8 +108,17 @@ impl<T> ListIterator<T> {
     pub(crate) fn new_single_page(fetch: PageFetcher<T>) -> Self {
         Self {
             single_page: true,
-            ..Self::new(0, fetch)
+            ..Self::new(0, None, fetch)
         }
+    }
+
+    /// Sets the page size (items requested per API call) for this iteration — the reference
+    /// client's `chunkSize`. This controls only how many items each page fetch requests, never how
+    /// many the iterator yields in total (that is the caller's `limit`; see the type docs). A
+    /// non-positive value lets the API choose its default page size.
+    pub fn with_chunk_size(mut self, chunk_size: i64) -> Self {
+        self.chunk_size = (chunk_size > 0).then_some(chunk_size);
+        self
     }
 
     /// Returns the next item, or `None` when the listing is exhausted. Fetches another page from
@@ -94,33 +131,59 @@ impl<T> ListIterator<T> {
             return Ok(None);
         }
 
-        let page = (self.fetch)(self.next_offset).await?;
+        // Request the smaller of the items still allowed under the caller's cap (`remaining`) and
+        // the configured page size (`chunk_size`); `None` lets the API pick its default page size.
+        // On the first page `remaining` is the full cap, matching the reference client's initial
+        // `minForLimitParam(options.limit, options.chunkSize)`.
+        let page_limit = min_positive_limit(self.remaining, self.chunk_size);
+        let page = (self.fetch)(self.next_offset, page_limit).await?;
         let received = page.items.len() as i64;
-        if received == 0 {
-            self.exhausted = true;
-            return Ok(None);
-        }
-        self.next_offset += received;
 
-        // Decide whether more pages remain. A single-page endpoint returned everything at once,
-        // so stop unconditionally after the first fetch. Otherwise the primary signal is a
-        // "short" page: the API returned fewer items than the effective page size it reports
-        // (`page.limit`), which only happens on the final page. Short-page detection is robust
-        // even where `total` is unreliable — the dataset-items endpoint, for instance, reports
-        // `total = 0`. A non-positive reported `limit` is treated as a final page as a safety net.
-        // `total`, when the endpoint reports it (> 0), is used only as an early stop so a full
-        // final page does not cost one extra empty request.
+        // Enforce the caller's total-item cap exactly, even if the API returns more than the
+        // requested page limit.
+        let mut items = page.items;
+        if let Some(rem) = self.remaining {
+            if received > rem {
+                items.truncate(rem.max(0) as usize);
+            }
+        }
+
+        self.next_offset += received;
+        if let Some(rem) = self.remaining.as_mut() {
+            *rem -= received;
+        }
+
+        // Decide whether more pages remain.
         if self.single_page {
+            // Non-paginated endpoint: everything came back in one response.
             self.exhausted = true;
+        } else if received == 0 {
+            // Empty page: nothing more to read. This is the primary backstop and matches the
+            // reference client, whose loop stops as soon as a page returns no items.
+            self.exhausted = true;
+        } else if matches!(self.remaining, Some(r) if r <= 0) {
+            // Reached the caller's total-item cap.
+            self.exhausted = true;
+        } else if page.total > 0 {
+            // The endpoint reports a usable total, so drive termination by position, like the
+            // reference `_listPaginatedFromCallback`. A short page is deliberately NOT treated as
+            // terminal here: with dataset item filters (`skip_empty`/`clean`/`skip_hidden`) a full,
+            // non-final window can return fewer items than requested while more remain at higher
+            // offsets, so short-page detection would silently truncate. The empty-page backstop
+            // above ends the walk instead.
+            if self.next_offset >= page.total {
+                self.exhausted = true;
+            }
         } else {
-            let effective_limit = page.limit;
-            let reached_total = page.total > 0 && self.next_offset >= page.total;
-            if effective_limit <= 0 || received < effective_limit || reached_total {
+            // No usable total (endpoint reports `total == 0`): fall back to short-page detection —
+            // a page shorter than the size the API says it served (`page.limit`) is the last one.
+            // A non-positive reported limit means the endpoint is not offset-paginated at all.
+            if page.limit <= 0 || received < page.limit {
                 self.exhausted = true;
             }
         }
 
-        self.buffer.extend(page.items);
+        self.buffer.extend(items);
         Ok(self.buffer.pop_front())
     }
 
@@ -144,19 +207,22 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// Builds a fetcher that serves `all` as offset-paginated pages of at most `page_size`
-    /// items, reporting `limit = page_size` and `total = all.len()` only when `report_total`.
-    /// Counts how many times it is called so tests can assert page-request behaviour.
+    /// Builds a fetcher that serves `all` as offset-paginated pages, honouring the per-page `limit`
+    /// requested by the iterator (falling back to `default_page` when the iterator requests none).
+    /// Reports `total = all.len()` only when `report_total`, and echoes the effective page size back
+    /// as the response `limit`. Counts how many times it is called so tests can assert page-request
+    /// behaviour.
     fn slicing_fetcher(
         all: Vec<i64>,
-        page_size: i64,
+        default_page: i64,
         report_total: bool,
         calls: Arc<AtomicUsize>,
     ) -> PageFetcher<i64> {
         let all = Arc::new(all);
-        Box::new(move |offset| {
+        Box::new(move |offset, limit| {
             calls.fetch_add(1, Ordering::SeqCst);
             let all = all.clone();
+            let page_size = limit.filter(|&l| l > 0).unwrap_or(default_page);
             Box::pin(async move {
                 let start = (offset.max(0) as usize).min(all.len());
                 let end = (start + page_size.max(0) as usize).min(all.len());
@@ -176,17 +242,24 @@ mod tests {
     #[tokio::test]
     async fn walks_all_pages_using_reported_total() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let iter = ListIterator::new(0, slicing_fetcher((0..5).collect(), 2, true, calls.clone()));
+        let iter = ListIterator::new(
+            0,
+            None,
+            slicing_fetcher((0..5).collect(), 2, true, calls.clone()),
+        )
+        .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4]);
-        // Pages: [0,1] [2,3] [4]. The last page is short, so no extra empty request.
+        // Pages: [0,1] [2,3] [4]. next_offset reaches total (5) on the third page, so no extra
+        // empty request.
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn walks_all_pages_when_total_is_zero() {
-        // Emulates the dataset-items endpoint, which reports total = 0.
+        // Emulates an endpoint that does not report a usable total: short-page detection ends it.
         let calls = Arc::new(AtomicUsize::new(0));
-        let iter = ListIterator::new(0, slicing_fetcher((0..5).collect(), 2, false, calls));
+        let iter = ListIterator::new(0, None, slicing_fetcher((0..5).collect(), 2, false, calls))
+            .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4]);
     }
 
@@ -196,8 +269,10 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let iter = ListIterator::new(
             0,
+            None,
             slicing_fetcher((0..4).collect(), 2, false, calls.clone()),
-        );
+        )
+        .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3]);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
@@ -206,15 +281,89 @@ mod tests {
     async fn reported_total_avoids_extra_request_on_exact_multiple() {
         // 4 items, page size 2, total known: stops after the second full page (no empty fetch).
         let calls = Arc::new(AtomicUsize::new(0));
-        let iter = ListIterator::new(0, slicing_fetcher((0..4).collect(), 2, true, calls.clone()));
+        let iter = ListIterator::new(
+            0,
+            None,
+            slicing_fetcher((0..4).collect(), 2, true, calls.clone()),
+        )
+        .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3]);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
+    async fn non_final_short_page_with_reported_total_does_not_truncate() {
+        // Regression test for the dataset-items filtering case (Finding 1): every page is "short"
+        // — it returns fewer items than the page size the API reports (as `skip_empty`/`clean` do,
+        // where a full raw window omits filtered-out items) — while the endpoint reports a large
+        // total. The old `received < page.limit` termination stopped after page 1 and silently
+        // dropped the rest; total-driven termination must keep going and yield every item, ending
+        // only on the empty page.
+        let all: Vec<i64> = (0..6).collect();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let all = Arc::new(all);
+        let fetch: PageFetcher<i64> = Box::new(move |offset, _limit| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let all = all.clone();
+            Box::pin(async move {
+                // Serve at most 2 items per page but report a page limit of 4, so every non-final
+                // page is strictly short (received 2 < reported limit 4). `total` is reported large
+                // (100) so termination can only come from the empty page, never a short page.
+                let start = (offset.max(0) as usize).min(all.len());
+                let end = (start + 2).min(all.len());
+                let items = all[start..end].to_vec();
+                Ok(PaginationList {
+                    total: 100,
+                    offset,
+                    limit: 4,
+                    count: items.len() as i64,
+                    desc: false,
+                    items,
+                })
+            })
+        });
+        let iter = ListIterator::new(0, None, fetch).with_chunk_size(4);
+        let got = iter.collect_all().await.unwrap();
+        // Every item must be yielded despite each page being short.
+        assert_eq!(got, vec![0, 1, 2, 3, 4, 5]);
+        // Pages: [0,1] [2,3] [4,5] [] — four calls, none terminated early by short-page detection.
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn total_limit_caps_items_yielded() {
+        // `limit` is a total-item cap: with 100 items available, iterate should yield exactly 3.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let iter = ListIterator::new(
+            0,
+            Some(3),
+            slicing_fetcher((0..100).collect(), 1000, true, calls.clone()),
+        );
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2]);
+        // Requesting limit=3 up front means a single page suffices.
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn total_limit_with_smaller_chunk_size_pages_and_caps() {
+        // limit=5 total cap, chunk_size=2 page size: pages of 2 until 5 items are yielded.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let iter = ListIterator::new(
+            0,
+            Some(5),
+            slicing_fetcher((0..100).collect(), 1000, true, calls.clone()),
+        )
+        .with_chunk_size(2);
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4]);
+        // Pages: [0,1] [2,3] [4] — the last page is trimmed to the remaining budget of 1.
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
     async fn honours_caller_start_offset() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let iter = ListIterator::new(2, slicing_fetcher((0..5).collect(), 10, true, calls));
+        let iter = ListIterator::new(2, None, slicing_fetcher((0..5).collect(), 10, true, calls));
         assert_eq!(iter.collect_all().await.unwrap(), vec![2, 3, 4]);
     }
 
@@ -224,7 +373,7 @@ mod tests {
         // reporting limit == count. Multi-page mode would loop forever here; single-page must not.
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
-        let fetch: PageFetcher<i64> = Box::new(move |offset| {
+        let fetch: PageFetcher<i64> = Box::new(move |offset, _limit| {
             counter.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 Ok(PaginationList {
@@ -249,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn empty_first_page_yields_nothing() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut iter = ListIterator::new(0, slicing_fetcher(vec![], 5, true, calls));
+        let mut iter = ListIterator::new(0, None, slicing_fetcher(vec![], 5, true, calls));
         assert!(iter.next().await.unwrap().is_none());
     }
 }

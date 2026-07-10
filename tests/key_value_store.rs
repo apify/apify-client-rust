@@ -63,9 +63,9 @@ async fn iterate_key_value_stores() {
         .key_value_stores()
         .iterate(apify_client::StorageListOptions {
             desc: Some(true),
-            limit: Some(10),
             ..Default::default()
-        });
+        })
+        .with_chunk_size(5);
     let target = store.id.clone();
     assert!(
         common::iter_contains(iter, move |s| s.id == target).await,

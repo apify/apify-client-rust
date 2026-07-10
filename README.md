@@ -21,7 +21,7 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.5"
+apify-client = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -49,7 +49,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.5", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.6", default-features = false, features = ["rustls"] }
 ```
 
 ## Quick start

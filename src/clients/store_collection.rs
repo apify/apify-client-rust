@@ -19,7 +19,7 @@ pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 pub struct StoreListOptions {
     /// Number of items to skip.
     pub offset: Option<i64>,
-    /// Maximum number of items to return per page.
+    /// Maximum number of items to return.
     pub limit: Option<i64>,
     /// Full-text search query.
     pub search: Option<String>,
@@ -71,12 +71,15 @@ impl StoreCollectionClient {
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
         let client = self.clone();
         let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
         ListIterator::new(
             start,
-            Box::new(move |offset| {
+            total_limit,
+            Box::new(move |offset, page_limit| {
                 let client = client.clone();
                 let mut options = options.clone();
                 options.offset = Some(offset);
+                options.limit = page_limit;
                 Box::pin(async move { client.list(options).await })
             }),
         )

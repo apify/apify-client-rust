@@ -36,12 +36,15 @@ impl ScheduleCollectionClient {
     pub fn iterate(&self, options: ListOptions) -> ListIterator<Schedule> {
         let client = self.clone();
         let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
         ListIterator::new(
             start,
-            Box::new(move |offset| {
+            total_limit,
+            Box::new(move |offset, page_limit| {
                 let client = client.clone();
                 let mut options = options.clone();
                 options.offset = Some(offset);
+                options.limit = page_limit;
                 Box::pin(async move { client.list(options).await })
             }),
         )

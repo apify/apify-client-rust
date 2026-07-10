@@ -64,9 +64,9 @@ async fn iterate_request_queues() {
         .request_queues()
         .iterate(apify_client::StorageListOptions {
             desc: Some(true),
-            limit: Some(10),
             ..Default::default()
-        });
+        })
+        .with_chunk_size(5);
     let target = queue.id.clone();
     assert!(
         common::iter_contains(iter, move |q| q.id == target).await,

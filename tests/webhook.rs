@@ -114,11 +114,13 @@ async fn iterate_webhooks() {
         let _ = cleanup_client.webhook(&id).delete().await;
     });
 
-    let iter = client.webhooks().iterate(apify_client::ListOptions {
-        desc: Some(true),
-        limit: Some(10),
-        ..Default::default()
-    });
+    let iter = client
+        .webhooks()
+        .iterate(apify_client::ListOptions {
+            desc: Some(true),
+            ..Default::default()
+        })
+        .with_chunk_size(5);
     let target = webhook.id.clone();
     assert!(
         common::iter_contains(iter, move |w| w.id == target).await,
@@ -154,9 +156,9 @@ async fn iterate_webhook_dispatches() {
         .webhook_dispatches()
         .iterate(apify_client::ListOptions {
             desc: Some(true),
-            limit: Some(10),
             ..Default::default()
-        });
+        })
+        .with_chunk_size(5);
     let target = dispatch.id.clone();
     assert!(
         common::iter_contains(iter, move |d| d.id == target).await,

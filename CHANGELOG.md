@@ -12,7 +12,9 @@ to [Semantic Versioning](https://semver.org/).
   version, environment-variable, build, run, dataset, key-value-store, request-queue, schedule,
   task, webhook, and webhook-dispatch collection clients, plus `DatasetClient::iterate_items()`
   for dataset items. Each yields one item at a time, fetching pages on demand — the idiomatic
-  counterpart to the reference client's async-iterable list results.
+  counterpart to the reference client's async-iterable list results. The options' `limit` caps
+  the total number of items yielded (matching the reference client), and `ListIterator::with_chunk_size`
+  sets the per-request page size.
 
 ### Changed
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`

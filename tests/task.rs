@@ -68,11 +68,13 @@ async fn iterate_tasks() {
         let _ = cleanup_client.task(&id).delete().await;
     });
 
-    let iter = client.tasks().iterate(apify_client::ListOptions {
-        desc: Some(true),
-        limit: Some(10),
-        ..Default::default()
-    });
+    let iter = client
+        .tasks()
+        .iterate(apify_client::ListOptions {
+            desc: Some(true),
+            ..Default::default()
+        })
+        .with_chunk_size(5);
     let target = task.id.clone();
     assert!(
         common::iter_contains(iter, move |t| t.id == target).await,

@@ -188,7 +188,9 @@ lazy `ListIterator` (re-exported at the crate root) that fetches the next page f
 demand as you consume items. Every collection client provides it (`actors`, `builds`, `runs`,
 `tasks`, `datasets`, `key_value_stores`, `request_queues`, `schedules`, `webhooks`,
 `webhook_dispatches`, `store`, and the nested Actor `versions`/`env_vars`), and `DatasetClient`
-exposes `iterate_items()` for dataset items. Any per-call `limit` is used as the page size.
+exposes `iterate_items()` for dataset items. The options' `limit` caps the total number of items
+yielded (unset iterates everything); to control the per-request page size, call
+`.with_chunk_size(n)` on the returned iterator.
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions};

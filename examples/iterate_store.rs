@@ -9,12 +9,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("APIFY_TOKEN").expect("set APIFY_TOKEN");
     let client = ApifyClient::new(token);
 
-    // Iterate the store, fetching pages of 5 on demand (`limit` is the per-page size, not a
-    // total cap). The loop below stops after the first 10 actors regardless of page size.
-    let mut iter = client.store().iterate(StoreListOptions {
-        limit: Some(5),
-        ..Default::default()
-    });
+    // Iterate the store, fetching pages of 5 on demand. `with_chunk_size` sets the per-request
+    // page size; the options' `limit` (left unset here) would instead cap the total number of
+    // items yielded. The loop below stops after the first 10 actors regardless of page size.
+    let mut iter = client
+        .store()
+        .iterate(StoreListOptions::default())
+        .with_chunk_size(5);
 
     let mut count = 0;
     while let Some(actor) = iter.next().await? {

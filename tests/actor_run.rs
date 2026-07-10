@@ -94,15 +94,18 @@ async fn iterate_runs() {
         .await
         .expect("call hello-world actor");
 
-    // Newest-first with a small page size so the just-finished run is near the front.
-    let iter = client.runs().iterate(
-        apify_client::ListOptions {
-            desc: Some(true),
-            limit: Some(10),
-            ..Default::default()
-        },
-        Default::default(),
-    );
+    // Newest-first with a small page size so the just-finished run is near the front. `limit`
+    // is a total-item cap, so it is left unset here; page size is set via `with_chunk_size`.
+    let iter = client
+        .runs()
+        .iterate(
+            apify_client::ListOptions {
+                desc: Some(true),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .with_chunk_size(5);
     let target = run.id.clone();
     assert!(
         common::iter_contains(iter, move |r| r.id == target).await,
