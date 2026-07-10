@@ -66,9 +66,7 @@ pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 pub use clients::actor::{ActorBuildOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
-pub use clients::key_value_store::{
-    GetRecordOptions, GetRecordsOptions, KeyValueStoreKeysIterator, ListKeysOptions,
-};
+pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
 pub use clients::log::LogOptions;
 pub use clients::pagination::ListIterator;
 pub use clients::request_queue::{ListRequestsOptions, RequestQueueRequestsIterator};

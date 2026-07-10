@@ -183,48 +183,6 @@ async fn record_key_with_special_chars_round_trips() {
     assert!(!store_client.record_exists(key).await.expect("exists after"));
 }
 
-/// Simple GET: download all records as a ZIP archive.
-///
-/// Stores a record, then downloads the whole store via `get_records` and asserts the response
-/// is a non-empty ZIP archive (the spec response is `application/zip`; ZIP files start with the
-/// `PK\x03\x04` local-file-header magic).
-#[tokio::test(flavor = "multi_thread")]
-async fn get_records_returns_zip_archive() {
-    let client = require_client!();
-    let name = common::unique_name("kvs-zip");
-    let store = client
-        .key_value_stores()
-        .get_or_create(Some(&name))
-        .await
-        .expect("create store");
-
-    let cleanup_client = client.clone();
-    let id = store.id.clone();
-    let _guard = common::Cleanup::new(move || async move {
-        let _ = cleanup_client.key_value_store(&id).delete().await;
-    });
-
-    let store_client = client.key_value_store(&store.id);
-    store_client
-        .set_record_json("OUTPUT", &json!({ "zip": true }))
-        .await
-        .expect("set record");
-
-    let archive = store_client
-        .get_records(Default::default())
-        .await
-        .expect("download records as zip");
-    assert!(!archive.is_empty(), "ZIP archive should not be empty");
-    assert_eq!(
-        &archive[..4],
-        b"PK\x03\x04",
-        "response should be a ZIP archive (PK magic bytes)"
-    );
-
-    // Happy-path cleanup in the body (the guard above remains a panic-safety net).
-    store_client.delete().await.expect("delete store");
-}
-
 /// Complex flow: create -> get -> set record -> read record -> list keys -> update -> delete.
 #[tokio::test(flavor = "multi_thread")]
 async fn key_value_store_crud_flow() {

@@ -34,6 +34,11 @@ to [Semantic Versioning](https://semver.org/).
 - Corrected the `src/models.rs` module doc to describe forward-compatibility accurately.
 - Bumped crate version to `0.6.0`.
 
+### Removed
+- `KeyValueStoreClient::get_records` and `GetRecordsOptions`. The `GET /v2/key-value-stores/{storeId}/records`
+  endpoint is not implemented by the reference JS client, so it is out of scope; its removal
+  corrects an earlier scope violation.
+
 ## [0.5.0] - 2026-07-10
 
 ### Added

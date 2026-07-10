@@ -126,7 +126,6 @@ println!("exported {} bytes of CSV", csv.len());
 | `delete()` | — | `()` | Deletes the store. |
 | `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists one page of keys (key-based pagination). |
 | `iterate_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysIterator` | Lazily iterates all keys across pages (cursor-based auto-pagination). |
-| `get_records(options)` | `GetRecordsOptions { collection, prefix, signature }` | `Vec<u8>` | Downloads all records as a ZIP archive (raw bytes). |
 | `record_exists(key)` | `&str` | `bool` | Whether a record exists (HEAD). |
 | `get_record(key)` | `&str` | `Option<KeyValueStoreRecord>` | Reads a record's raw value. |
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
