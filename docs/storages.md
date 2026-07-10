@@ -154,10 +154,13 @@ cap still paginates. `prefix`/`collection`/`signature` filter every page:
 
 ```rust,no_run
 # use apify_client::{ApifyClient, ListKeysOptions};
-# async fn run(client: ApifyClient, store_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-let mut keys = client.key_value_store(store_id).iterate_keys(ListKeysOptions::default());
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+// Obtain a store id from a metadata model (e.g. get_or_create), then iterate its keys.
+let store = client.key_value_stores().get_or_create(None).await?;
+let mut keys = client.key_value_store(&store.id).iterate_keys(ListKeysOptions::default());
 while let Some(key) = keys.next().await? {
-    println!("{} ({:?} bytes)", key.key, key.size);
+    // `size` is optional; default to 0 bytes when the API does not report it.
+    println!("{} ({} bytes)", key.key, key.size.unwrap_or(0));
 }
 # Ok(())
 # }
