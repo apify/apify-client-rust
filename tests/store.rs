@@ -23,10 +23,12 @@ async fn list_store() {
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_store() {
     let client = require_client!();
-    let mut iter = client.store().iterate(StoreListOptions {
-        limit: Some(5),
-        ..Default::default()
-    });
+    // Page size of 5 (via `with_chunk_size`) so pulling 12 items forces multiple page fetches;
+    // `limit` is a total-item cap and is left unset so iteration is not bounded to one page.
+    let mut iter = client
+        .store()
+        .iterate(StoreListOptions::default())
+        .with_chunk_size(5);
 
     // Pull a handful of items; the iterator should fetch pages transparently.
     let mut seen = 0;
