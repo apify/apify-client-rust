@@ -45,7 +45,8 @@ to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 - Documented all `ActorStartOptions` fields in `docs/actors.md` (added the previously undocumented
-  `restart_on_error`, `force_permission_level`, and `webhooks`).
+  `restart_on_error`, `force_permission_level`, and `webhooks`), and linked the task `start`/`call`
+  rows in `docs/tasks.md` to that field table.
 - Listed `JSONL` in the `download_items` format summary in `docs/storages.md` for consistency with
   the `DownloadItemsFormat` variant list.
 - Noted why the request-queue iterator is named `paginate_requests` (mirrors the reference JS
