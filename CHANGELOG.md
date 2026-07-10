@@ -4,6 +4,14 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-07-10
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`
+  error responses and relaxed field nullability/optionality) needs no code change: error
+  responses are handled generically and response models are forward-compatible.
+- Bumped crate version to `0.5.1`.
+
 ## [0.5.0] - 2026-07-10
 
 ### Added

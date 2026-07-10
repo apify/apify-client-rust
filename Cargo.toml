@@ -1,6 +1,6 @@
 [package]
 name = "apify-client"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Apify Technologies <support@apify.com>"]
 description = "An official, but experimental, AI-generated and AI-maintained Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"
