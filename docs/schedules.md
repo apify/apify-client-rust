@@ -7,6 +7,7 @@ Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Schedule>` | Lists schedules. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Schedule>` | Lazily iterates all schedules across pages (auto-pagination). |
 | `create(schedule)` | `&impl Serialize` | `Schedule` | Creates a schedule. |
 
 ## `ScheduleClient`

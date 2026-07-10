@@ -85,9 +85,10 @@ types is:
 - Shared: `ListOptions`, `StorageListOptions`
 - Client configuration: `RequestCompression`
 
-plus the common container `PaginationList`, the query helper `QueryParams`, and `ListIterator`
-(the return type of every collection client's `iterate()` method). Import any of them
-directly from `apify_client`:
+plus the common container `PaginationList`, the query helper `QueryParams`, `ListIterator`
+(the return type of every collection client's `iterate()` method), and `StoreActorIterator`
+(a type alias for `ListIterator<ActorStoreListItem>`, the return type of
+`StoreCollectionClient::iterate`). Import any of them directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};
@@ -188,10 +189,11 @@ across all pages without tracking offsets yourself, call `iterate(...)` instead:
 lazy `ListIterator` (re-exported at the crate root) that fetches the next page from the API on
 demand as you consume items. Every collection client provides it (`actors`, `builds`, `runs`,
 `tasks`, `datasets`, `key_value_stores`, `request_queues`, `schedules`, `webhooks`,
-`webhook_dispatches`, `store`, and the nested Actor `versions`/`env_vars`), and `DatasetClient`
-exposes `iterate_items()` for dataset items. The options' `limit` caps the total number of items
-yielded (unset iterates everything); to control the per-request page size, call
-`.with_chunk_size(n)` on the returned iterator.
+`webhook_dispatches`, `store`, and the nested Actor `versions`/`env_vars`). `DatasetClient`
+exposes `iterate_items()` for dataset items, and `KeyValueStoreClient` exposes `iterate_keys()`
+for store keys (cursor-based). The options' `limit` caps the total number of items yielded (unset
+iterates everything); to control the per-request page size, call `.with_chunk_size(n)` on the
+returned iterator (offset-paginated iterators only).
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions};

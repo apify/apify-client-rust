@@ -74,7 +74,7 @@ pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
-pub use clients::store_collection::StoreListOptions;
+pub use clients::store_collection::{StoreActorIterator, StoreListOptions};
 
 // Compile-test the code snippets in the README and the external `docs/` pages so every
 // in-documentation code snippet stays valid and runnable. Pulling each Markdown file in as

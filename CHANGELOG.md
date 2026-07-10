@@ -15,6 +15,11 @@ to [Semantic Versioning](https://semver.org/).
   counterpart to the reference client's async-iterable list results. The options' `limit` caps
   the total number of items yielded (matching the reference client), and `ListIterator::with_chunk_size`
   sets the per-request page size.
+- `KeyValueStoreClient::iterate_keys()`, returning a cursor-based `KeyValueStoreKeysIterator`
+  that auto-paginates a store's keys via `exclusiveStartKey`/`nextExclusiveStartKey` (the
+  auto-paginating counterpart to `list_keys`, matching the reference client's `listKeys()`
+  async-iterable).
+- Re-exported `StoreActorIterator` at the crate root.
 
 ### Changed
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`

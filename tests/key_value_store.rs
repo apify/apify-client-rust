@@ -73,6 +73,62 @@ async fn iterate_key_value_stores() {
     );
 }
 
+/// Iteration: `iterate_keys` yields every key in the store across the cursor-paginated listing.
+///
+/// Creates a store, writes several records, then drives the `KeyValueStoreKeysIterator` to
+/// completion and asserts every written key is yielded exactly once. This exercises the
+/// cursor-based (`exclusiveStartKey`/`nextExclusiveStartKey`) auto-pagination helper end to end.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_keys_yields_all_keys() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-keys-iter");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    let expected: Vec<String> = (0..5).map(|i| format!("iter-key-{i:02}")).collect();
+    for key in &expected {
+        store_client
+            .set_record_json(key, &json!({ "n": key }))
+            .await
+            .expect("set record");
+    }
+
+    // Drive the iterator to completion and collect the yielded keys.
+    let mut iter = store_client.iterate_keys(Default::default());
+    let mut seen = Vec::new();
+    while let Some(key) = iter.next().await.expect("key iteration should not error") {
+        seen.push(key.key);
+    }
+
+    for key in &expected {
+        assert!(
+            seen.contains(key),
+            "iterate_keys should yield every created key; missing {key}, saw {seen:?}"
+        );
+    }
+    // No key should appear more than once across the paginated walk.
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "iterate_keys must not yield duplicate keys, saw {seen:?}"
+    );
+
+    store_client.delete().await.expect("delete store");
+}
+
 /// Record keys containing characters that are valid for the API (`!`, `'`, `(`, `)`) but
 /// reserved in a URL path must round-trip correctly, proving the path segment is
 /// percent-encoded rather than interpolated raw.

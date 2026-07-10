@@ -85,6 +85,13 @@ fn min_positive_limit(a: Option<i64>, b: Option<i64>) -> Option<i64> {
 /// 10 items, and `iterate(opts).with_chunk_size(50)` fetches 50 per request while yielding
 /// everything.
 ///
+/// **Large caps and the first page.** When a total cap is set but no page size is, the first page
+/// requests `limit == cap` (the reference client does the same, via
+/// `minForLimitParam(options.limit, options.chunkSize)`). If you set a very large cap — larger
+/// than the endpoint's maximum `limit` — also call [`with_chunk_size`](Self::with_chunk_size) with
+/// a value at or below that maximum, so the first request stays within the endpoint's accepted
+/// range rather than asking for the whole cap up front.
+///
 /// # Example
 /// ```no_run
 /// use apify_client::ApifyClient;

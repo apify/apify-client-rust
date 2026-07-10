@@ -8,6 +8,7 @@ collections are available via `actor.builds()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Build>` | Lists builds. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Build>` | Lazily iterates all builds across pages (auto-pagination). |
 
 ## `BuildClient`
 

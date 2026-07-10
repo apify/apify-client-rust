@@ -17,6 +17,8 @@ struct MockBackend {
     responses: Mutex<Vec<MockOutcome>>,
     calls: AtomicUsize,
     last_url: Mutex<Option<String>>,
+    /// Every request URL in call order, so tests can assert per-page pagination wiring.
+    urls: Mutex<Vec<String>>,
     last_headers: Mutex<std::collections::HashMap<String, String>>,
     last_body: Mutex<Option<Vec<u8>>>,
 }
@@ -33,6 +35,7 @@ impl MockBackend {
             responses: Mutex::new(responses),
             calls: AtomicUsize::new(0),
             last_url: Mutex::new(None),
+            urls: Mutex::new(Vec::new()),
             last_headers: Mutex::new(std::collections::HashMap::new()),
             last_body: Mutex::new(None),
         })
@@ -44,6 +47,11 @@ impl MockBackend {
 
     fn last_url(&self) -> Option<String> {
         self.last_url.lock().unwrap().clone()
+    }
+
+    /// All request URLs in call order.
+    fn urls(&self) -> Vec<String> {
+        self.urls.lock().unwrap().clone()
     }
 
     /// Case-insensitive lookup of the last request's header value.
@@ -65,6 +73,7 @@ impl HttpBackend for MockBackend {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ApifyClientError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_url.lock().unwrap() = Some(request.url.clone());
+        self.urls.lock().unwrap().push(request.url.clone());
         *self.last_headers.lock().unwrap() = request.headers.clone();
         *self.last_body.lock().unwrap() = request.body.clone();
         let mut queue = self.responses.lock().unwrap();
@@ -555,5 +564,183 @@ async fn iterate_items_without_total_header_walks_all_pages() {
         backend.call_count(),
         4,
         "three data pages plus the terminating empty page"
+    );
+}
+
+/// Hermetic coverage of the `list_iterator!` macro wiring used by every offset/limit collection
+/// `iterate()`. A total-item cap plus a smaller `with_chunk_size` must (a) yield exactly the cap
+/// and (b) drive the per-page request window correctly: the first page requests
+/// `min(remaining, chunk_size)` at `offset=0`, and the second advances `offset` by the items
+/// received and requests only the remaining budget. Previously this path was exercised only by
+/// `APIFY_TOKEN`-gated integration tests, so it was skipped offline.
+#[tokio::test]
+async fn iterate_macro_caps_and_pages_correctly() {
+    let backend = MockBackend::new(vec![
+        // Endpoint reports a large total (10) so termination is driven by the cap, not by total.
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":10,"items":[{"id":"a0"},{"id":"a1"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":10,"items":[{"id":"a2"}]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .actors()
+        .iterate(apify_client::ActorListOptions {
+            limit: Some(3),
+            ..Default::default()
+        })
+        .with_chunk_size(2);
+    let mut ids = Vec::new();
+    while let Some(actor) = it.next().await.expect("ok") {
+        ids.push(actor.id);
+    }
+
+    assert_eq!(ids, vec!["a0", "a1", "a2"], "cap of 3 must yield exactly 3");
+    assert_eq!(backend.call_count(), 2, "two pages suffice under the cap");
+    let urls = backend.urls();
+    assert!(
+        urls[0].contains("offset=0") && urls[0].contains("limit=2"),
+        "first page requests min(remaining=3, chunk=2)=2 at offset 0, got {}",
+        urls[0]
+    );
+    assert!(
+        urls[1].contains("offset=2") && urls[1].contains("limit=1"),
+        "second page advances to offset 2 and requests the remaining budget of 1, got {}",
+        urls[1]
+    );
+}
+
+/// Hermetic coverage of `RunCollectionClient::iterate`, which builds its iterator directly
+/// (not via the `list_iterator!` macro) because it threads a separate `filter` argument. The
+/// iterator must walk every page using the reported total for termination and must forward the
+/// `status` filter on every page request. Offline-only; the integration suite gates this on a
+/// live token.
+#[tokio::test]
+async fn run_collection_iterate_walks_pages_and_forwards_filter() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":3,"limit":2,"items":[{"id":"r0"},{"id":"r1"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":3,"limit":2,"items":[{"id":"r2"}]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client.runs().iterate(
+        Default::default(),
+        apify_client::RunListOptions {
+            status: vec!["SUCCEEDED".to_owned()],
+            ..Default::default()
+        },
+    );
+    let mut ids = Vec::new();
+    while let Some(run) = it.next().await.expect("ok") {
+        ids.push(run.id);
+    }
+
+    assert_eq!(
+        ids,
+        vec!["r0", "r1", "r2"],
+        "all runs across pages must be yielded"
+    );
+    assert_eq!(backend.call_count(), 2, "two pages then total-driven stop");
+    for url in backend.urls() {
+        assert!(
+            url.contains("status=SUCCEEDED"),
+            "the status filter must be forwarded on every page, got {url}"
+        );
+    }
+}
+
+/// Hermetic coverage of the cursor-based `KeyValueStoreClient::iterate_keys`. Key-value stores
+/// paginate by `exclusiveStartKey`/`nextExclusiveStartKey` (not offset), so this walks two pages
+/// and asserts: every key is yielded, the second request carries the previous page's
+/// `nextExclusiveStartKey` as `exclusiveStartKey`, and iteration stops once the API returns a
+/// null next cursor.
+#[tokio::test]
+async fn iterate_keys_walks_cursor_pages() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k0"},{"key":"k1"}],"isTruncated":true,"nextExclusiveStartKey":"k1"}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k2"}],"isTruncated":false,"nextExclusiveStartKey":null}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .key_value_store("some-store")
+        .iterate_keys(Default::default());
+    let mut keys = Vec::new();
+    while let Some(key) = it.next().await.expect("ok") {
+        keys.push(key.key);
+    }
+
+    assert_eq!(
+        keys,
+        vec!["k0", "k1", "k2"],
+        "all keys across pages must be yielded"
+    );
+    assert_eq!(backend.call_count(), 2, "two pages then null-cursor stop");
+    let urls = backend.urls();
+    assert!(
+        !urls[0].contains("exclusiveStartKey="),
+        "first page has no start cursor, got {}",
+        urls[0]
+    );
+    assert!(
+        urls[1].contains("exclusiveStartKey=k1"),
+        "second page must carry the previous nextExclusiveStartKey as the cursor, got {}",
+        urls[1]
+    );
+}
+
+/// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size
+/// (reference parity): with `limit=2` the first request asks for `limit=2` and, once two keys
+/// are consumed, the walk stops without a second fetch even though the API advertised more keys.
+#[tokio::test]
+async fn iterate_keys_limit_caps_the_walk() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"items":[{"key":"k0"},{"key":"k1"}],"isTruncated":true,"nextExclusiveStartKey":"k1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .key_value_store("some-store")
+        .iterate_keys(apify_client::ListKeysOptions {
+            limit: Some(2),
+            ..Default::default()
+        });
+    let mut keys = Vec::new();
+    while let Some(key) = it.next().await.expect("ok") {
+        keys.push(key.key);
+    }
+
+    assert_eq!(
+        keys,
+        vec!["k0", "k1"],
+        "yields exactly the first (capped) page"
+    );
+    assert_eq!(
+        backend.call_count(),
+        1,
+        "the cap is reached on the first page, so no second fetch despite isTruncated"
+    );
+    assert!(
+        backend.urls()[0].contains("limit=2"),
+        "the cap bounds the first page's request size, got {}",
+        backend.urls()[0]
     );
 }

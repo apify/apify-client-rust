@@ -33,6 +33,7 @@ let dataset_client = client.dataset(&dataset.id);
 ## Datasets — `client.datasets()` / `client.dataset(id)`
 
 `DatasetCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<Dataset>` auto-pagination),
 `get_or_create(name: Option<&str>)`.
 `StorageListOptions`: `offset`, `limit`, `desc`, `unnamed`, `ownership`.
 
@@ -60,6 +61,7 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `update(fields)` | `&impl Serialize` | `Dataset` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the dataset. |
 | `list_items::<T>(options)` | `DatasetListItemsOptions` | `PaginationList<T>` | Reads items (pagination via response headers). |
+| `iterate_items::<T>(options)` | `DatasetListItemsOptions` | `ListIterator<T>` | Lazily iterates all items across pages (auto-pagination). |
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
 | `get_statistics()` | — | `Option<Value>` | Field statistics. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/CSV/XLSX/XML/RSS/HTML. |
@@ -111,7 +113,9 @@ println!("exported {} bytes of CSV", csv.len());
 
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
-`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
+`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<KeyValueStore>` auto-pagination),
+`get_or_create(name: Option<&str>)`.
 
 `KeyValueStoreClient`:
 
@@ -120,7 +124,8 @@ println!("exported {} bytes of CSV", csv.len());
 | `get()` | — | `Option<KeyValueStore>` | Store metadata. |
 | `update(fields)` | `&impl Serialize` | `KeyValueStore` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the store. |
-| `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists keys (key-based pagination). |
+| `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists one page of keys (key-based pagination). |
+| `iterate_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysIterator` | Lazily iterates all keys across pages (cursor-based auto-pagination). |
 | `get_records(options)` | `GetRecordsOptions { collection, prefix, signature }` | `Vec<u8>` | Downloads all records as a ZIP archive (raw bytes). |
 | `record_exists(key)` | `&str` | `bool` | Whether a record exists (HEAD). |
 | `get_record(key)` | `&str` | `Option<KeyValueStoreRecord>` | Reads a record's raw value. |
@@ -135,9 +140,29 @@ println!("exported {} bytes of CSV", csv.len());
 `KeyValueStoreRecord` exposes `value: Vec<u8>`, `content_type`, plus `as_text()` and
 `json::<T>()` helpers.
 
+`iterate_keys(options)` returns a `KeyValueStoreKeysIterator` — the auto-paginating counterpart to
+`list_keys` (which returns a single page). Key-value stores use cursor-based pagination, so the
+iterator threads the `nextExclusiveStartKey` cursor through for you. Its `next()` is `async` and
+fallible, returning `ApifyClientResult<Option<KeyValueStoreKey>>` and yielding `Ok(None)` once the
+store is exhausted. `options.limit` caps the total number of keys yielded (unset iterates the whole
+store); `prefix`/`collection`/`signature` filter every page:
+
+```rust,no_run
+# use apify_client::{ApifyClient, ListKeysOptions};
+# async fn run(client: ApifyClient, store_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let mut keys = client.key_value_store(store_id).iterate_keys(ListKeysOptions::default());
+while let Some(key) = keys.next().await? {
+    println!("{} ({:?} bytes)", key.key, key.size);
+}
+# Ok(())
+# }
+```
+
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
 
-`RequestQueueCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
+`RequestQueueCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<RequestQueue>` auto-pagination),
+`get_or_create(name: Option<&str>)`.
 
 `RequestQueueClient` (chainable `with_client_key(key)` for lock coordination):
 

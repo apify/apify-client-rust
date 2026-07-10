@@ -19,7 +19,10 @@ pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 pub struct StoreListOptions {
     /// Number of items to skip.
     pub offset: Option<i64>,
-    /// Maximum number of items to return.
+    /// Item limit. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a
+    /// single page's size (the maximum items that one call returns); for
+    /// [`StoreCollectionClient::iterate`] it is a cap on the *total* number of items yielded across
+    /// all pages. See each method's docs.
     pub limit: Option<i64>,
     /// Full-text search query.
     pub search: Option<String>,

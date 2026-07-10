@@ -1,5 +1,7 @@
 //! Client for a single key-value store (`/v2/key-value-stores/{storeId}` and variants).
 
+use std::collections::VecDeque;
+
 use serde::Serialize;
 
 use crate::clients::base::{
@@ -11,7 +13,7 @@ use crate::common::{
 };
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
-use crate::models::{KeyValueStore, KeyValueStoreKeysPage, KeyValueStoreRecord};
+use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
 
 /// Options for listing keys in a key-value store.
 #[derive(Debug, Default, Clone)]
@@ -109,6 +111,36 @@ impl KeyValueStoreClient {
             .add_str("collection", options.collection)
             .add_str("signature", options.signature);
         get_resource_required(&self.ctx, Some("keys"), &params).await
+    }
+
+    /// Lazily iterates over every key in the store, fetching pages on demand.
+    ///
+    /// Returns a [`KeyValueStoreKeysIterator`]; call its `next()` to get one key at a time,
+    /// transparently fetching the following page once the local buffer drains, until the store
+    /// is exhausted. This is the auto-paginating counterpart to the single-page
+    /// [`list_keys`](Self::list_keys), matching the reference client's `listKeys()`
+    /// `AsyncIterable`.
+    ///
+    /// Key-value stores use cursor-based (not offset) pagination: each page is anchored by the
+    /// previous page's `nextExclusiveStartKey`, so the iterator threads that cursor through
+    /// automatically. The `prefix`, `collection` and `signature` filters from `options` are
+    /// carried into every page.
+    ///
+    /// `options.limit` caps the *total* number of keys yielded across all pages (unset/`0`
+    /// iterates the entire store); it also bounds each page's request size, mirroring the
+    /// reference client. `options.exclusive_start_key`, when set, resumes iteration after that
+    /// key.
+    pub fn iterate_keys(&self, options: ListKeysOptions) -> KeyValueStoreKeysIterator {
+        let remaining = options.limit.filter(|&l| l > 0);
+        KeyValueStoreKeysIterator {
+            client: self.clone(),
+            options,
+            remaining,
+            next_exclusive_start_key: None,
+            buffer: VecDeque::new(),
+            first_page: true,
+            exhausted: false,
+        }
     }
 
     /// Downloads all records from the store as a ZIP archive (raw bytes).
@@ -283,5 +315,89 @@ impl KeyValueStoreClient {
             })
             .await?;
         Ok(())
+    }
+}
+
+/// A lazy, page-fetching async iterator over the keys in a key-value store.
+///
+/// Created by [`KeyValueStoreClient::iterate_keys`]. Each call to [`next`](Self::next) returns
+/// the next key, fetching another page from the API when the local buffer is exhausted, until
+/// every key has been yielded (or the caller's total-key cap is reached).
+///
+/// Unlike the offset/limit-paginated [`ListIterator`](crate::ListIterator), key-value stores use
+/// cursor-based pagination: each page is anchored by the previous page's
+/// `nextExclusiveStartKey`. Termination mirrors the reference client's `listKeys()` generator —
+/// the walk stops once a page comes back empty, the API stops returning a next cursor, or the
+/// caller's `limit` is exhausted.
+pub struct KeyValueStoreKeysIterator {
+    client: KeyValueStoreClient,
+    /// Base listing options. The `prefix`/`collection`/`signature` filters are carried into every
+    /// page unchanged; `limit` and `exclusive_start_key` are overridden per page after the first.
+    options: ListKeysOptions,
+    /// Keys still allowed under the caller's total cap (`options.limit`); `None` = uncapped.
+    /// Decremented by each page's key count and passed as the next page's request `limit`,
+    /// matching the reference client.
+    remaining: Option<i64>,
+    /// Cursor for the next page: the previous page's `next_exclusive_start_key`.
+    next_exclusive_start_key: Option<String>,
+    buffer: VecDeque<KeyValueStoreKey>,
+    /// `true` until the first page has been fetched. The first page honours the caller's
+    /// `exclusive_start_key`/`limit` verbatim; later pages are driven by the cursor and remaining
+    /// budget.
+    first_page: bool,
+    exhausted: bool,
+}
+
+impl KeyValueStoreKeysIterator {
+    /// Returns the next key, or `None` when the store is exhausted (or the caller's `limit` is
+    /// reached). Fetches another page from the API when the local buffer is empty.
+    pub async fn next(&mut self) -> ApifyClientResult<Option<KeyValueStoreKey>> {
+        if let Some(item) = self.buffer.pop_front() {
+            return Ok(Some(item));
+        }
+        if self.exhausted {
+            return Ok(None);
+        }
+
+        // Build this page's options. The first page uses the caller's options verbatim; later
+        // pages advance the cursor and request only the remaining budget (reference parity).
+        let mut page_options = self.options.clone();
+        if !self.first_page {
+            page_options.exclusive_start_key = self.next_exclusive_start_key.clone();
+            page_options.limit = self.remaining;
+        }
+        self.first_page = false;
+
+        let page = self.client.list_keys(page_options).await?;
+        let received = page.items.len() as i64;
+
+        if let Some(rem) = self.remaining.as_mut() {
+            *rem -= received;
+        }
+        self.next_exclusive_start_key = page.next_exclusive_start_key;
+
+        // Stop when the page is empty, the API returns no further cursor, or the caller's cap is
+        // reached — the same three termination conditions as the reference `listKeys()` loop.
+        if received == 0
+            || self.next_exclusive_start_key.is_none()
+            || matches!(self.remaining, Some(r) if r <= 0)
+        {
+            self.exhausted = true;
+        }
+
+        self.buffer.extend(page.items);
+        Ok(self.buffer.pop_front())
+    }
+
+    /// Eagerly drains the iterator into a single `Vec`, fetching every remaining page.
+    ///
+    /// Convenience for callers that want all keys at once; prefer [`next`](Self::next) to process
+    /// keys as they stream in without buffering the whole set.
+    pub async fn collect_all(mut self) -> ApifyClientResult<Vec<KeyValueStoreKey>> {
+        let mut out = Vec::new();
+        while let Some(item) = self.next().await? {
+            out.push(item);
+        }
+        Ok(out)
     }
 }

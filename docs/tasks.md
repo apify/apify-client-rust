@@ -7,6 +7,7 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Task>` | Lists tasks. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Task>` | Lazily iterates all tasks across pages (auto-pagination). |
 | `create(task)` | `&impl Serialize` | `Task` | Creates a task. |
 
 ## `TaskClient`

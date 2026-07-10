@@ -8,6 +8,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ActorListOptions { offset, limit, desc, my, sort_by }` | `PaginationList<Actor>` | Lists your Actors. |
+| `iterate(options)` | `ActorListOptions` | `ListIterator<Actor>` | Lazily iterates all Actors across pages (auto-pagination). |
 | `create(actor)` | `&impl Serialize` | `Actor` | Creates an Actor from a definition. |
 
 ## `ActorClient`
