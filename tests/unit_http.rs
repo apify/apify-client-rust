@@ -520,3 +520,40 @@ async fn last_run_sends_status_and_origin_query_params() {
         "default last_run must not send status/origin params, got {url}"
     );
 }
+
+/// `iterate_items` must keep paging even when the dataset-items response omits the
+/// `X-Apify-Pagination-Total` header. With the header absent, `list_items` reports `total = 0`
+/// ("unknown"), so the iterator falls through to the short-page/empty-page backstop and walks
+/// every page. The `MockBackend` returns no headers, reproducing the missing-total case. Before
+/// the fix, `list_items` fell back to `total = count`, which the iterator read as a completed
+/// total after the first full page (`next_offset == total`) and silently dropped every later
+/// item — this test scripts three data pages then an empty one and asserts all items are yielded.
+#[tokio::test]
+async fn iterate_items_without_total_header_walks_all_pages() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(200, br#"[{"i":0},{"i":1}]"#.to_vec()),
+        MockOutcome::Status(200, br#"[{"i":2},{"i":3}]"#.to_vec()),
+        MockOutcome::Status(200, br#"[{"i":4}]"#.to_vec()),
+        MockOutcome::Status(200, b"[]".to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .dataset("some-dataset-id")
+        .iterate_items::<serde_json::Value>(Default::default());
+    let mut seen = Vec::new();
+    while let Some(item) = it.next().await.expect("ok") {
+        seen.push(item["i"].as_i64().expect("i field"));
+    }
+
+    assert_eq!(
+        seen,
+        vec![0, 1, 2, 3, 4],
+        "all items must be yielded even without a total header"
+    );
+    assert_eq!(
+        backend.call_count(),
+        4,
+        "three data pages plus the terminating empty page"
+    );
+}

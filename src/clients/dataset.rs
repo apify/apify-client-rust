@@ -210,10 +210,16 @@ impl DatasetClient {
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
         let count = items.len() as i64;
+        // When the endpoint omits the total header, report `0` ("total unknown"), not the current
+        // page's own item count. A fallback of `count` would look like a genuine total equal to
+        // the number of items already returned, which [`ListIterator`] reads as "listing complete"
+        // and would stop after the first page, silently dropping later items. `0` instead routes
+        // iteration to the short-page / empty-page backstop, which walks every page. The live
+        // dataset-items endpoint always sends this header, so this only guards a degenerate case.
         let total = response
             .header("x-apify-pagination-total")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(count);
+            .unwrap_or(0);
         let offset = response
             .header("x-apify-pagination-offset")
             .and_then(|v| v.parse().ok())

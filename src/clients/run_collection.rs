@@ -83,6 +83,11 @@ impl RunCollectionClient {
     ///
     /// The idiomatic-Rust counterpart of the reference client's async-iterable run listing;
     /// yields one [`ActorRun`] at a time across all pages.
+    ///
+    /// `options.limit` caps the *total* number of runs yielded across all pages, unlike
+    /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
+    /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
+    /// [`ListIterator`] for details.
     pub fn iterate(&self, options: ListOptions, filter: RunListOptions) -> ListIterator<ActorRun> {
         let client = self.clone();
         let start = options.offset.unwrap_or(0);

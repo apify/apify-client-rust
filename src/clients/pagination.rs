@@ -24,6 +24,37 @@ type PageFuture<T> = Pin<Box<dyn Future<Output = ApifyClientResult<PaginationLis
 /// page.
 type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Sync>;
 
+/// Generates the body of a collection client's `iterate()` method for the common shape: an
+/// options struct with `offset`/`limit` fields plus a `list(options)` method. It clones the
+/// client, reads the caller's start offset and total-item cap from the options, and builds a
+/// [`ListIterator`] whose per-page fetcher overrides only `offset`/`limit` before calling
+/// `list`. This removes the ~15 lines of identical closure boilerplate that would otherwise be
+/// copied into every collection client (the don't-repeat-yourself goal of this module).
+///
+/// Collections whose listing does not fit this shape build their iterator directly instead:
+/// the run listing takes a separate `filter` argument, dataset items use `list_items::<T>`, and
+/// an Actor's env vars are non-paginated ([`ListIterator::new_single_page`]).
+macro_rules! list_iterator {
+    ($self:expr, $options:expr, $list:ident) => {{
+        let client = $self.clone();
+        let options = $options;
+        let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
+        $crate::clients::pagination::ListIterator::new(
+            start,
+            total_limit,
+            Box::new(move |offset, page_limit| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                options.limit = page_limit;
+                Box::pin(async move { client.$list(options).await })
+            }),
+        )
+    }};
+}
+pub(crate) use list_iterator;
+
 /// Returns the smaller of two optional positive limits, treating a non-positive value as "no
 /// limit" (`None`). Mirrors the reference client's `minForLimitParam`, where the API treats `0`
 /// as an absent limit.
@@ -293,12 +324,11 @@ mod tests {
 
     #[tokio::test]
     async fn non_final_short_page_with_reported_total_does_not_truncate() {
-        // Guards the termination logic, NOT filter de-duplication: every page is "short" — it
-        // returns fewer items than the page size the API reports — while the endpoint reports a
-        // large total. The old `received < page.limit` termination stopped after page 1 and
-        // silently dropped the rest; total-driven termination must keep going and yield every
-        // item, ending only on the empty page. (This fetcher advances offset by the page size
-        // and never overlaps windows, so it does not model the sparse-window duplicate behaviour
+        // Guards the termination logic, NOT filter de-duplication: every page is "short" (it
+        // returns fewer items than the page size the API reports) while the endpoint reports a
+        // large total. Total-driven termination must keep going and yield every item, ending
+        // only on the empty page. (This fetcher advances offset by the page size and never
+        // overlaps windows, so it does not model the sparse-window duplicate behaviour
         // documented on `iterate_items`; it only proves a short page is not treated as terminal.)
         let all: Vec<i64> = (0..6).collect();
         let calls = Arc::new(AtomicUsize::new(0));

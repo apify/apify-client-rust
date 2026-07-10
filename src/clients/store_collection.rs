@@ -1,7 +1,7 @@
 //! Client for browsing the Apify Store (`/v2/store`).
 
 use crate::clients::base::{list_resource, ResourceContext};
-use crate::clients::pagination::ListIterator;
+use crate::clients::pagination::{list_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -68,21 +68,13 @@ impl StoreCollectionClient {
     ///
     /// Returns a [`StoreActorIterator`] whose `next()` method yields one Actor at a time,
     /// transparently fetching subsequent pages.
+    ///
+    /// `options.limit` caps the *total* number of items yielded across all pages, unlike
+    /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
+    /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
+    /// [`ListIterator`] for details.
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        let client = self.clone();
-        let start = options.offset.unwrap_or(0);
-        let total_limit = options.limit;
-        ListIterator::new(
-            start,
-            total_limit,
-            Box::new(move |offset, page_limit| {
-                let client = client.clone();
-                let mut options = options.clone();
-                options.offset = Some(offset);
-                options.limit = page_limit;
-                Box::pin(async move { client.list(options).await })
-            }),
-        )
+        list_iterator!(self, options, list)
     }
 
     fn build_params(&self, options: &StoreListOptions) -> QueryParams {
