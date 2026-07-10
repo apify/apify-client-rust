@@ -35,7 +35,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.4"
+apify-client = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -83,6 +83,7 @@ types is:
 - Store: `StoreListOptions`
 - Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
+- Client configuration: `RequestCompression`
 
 plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
 directly from `apify_client`:
@@ -120,11 +121,20 @@ Builder options:
 | `timeout(d)` | `360s` | Overall per-request timeout budget. |
 | `user_agent_suffix(s)` | none | Extra text appended to the `User-Agent` header. |
 | `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
-| `http_backend(b)` | reqwest | Replaceable HTTP transport (`HttpBackend`). |
+| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). |
 
 Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
 `request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is
-preferred; select gzip for environments or intermediaries that do not handle brotli.
+preferred; select gzip for environments or intermediaries that do not handle brotli:
+
+```rust,no_run
+use apify_client::{ApifyClient, RequestCompression};
+
+let client = ApifyClient::builder()
+    .token("my-api-token")
+    .request_compression(RequestCompression::Gzip)
+    .build();
+```
 
 The `User-Agent` header has the form
 `ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where the `{os}`

@@ -44,22 +44,26 @@ const BROTLI_QUALITY: u32 = 6;
 const BROTLI_WINDOW_SIZE: u32 = 22;
 /// Internal buffer size for the brotli encoder.
 const BROTLI_BUFFER_SIZE: usize = 4096;
+/// Gzip compression level (0–9). Matches the reference client, which gzips using `node:zlib`'s
+/// default level (6).
+const GZIP_COMPRESSION_LEVEL: u32 = 6;
 
 /// Algorithm used to compress large request bodies before they are sent.
 ///
-/// Mirrors the reference JS client, which prefers brotli and falls back to gzip. Both encodings
-/// are accepted by the Apify API. [`Brotli`](RequestCompression::Brotli) is the default (best
-/// ratio); select [`Gzip`](RequestCompression::Gzip) via
-/// [`ApifyClientBuilder::request_compression`](crate::ApifyClientBuilder::request_compression)
-/// for environments or intermediaries that do not handle brotli.
+/// The Apify API accepts both brotli (`br`) and gzip (`gzip`) request bodies. The reference JS
+/// client picks between them automatically (brotli when available, gzip otherwise); this client
+/// exposes the choice explicitly via
+/// [`ApifyClientBuilder::request_compression`](crate::ApifyClientBuilder::request_compression),
+/// because Rust's brotli support is always compiled in and would leave no runtime path to gzip.
+/// [`Brotli`](RequestCompression::Brotli) is the default (best ratio).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestCompression {
-    /// Brotli (`Content-Encoding: br`). Preferred: best compression ratio, matches the reference
-    /// client's default choice.
+    /// Brotli (`Content-Encoding: br`). The default: best compression ratio, and the encoding the
+    /// reference client prefers.
     #[default]
     Brotli,
-    /// Gzip (`Content-Encoding: gzip`). The reference client's fallback encoding; select it when
-    /// brotli is not desired.
+    /// Gzip (`Content-Encoding: gzip`). Choose this for environments or intermediaries that do not
+    /// handle brotli.
     Gzip,
 }
 
@@ -347,9 +351,8 @@ impl HttpClient {
 /// Compresses `request.body` in place when it is present, at least [`MIN_COMPRESS_BYTES`] long,
 /// and no `Content-Encoding` is already set, adding the matching `Content-Encoding` header.
 ///
-/// Mirrors the reference client, which supports both a brotli (`br`) and a gzip (`gzip`) encoding
-/// for request bodies and prefers brotli. The concrete algorithm is chosen by `compression`
-/// (defaulting to brotli), so both code paths are genuinely reachable and selectable.
+/// The algorithm is chosen by `compression` (defaulting to brotli). The size threshold and the
+/// "compress once, before retries" behaviour mirror the reference client.
 fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompression) {
     let Some(body) = request.body.as_ref() else {
         return;
@@ -399,7 +402,7 @@ fn gzip_compress(data: &[u8]) -> Vec<u8> {
     use flate2::{write::GzEncoder, Compression};
     use std::io::Write;
 
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::new(GZIP_COMPRESSION_LEVEL));
     encoder
         .write_all(data)
         .expect("writing to an in-memory Vec never fails");

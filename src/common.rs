@@ -236,7 +236,7 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
     // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
     // own spellings (`macos`, `windows`, `solaris`), so map those to the Node `os.platform()`
     // tokens (`darwin`, `win32`, `sunos`); the rest already agree.
-    let os = node_platform_token();
+    let os = map_os_to_node_platform(std::env::consts::OS);
     // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
     // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
     // variable (`false` when the variable is missing), matching the JS reference, which reads
@@ -259,12 +259,6 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
         }
     }
     ua
-}
-
-/// Returns the OS token for the User-Agent header, matching the reference JS client's
-/// `os.platform()` value for the platform this code is running on.
-fn node_platform_token() -> &'static str {
-    map_os_to_node_platform(std::env::consts::OS)
 }
 
 /// Maps a Rust `std::env::consts::OS` value to the corresponding Node.js `os.platform()` token.
@@ -368,7 +362,7 @@ pub fn sign_storage_content(
 
 #[cfg(test)]
 mod user_agent_tests {
-    use super::{build_user_agent, map_os_to_node_platform, node_platform_token};
+    use super::{build_user_agent, map_os_to_node_platform};
 
     // `build_user_agent` keys the flag solely on the `APIFY_IS_AT_HOME` env var (per the
     // requirements and the JS reference). A bare `isAtHome` env var must NOT affect it. The value
@@ -413,12 +407,19 @@ mod user_agent_tests {
         }
     }
 
-    // The OS token in the emitted User-Agent must exactly equal the reference JS client's
-    // `os.platform()` value for this platform (so every Apify client reports the same token). We
-    // extract the token from the produced header and assert it equals `node_platform_token()`,
-    // is lowercase, and is never a Rust-native spelling (`macos`/`windows`) or a uname-style name.
+    // The OS token in the emitted User-Agent must match the reference JS client's `os.platform()`
+    // value (so every Apify client reports the same token). This test checks the token that
+    // `build_user_agent` actually produces against an independent oracle — the set of documented
+    // Node `os.platform()` values — and asserts it is lowercase and never a Rust-native spelling.
+    // The exact per-platform translation is covered by `os_token_maps_rust_spellings_to_node_platform`.
     #[test]
     fn user_agent_os_token_matches_node_platform() {
+        // The values Node's `os.platform()` can return (independent of our mapping code).
+        const NODE_PLATFORMS: &[&str] = &[
+            "aix", "android", "darwin", "freebsd", "haiku", "linux", "netbsd", "openbsd", "sunos",
+            "win32", "cygwin",
+        ];
+
         let ua = build_user_agent(None);
         // Extract the OS token exactly as it appears in the produced header — the first
         // component inside the parentheses: `(<os>; Rust/...)`.
@@ -428,13 +429,8 @@ mod user_agent_tests {
             .map(|(token, _)| token.trim())
             .expect("user agent must contain an `(<os>; Rust/...` section");
         assert!(
-            !os.is_empty(),
-            "user agent OS token must not be empty, got `{ua}`"
-        );
-        assert_eq!(
-            os,
-            node_platform_token(),
-            "OS token must equal the Node `os.platform()` token, got `{ua}`"
+            NODE_PLATFORMS.contains(&os),
+            "OS token must be a Node `os.platform()` value, got `{os}` in `{ua}`"
         );
         assert_eq!(
             os,
@@ -442,7 +438,14 @@ mod user_agent_tests {
             "OS token must be lowercase, got `{os}`"
         );
         // Must never emit the Rust-native spellings or uname-style names.
-        for forbidden in ["macos", "windows", "Linux", "Darwin", "Windows_NT"] {
+        for forbidden in [
+            "macos",
+            "windows",
+            "solaris",
+            "Linux",
+            "Darwin",
+            "Windows_NT",
+        ] {
             assert_ne!(
                 os, forbidden,
                 "OS token must be the Node `os.platform()` token, not `{forbidden}`"
