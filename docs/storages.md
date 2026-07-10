@@ -136,7 +136,11 @@ println!("exported {} bytes of CSV", csv.len());
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
 | `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
 
-`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`.
+`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`. Like
+`StoreListOptions.limit`, the meaning of `limit` depends on the method: for `list_keys` it is a
+single page's size (max keys returned by one call, capped at 1000 by the API); for `iterate_keys`
+it is a cap on the *total* number of keys yielded across all pages (unset iterates the whole
+store).
 `KeyValueStoreRecord` exposes `value: Vec<u8>`, `content_type`, plus `as_text()` and
 `json::<T>()` helpers.
 
@@ -145,7 +149,8 @@ println!("exported {} bytes of CSV", csv.len());
 iterator threads the `nextExclusiveStartKey` cursor through for you. Its `next()` is `async` and
 fallible, returning `ApifyClientResult<Option<KeyValueStoreKey>>` and yielding `Ok(None)` once the
 store is exhausted. `options.limit` caps the total number of keys yielded (unset iterates the whole
-store); `prefix`/`collection`/`signature` filter every page:
+store); each individual request is bounded to the endpoint's maximum page size (1000), so a larger
+cap still paginates. `prefix`/`collection`/`signature` filter every page:
 
 ```rust,no_run
 # use apify_client::{ApifyClient, ListKeysOptions};
@@ -157,6 +162,15 @@ while let Some(key) = keys.next().await? {
 # Ok(())
 # }
 ```
+
+`KeyValueStoreKey` (from `apify_client::models`) is the element type yielded by the iterator and
+listed in `KeyValueStoreKeysPage::items`. Its fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `String` | The record key (always present). |
+| `size` | `Option<i64>` | Size of the record value in bytes, if reported by the API. |
+| `extra` | `Extra` | Any other fields returned by the API. |
 
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
 

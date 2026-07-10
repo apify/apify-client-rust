@@ -744,3 +744,84 @@ async fn iterate_keys_limit_caps_the_walk() {
         backend.urls()[0]
     );
 }
+
+/// `iterate_keys` with `limit = Some(0)` means "iterate everything" — the first request must NOT
+/// send `limit=0` (out of the endpoint's `minimum: 1` range); the `0` is normalized to no limit.
+#[tokio::test]
+async fn iterate_keys_zero_limit_sends_no_limit_and_walks_all() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k0"}],"isTruncated":true,"nextExclusiveStartKey":"k0"}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k1"}],"isTruncated":false,"nextExclusiveStartKey":null}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .key_value_store("some-store")
+        .iterate_keys(apify_client::ListKeysOptions {
+            limit: Some(0),
+            ..Default::default()
+        });
+    let mut keys = Vec::new();
+    while let Some(key) = it.next().await.expect("ok") {
+        keys.push(key.key);
+    }
+
+    assert_eq!(keys, vec!["k0", "k1"], "0 must iterate the whole store");
+    assert!(
+        !backend.urls()[0].contains("limit="),
+        "limit=0 must be normalized to no limit param, got {}",
+        backend.urls()[0]
+    );
+}
+
+/// A finite `iterate_keys` cap larger than one page must be clamped to the endpoint maximum per
+/// request (so it does not 400) while still yielding across pages until the cap or the store is
+/// exhausted.
+#[tokio::test]
+async fn iterate_keys_large_cap_clamps_page_size() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k0"},{"key":"k1"}],"isTruncated":true,"nextExclusiveStartKey":"k1"}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k2"}],"isTruncated":false,"nextExclusiveStartKey":null}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    // Cap of 1500 > the endpoint max (1000): each request must ask for at most 1000.
+    let mut it = client
+        .key_value_store("some-store")
+        .iterate_keys(apify_client::ListKeysOptions {
+            limit: Some(1500),
+            ..Default::default()
+        });
+    let mut keys = Vec::new();
+    while let Some(key) = it.next().await.expect("ok") {
+        keys.push(key.key);
+    }
+
+    assert_eq!(
+        keys,
+        vec!["k0", "k1", "k2"],
+        "walk continues under the large cap"
+    );
+    let urls = backend.urls();
+    assert!(
+        urls[0].contains("limit=1000") && urls[1].contains("limit=1000"),
+        "each request must be clamped to the endpoint max of 1000, got {urls:?}"
+    );
+    assert!(
+        urls[1].contains("exclusiveStartKey=k1"),
+        "the cursor must still advance across the clamped pages, got {}",
+        urls[1]
+    );
+}

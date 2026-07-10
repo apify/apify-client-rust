@@ -25,8 +25,12 @@ to [Semantic Versioning](https://semver.org/).
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`
   error responses and relaxed field nullability/optionality) needs no code change: error
   responses are handled generically and response models are forward-compatible.
-- `StoreCollectionClient::iterate` now uses the shared `ListIterator`; `StoreActorIterator` is
-  a type alias for `ListIterator<ActorStoreListItem>` (existing usage is unaffected).
+- `StoreCollectionClient::iterate` now uses the shared `ListIterator`, and `StoreActorIterator`
+  is a type alias for `ListIterator<ActorStoreListItem>`. As part of this, `store().iterate()`'s
+  `options.limit` changed from a per-page size (0.5.0) to a cap on the total number of items
+  yielded, for consistency with the reference client and the other `iterate()` methods; set the
+  per-page size with `ListIterator::with_chunk_size` instead. The `StoreActorIterator` type alias
+  itself is unchanged.
 - Corrected the `src/models.rs` module doc to describe forward-compatibility accurately.
 - Bumped crate version to `0.6.0`.
 

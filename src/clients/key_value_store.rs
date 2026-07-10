@@ -18,7 +18,10 @@ use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyV
 /// Options for listing keys in a key-value store.
 #[derive(Debug, Default, Clone)]
 pub struct ListKeysOptions {
-    /// Maximum number of keys to return.
+    /// Key limit. Its meaning depends on the method: for [`KeyValueStoreClient::list_keys`] it is a
+    /// single page's size (max keys one call returns, capped at 1000 by the API); for
+    /// [`KeyValueStoreClient::iterate_keys`] it is a cap on the *total* number of keys yielded
+    /// across all pages (unset/`0` iterates the whole store).
     pub limit: Option<i64>,
     /// Start listing after this key (exclusive), for pagination.
     pub exclusive_start_key: Option<String>,
@@ -126,10 +129,11 @@ impl KeyValueStoreClient {
     /// automatically. The `prefix`, `collection` and `signature` filters from `options` are
     /// carried into every page.
     ///
-    /// `options.limit` caps the *total* number of keys yielded across all pages (unset/`0`
-    /// iterates the entire store); it also bounds each page's request size, mirroring the
-    /// reference client. `options.exclusive_start_key`, when set, resumes iteration after that
-    /// key.
+    /// `options.limit` caps the *total* number of keys yielded across all pages; leaving it unset
+    /// (or `0`) iterates the entire store, matching the reference client. It is honoured across as
+    /// many pages as needed — each individual request is bounded to the endpoint's maximum page
+    /// size ([`KEY_LIST_MAX_LIMIT`]), so a cap larger than one page still works.
+    /// `options.exclusive_start_key`, when set, resumes iteration after that key.
     pub fn iterate_keys(&self, options: ListKeysOptions) -> KeyValueStoreKeysIterator {
         let remaining = options.limit.filter(|&l| l > 0);
         KeyValueStoreKeysIterator {
@@ -318,6 +322,12 @@ impl KeyValueStoreClient {
     }
 }
 
+/// The maximum number of keys the `GET /v2/key-value-stores/{storeId}/keys` endpoint accepts in
+/// its `limit` query parameter (per the OpenAPI spec: `minimum: 1, maximum: 1000`). Each page the
+/// key iterator requests is bounded to this value so a large total cap still paginates correctly
+/// instead of asking the API for an out-of-range `limit`.
+pub const KEY_LIST_MAX_LIMIT: i64 = 1000;
+
 /// A lazy, page-fetching async iterator over the keys in a key-value store.
 ///
 /// Created by [`KeyValueStoreClient::iterate_keys`]. Each call to [`next`](Self::next) returns
@@ -335,15 +345,17 @@ pub struct KeyValueStoreKeysIterator {
     /// page unchanged; `limit` and `exclusive_start_key` are overridden per page after the first.
     options: ListKeysOptions,
     /// Keys still allowed under the caller's total cap (`options.limit`); `None` = uncapped.
-    /// Decremented by each page's key count and passed as the next page's request `limit`,
-    /// matching the reference client.
+    /// Decremented by each page's key count. Each request asks for `min(remaining,
+    /// KEY_LIST_MAX_LIMIT)` so the cap is honoured across pages without exceeding the endpoint's
+    /// maximum `limit`.
     remaining: Option<i64>,
     /// Cursor for the next page: the previous page's `next_exclusive_start_key`.
     next_exclusive_start_key: Option<String>,
     buffer: VecDeque<KeyValueStoreKey>,
-    /// `true` until the first page has been fetched. The first page honours the caller's
-    /// `exclusive_start_key`/`limit` verbatim; later pages are driven by the cursor and remaining
-    /// budget.
+    /// `true` until the first page has been fetched. Only the first page honours the caller's
+    /// `exclusive_start_key`; later pages are driven by the cursor. The request `limit` is derived
+    /// from `remaining` on every page (never sent verbatim), so a `limit` of `0`/unset is treated
+    /// as "no limit" rather than sending an out-of-range `limit=0`.
     first_page: bool,
     exhausted: bool,
 }
@@ -359,18 +371,29 @@ impl KeyValueStoreKeysIterator {
             return Ok(None);
         }
 
-        // Build this page's options. The first page uses the caller's options verbatim; later
-        // pages advance the cursor and request only the remaining budget (reference parity).
+        // Build this page's options. The request `limit` is always derived from the remaining
+        // budget (never the caller's raw `limit`), clamped to the endpoint maximum: this normalizes
+        // an unset/`0` cap to "no limit" and keeps a large finite cap within the accepted range so
+        // it paginates instead of 400-ing. Only the first page uses the caller's
+        // `exclusive_start_key`; later pages advance the cursor.
         let mut page_options = self.options.clone();
+        page_options.limit = self.remaining.map(|rem| rem.min(KEY_LIST_MAX_LIMIT));
         if !self.first_page {
             page_options.exclusive_start_key = self.next_exclusive_start_key.clone();
-            page_options.limit = self.remaining;
         }
         self.first_page = false;
 
         let page = self.client.list_keys(page_options).await?;
-        let received = page.items.len() as i64;
+        let mut items = page.items;
+        let received = items.len() as i64;
 
+        // Enforce the caller's total cap exactly, even if the API returns more than requested
+        // (defensive parity with `ListIterator`).
+        if let Some(rem) = self.remaining {
+            if received > rem {
+                items.truncate(rem.max(0) as usize);
+            }
+        }
         if let Some(rem) = self.remaining.as_mut() {
             *rem -= received;
         }
@@ -385,19 +408,7 @@ impl KeyValueStoreKeysIterator {
             self.exhausted = true;
         }
 
-        self.buffer.extend(page.items);
+        self.buffer.extend(items);
         Ok(self.buffer.pop_front())
-    }
-
-    /// Eagerly drains the iterator into a single `Vec`, fetching every remaining page.
-    ///
-    /// Convenience for callers that want all keys at once; prefer [`next`](Self::next) to process
-    /// keys as they stream in without buffering the whole set.
-    pub async fn collect_all(mut self) -> ApifyClientResult<Vec<KeyValueStoreKey>> {
-        let mut out = Vec::new();
-        while let Some(item) = self.next().await? {
-            out.push(item);
-        }
-        Ok(out)
     }
 }

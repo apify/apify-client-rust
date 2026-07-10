@@ -73,11 +73,15 @@ async fn iterate_key_value_stores() {
     );
 }
 
-/// Iteration: `iterate_keys` yields every key in the store across the cursor-paginated listing.
+/// Iteration: `iterate_keys` yields every key in the store.
 ///
 /// Creates a store, writes several records, then drives the `KeyValueStoreKeysIterator` to
-/// completion and asserts every written key is yielded exactly once. This exercises the
-/// cursor-based (`exclusiveStartKey`/`nextExclusiveStartKey`) auto-pagination helper end to end.
+/// completion and asserts every written key is yielded exactly once. With only a handful of keys
+/// this fits in the endpoint's single default page, so it validates the helper end to end but
+/// does not cross a page boundary — `iterate_keys` has no per-page-size knob (its `limit` is a
+/// total cap, matching the JS reference), so forcing >1 page would need >1000 keys. The
+/// multi-page cursor-threading path (`exclusiveStartKey`/`nextExclusiveStartKey`) is covered
+/// hermetically by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_keys_yields_all_keys() {
     let client = require_client!();

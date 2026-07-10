@@ -86,9 +86,11 @@ types is:
 - Client configuration: `RequestCompression`
 
 plus the common container `PaginationList`, the query helper `QueryParams`, `ListIterator`
-(the return type of every collection client's `iterate()` method), and `StoreActorIterator`
+(the return type of every collection client's `iterate()` method), `StoreActorIterator`
 (a type alias for `ListIterator<ActorStoreListItem>`, the return type of
-`StoreCollectionClient::iterate`). Import any of them directly from `apify_client`:
+`StoreCollectionClient::iterate`), and the two cursor-based iterators `KeyValueStoreKeysIterator`
+(from `KeyValueStoreClient::iterate_keys`) and `RequestQueueRequestsIterator` (from
+`RequestQueueClient::paginate_requests`). Import any of them directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};
