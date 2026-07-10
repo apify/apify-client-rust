@@ -59,16 +59,21 @@ async fn iterate_key_value_stores() {
         let _ = cleanup_client.key_value_store(&id).delete().await;
     });
 
-    let iter = client
-        .key_value_stores()
-        .iterate(apify_client::StorageListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = store.id.clone();
     assert!(
-        common::iter_contains(iter, move |s| s.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .key_value_stores()
+                    .iterate(apify_client::StorageListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |s| s.id == target,
+        )
+        .await,
         "key-value store iteration should yield the created store"
     );
 }

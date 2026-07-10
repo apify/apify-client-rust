@@ -62,16 +62,21 @@ async fn iterate_datasets() {
     });
 
     // Newest-first with a small page size so the iterator must fetch at least one page.
-    let iter = client
-        .datasets()
-        .iterate(apify_client::StorageListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = dataset.id.clone();
     assert!(
-        common::iter_contains(iter, move |d| d.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .datasets()
+                    .iterate(apify_client::StorageListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |d| d.id == target,
+        )
+        .await,
         "dataset iteration should yield the created dataset"
     );
 }

@@ -60,16 +60,21 @@ async fn iterate_request_queues() {
         let _ = cleanup_client.request_queue(&id).delete().await;
     });
 
-    let iter = client
-        .request_queues()
-        .iterate(apify_client::StorageListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = queue.id.clone();
     assert!(
-        common::iter_contains(iter, move |q| q.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .request_queues()
+                    .iterate(apify_client::StorageListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |q| q.id == target,
+        )
+        .await,
         "request queue iteration should yield the created queue"
     );
 }

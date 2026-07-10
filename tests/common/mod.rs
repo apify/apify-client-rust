@@ -142,6 +142,44 @@ where
     false
 }
 
+/// Number of times [`iter_contains_eventually`] rebuilds the iterator and re-scans while waiting
+/// for a just-created resource to become visible in its collection LIST endpoint.
+pub const ITER_RETRY_ATTEMPTS: usize = 5;
+
+/// Delay between the attempts made by [`iter_contains_eventually`]. With [`ITER_RETRY_ATTEMPTS`]
+/// attempts the helper sleeps at most `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` (a couple
+/// of seconds) before giving up.
+pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Like [`iter_contains`], but tolerant of eventual consistency in collection LIST endpoints.
+///
+/// A resource created through a write endpoint is not always immediately reflected in its
+/// collection's LIST response — the write and the list index converge asynchronously on the
+/// server. A create-then-iterate test that scans the collection exactly once therefore races that
+/// convergence and flakes when the just-created entity has not yet propagated (observed on CI for
+/// `iterate_key_value_stores`, and structurally possible for every sibling collection test).
+///
+/// This helper rebuilds a fresh iterator via `make_iter` and re-scans it with [`iter_contains`] up
+/// to [`ITER_RETRY_ATTEMPTS`] times, sleeping [`ITER_RETRY_BACKOFF`] between attempts, returning
+/// `true` as soon as `pred` matches. When the entity is already visible it matches on the first
+/// attempt and returns immediately with no sleeping — so it is a no-op in the common
+/// already-consistent case and only pays the backoff on the rare lagging run.
+pub async fn iter_contains_eventually<T, F, Mk>(mut make_iter: Mk, mut pred: F) -> bool
+where
+    Mk: FnMut() -> apify_client::ListIterator<T>,
+    F: FnMut(&T) -> bool,
+{
+    for attempt in 0..ITER_RETRY_ATTEMPTS {
+        if iter_contains(make_iter(), &mut pred).await {
+            return true;
+        }
+        if attempt + 1 < ITER_RETRY_ATTEMPTS {
+            tokio::time::sleep(ITER_RETRY_BACKOFF).await;
+        }
+    }
+    false
+}
+
 /// Generates a unique, collision-resistant resource name for test isolation.
 ///
 /// The name embeds the test-specific `prefix`, a random UUID fragment, and is kept short

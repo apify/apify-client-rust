@@ -114,16 +114,21 @@ async fn iterate_webhooks() {
         let _ = cleanup_client.webhook(&id).delete().await;
     });
 
-    let iter = client
-        .webhooks()
-        .iterate(apify_client::ListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = webhook.id.clone();
     assert!(
-        common::iter_contains(iter, move |w| w.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .webhooks()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |w| w.id == target,
+        )
+        .await,
         "webhook iteration should yield the created webhook"
     );
 }
@@ -152,16 +157,21 @@ async fn iterate_webhook_dispatches() {
         .expect("test webhook");
     assert!(!dispatch.id.is_empty());
 
-    let iter = client
-        .webhook_dispatches()
-        .iterate(apify_client::ListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = dispatch.id.clone();
     assert!(
-        common::iter_contains(iter, move |d| d.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .webhook_dispatches()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |d| d.id == target,
+        )
+        .await,
         "webhook-dispatch iteration should yield the triggered dispatch"
     );
 }

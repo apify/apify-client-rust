@@ -96,19 +96,24 @@ async fn iterate_runs() {
 
     // Newest-first with a small page size so the just-finished run is near the front. `limit`
     // is a total-item cap, so it is left unset here; page size is set via `with_chunk_size`.
-    let iter = client
-        .runs()
-        .iterate(
-            apify_client::ListOptions {
-                desc: Some(true),
-                ..Default::default()
-            },
-            Default::default(),
-        )
-        .with_chunk_size(5);
     let target = run.id.clone();
     assert!(
-        common::iter_contains(iter, move |r| r.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .runs()
+                    .iterate(
+                        apify_client::ListOptions {
+                            desc: Some(true),
+                            ..Default::default()
+                        },
+                        Default::default(),
+                    )
+                    .with_chunk_size(5)
+            },
+            move |r| r.id == target,
+        )
+        .await,
         "run iteration should yield the started run"
     );
 }

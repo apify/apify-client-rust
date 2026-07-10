@@ -92,17 +92,22 @@ async fn iterate_actors() {
     });
 
     // Restrict to the caller's own Actors, newest-first, with a small page size.
-    let iter = client
-        .actors()
-        .iterate(apify_client::ActorListOptions {
-            my: Some(true),
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = actor.id.clone();
     assert!(
-        common::iter_contains(iter, move |a| a.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .actors()
+                    .iterate(apify_client::ActorListOptions {
+                        my: Some(true),
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |a| a.id == target,
+        )
+        .await,
         "actor iteration should yield the created actor"
     );
 }
@@ -124,12 +129,15 @@ async fn iterate_actor_versions() {
         let _ = cleanup_client.actor(&id).delete().await;
     });
 
-    let iter = client
-        .actor(&actor.id)
-        .versions()
-        .iterate(Default::default());
     assert!(
-        common::iter_contains(iter, |v| v.version_number == "0.0").await,
+        common::iter_contains_eventually(
+            || client
+                .actor(&actor.id)
+                .versions()
+                .iterate(Default::default()),
+            |v| v.version_number == "0.0",
+        )
+        .await,
         "version iteration should yield the initial 0.0 version"
     );
 }
@@ -165,9 +173,12 @@ async fn iterate_actor_env_vars() {
         .await
         .expect("create env var");
 
-    let iter = version_client.env_vars().iterate();
     assert!(
-        common::iter_contains(iter, |e| e.name == "ITER_VAR").await,
+        common::iter_contains_eventually(
+            || version_client.env_vars().iterate(),
+            |e| e.name == "ITER_VAR",
+        )
+        .await,
         "env-var iteration should yield the created variable"
     );
 }

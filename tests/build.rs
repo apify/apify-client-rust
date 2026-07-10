@@ -62,16 +62,21 @@ async fn iterate_builds() {
         .await
         .expect("start build");
 
-    let iter = actor_client
-        .builds()
-        .iterate(apify_client::ListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = build.id.clone();
     assert!(
-        common::iter_contains(iter, move |b| b.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                actor_client
+                    .builds()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |b| b.id == target,
+        )
+        .await,
         "build iteration should yield the started build"
     );
 }

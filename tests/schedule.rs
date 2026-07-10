@@ -69,16 +69,21 @@ async fn iterate_schedules() {
         let _ = cleanup_client.schedule(&id).delete().await;
     });
 
-    let iter = client
-        .schedules()
-        .iterate(apify_client::ListOptions {
-            desc: Some(true),
-            ..Default::default()
-        })
-        .with_chunk_size(5);
     let target = schedule.id.clone();
     assert!(
-        common::iter_contains(iter, move |s| s.id == target).await,
+        common::iter_contains_eventually(
+            || {
+                client
+                    .schedules()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |s| s.id == target,
+        )
+        .await,
         "schedule iteration should yield the created schedule"
     );
 }
