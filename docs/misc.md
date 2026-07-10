@@ -120,8 +120,8 @@ Also reachable via `run.log()` and `build.log()`.
 |---|---|---|---|
 | `get()` | — | `Option<String>` | The entire log as text. |
 | `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
-| `stream()` | — | `Stream<Item = Result<Vec<u8>>>` | Streams log chunks live (log redirection). |
-| `stream_with_options(options)` | `LogOptions` | `Stream<Item = Result<Vec<u8>>>` | As `stream()`, with options (e.g. `raw`). |
+| `stream()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Streams log chunks live (log redirection). |
+| `stream_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
 
 `LogOptions` has a single field, `raw: Option<bool>`. When `Some(true)`, the API returns the
 raw log content without server-side processing (e.g. without the per-line timestamps it adds by

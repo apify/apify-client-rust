@@ -26,8 +26,9 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 
 ## The `Task` model
 
-Returned by `get`, `create`, `update` and (as `PaginationList<Task>`) by `list`. Unknown fields
-returned by the API are preserved in `extra`.
+`Task` lives in `apify_client::models` (`use apify_client::models::Task;`). Returned by `get`,
+`create`, `update` and (as `PaginationList<Task>`) by `list`. Unknown fields returned by the API
+are preserved in `extra`.
 
 | Field | Type | Description |
 |---|---|---|

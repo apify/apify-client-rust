@@ -20,8 +20,9 @@ Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single
 
 ## The `Schedule` model
 
-Returned by `get`, `create`, `update` and (as `PaginationList<Schedule>`) by `list`. Unknown
-fields returned by the API are preserved in `extra`.
+`Schedule` lives in `apify_client::models` (`use apify_client::models::Schedule;`). Returned by
+`get`, `create`, `update` and (as `PaginationList<Schedule>`) by `list`. Unknown fields returned
+by the API are preserved in `extra`.
 
 | Field | Type | Description |
 |---|---|---|

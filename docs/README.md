@@ -7,9 +7,15 @@
 This directory documents the public API of the Apify Rust client. The same descriptions
 are available as rustdoc comments and can be browsed with `cargo doc --open`.
 
+> **Note:** the cross-file links between these pages (e.g. to `actors.md`, `runs.md`, or
+> `../examples/`) are written for the repository (GitHub) view. Because the pages are
+> concatenated onto the crate root via `include_str!` when building rustdoc, those relative
+> links do not resolve in `cargo doc` output — read the cross-references on GitHub.
+
 ## Contents
 
 - [Getting started](#getting-started)
+- [Imports](#imports)
 - [`ApifyClient` and the builder](#apifyclient-and-the-builder)
 - [Resource clients](#resource-clients)
   - [Actors](actors.md)
@@ -29,7 +35,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.4"
+apify-client = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -77,6 +83,7 @@ types is:
 - Store: `StoreListOptions`
 - Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
+- Client configuration: `RequestCompression`
 
 plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
 directly from `apify_client`:
@@ -89,12 +96,34 @@ use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItem
 but the short crate-root path above is the supported, stable way to import these option types.)
 
 API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
-`RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`,
-`KeyValueStoreKeysPage`, `ActorStoreListItem`, `User`, …) live in the `apify_client::models`
-module and are imported from there:
+`KeyValueStoreKey`, `KeyValueStoreKeysPage`, `KeyValueStoreRecord`, `RequestQueue`,
+`RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`, `Task`, `Schedule`,
+`Webhook`, `WebhookDispatch`, `ActorStoreListItem`, `User`, …) all live in the
+`apify_client::models` module and are imported from there:
 
 ```rust,no_run
 use apify_client::models::RequestQueueRequest;
+```
+
+Every model exposes an `extra: Extra` field that captures any response fields not otherwise
+modelled; `Extra` is a type alias for `std::collections::HashMap<String, serde_json::Value>`, also
+in `apify_client::models`. When constructing a model, set `extra: Default::default()` (an empty
+map); read passthrough fields from a returned model's `extra` by key:
+
+```rust,no_run
+use apify_client::models::Extra;
+
+// `extra` is a HashMap<String, serde_json::Value>; look up any passthrough field by key.
+fn some_field(extra: &Extra) -> Option<&serde_json::Value> {
+    extra.get("someFieldNotModelled")
+}
+```
+
+The error type `ApifyClientError` (and its companions `ApiError`, `ApifyClientResult`) is
+re-exported at the crate root — see [Error handling](#error-handling) for import and matching:
+
+```rust,no_run
+use apify_client::ApifyClientError;
 ```
 
 ## `ApifyClient` and the builder
@@ -113,19 +142,43 @@ Builder options:
 | `min_delay_between_retries(d)` | `500ms` | Base backoff delay (doubled each retry, with jitter). |
 | `timeout(d)` | `360s` | Overall per-request timeout budget. |
 | `user_agent_suffix(s)` | none | Extra text appended to the `User-Agent` header. |
-| `http_backend(b)` | reqwest | Replaceable HTTP transport (`HttpBackend`). |
+| `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
+| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). |
+
+Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
+`request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is
+preferred; select gzip for environments or intermediaries that do not handle brotli:
+
+```rust,no_run
+use apify_client::{ApifyClient, RequestCompression};
+
+let client = ApifyClient::builder()
+    .token("my-api-token")
+    .request_compression(RequestCompression::Gzip)
+    .build();
+```
 
 The `User-Agent` header has the form
-`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where
-`isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable (the platform variable the
-reference clients read; rendered lowercase to match them).
+`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where the `{os}`
+token matches the reference client's `os.platform()` value (e.g. `darwin`, `win32`, `linux`) so it
+is identical across all Apify clients, and `isAtHome` reflects the `APIFY_IS_AT_HOME` environment
+variable (the platform variable the reference clients read; rendered lowercase to match them). To
+reach those values the client maps Rust's native `std::env::consts::OS` spellings to Node's
+(`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
+(`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
 
-Accessor methods return resource clients (see the per-resource pages):
+## Resource clients
+
+Accessor methods on `ApifyClient` return resource clients — the collection accessor (plural)
+lists/creates, and the single-resource accessor (singular) operates on one resource by id:
 
 `actors`/`actor`, `builds`/`build`, `runs`/`run`, `tasks`/`task`, `datasets`/`dataset`,
 `key_value_stores`/`key_value_store`, `request_queues`/`request_queue`,
 `schedules`/`schedule`, `webhooks`/`webhook`, `webhook_dispatches`/`webhook_dispatch`,
 `store`, `me`/`user`, `log`.
+
+Each resource has a dedicated page, linked under **Resource clients** in the [Contents](#contents)
+above (Actors, runs, builds, tasks, storages, schedules, webhooks, and store/users/logs).
 
 ## Error handling
 

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError, LastRunOptions};
+use apify_client::{ApifyClient, ApifyClientError, LastRunOptions, RequestCompression};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -17,6 +17,8 @@ struct MockBackend {
     responses: Mutex<Vec<MockOutcome>>,
     calls: AtomicUsize,
     last_url: Mutex<Option<String>>,
+    last_headers: Mutex<std::collections::HashMap<String, String>>,
+    last_body: Mutex<Option<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +33,8 @@ impl MockBackend {
             responses: Mutex::new(responses),
             calls: AtomicUsize::new(0),
             last_url: Mutex::new(None),
+            last_headers: Mutex::new(std::collections::HashMap::new()),
+            last_body: Mutex::new(None),
         })
     }
 
@@ -41,6 +45,19 @@ impl MockBackend {
     fn last_url(&self) -> Option<String> {
         self.last_url.lock().unwrap().clone()
     }
+
+    /// Case-insensitive lookup of the last request's header value.
+    fn last_header(&self, name: &str) -> Option<String> {
+        let headers = self.last_headers.lock().unwrap();
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    }
+
+    fn last_body(&self) -> Option<Vec<u8>> {
+        self.last_body.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -48,6 +65,8 @@ impl HttpBackend for MockBackend {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ApifyClientError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_url.lock().unwrap() = Some(request.url.clone());
+        *self.last_headers.lock().unwrap() = request.headers.clone();
+        *self.last_body.lock().unwrap() = request.body.clone();
         let mut queue = self.responses.lock().unwrap();
         let outcome = if queue.len() > 1 {
             queue.remove(0)
@@ -75,6 +94,20 @@ fn client_with(backend: Arc<MockBackend>, max_retries: u32) -> ApifyClient {
         .max_retries(max_retries)
         // Keep backoff tiny so tests run fast.
         .min_delay_between_retries(Duration::from_millis(1))
+        .http_backend(backend)
+        .build()
+}
+
+/// Builds a client with an explicit request-compression algorithm and no retries.
+fn client_with_compression(
+    backend: Arc<MockBackend>,
+    compression: RequestCompression,
+) -> ApifyClient {
+    ApifyClient::builder()
+        .token("test-token")
+        .max_retries(0)
+        .min_delay_between_retries(Duration::from_millis(1))
+        .request_compression(compression)
         .http_backend(backend)
         .build()
 }
@@ -282,6 +315,129 @@ async fn log_get_sends_raw_query_param() {
     assert!(
         !url.contains("raw="),
         "default log get must not send a raw param, got {url}"
+    );
+}
+
+/// A request body at or above the 1024-byte threshold is brotli-compressed: the backend sees a
+/// `Content-Encoding: br` header and a body that is smaller than (and different from) the original
+/// and decodes back to the original bytes.
+#[tokio::test]
+async fn large_request_body_is_brotli_compressed() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    // A highly compressible 4 KiB payload, comfortably over the 1024-byte threshold.
+    let original = vec![b'a'; 4096];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("br"),
+        "large bodies must be sent with Content-Encoding: br"
+    );
+    let sent = backend.last_body().expect("a body was sent");
+    assert!(
+        sent.len() < original.len(),
+        "compressed body ({}) must be smaller than the original ({})",
+        sent.len(),
+        original.len()
+    );
+    assert_ne!(sent, original, "the sent body must actually be encoded");
+
+    // The sent bytes must decode back to the original via brotli.
+    let mut decompressed = Vec::new();
+    let mut decoder = brotli::DecompressorWriter::new(&mut decompressed, 4096);
+    std::io::Write::write_all(&mut decoder, &sent).expect("decode");
+    drop(decoder);
+    assert_eq!(decompressed, original, "brotli round-trip must be lossless");
+}
+
+/// With the gzip encoding selected, a large request body is gzip-compressed: the backend sees a
+/// `Content-Encoding: gzip` header and a body that is smaller than (and different from) the original
+/// and decodes back to the original bytes. This exercises the gzip path end-to-end.
+#[tokio::test]
+async fn large_request_body_is_gzip_compressed_when_selected() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with_compression(backend.clone(), RequestCompression::Gzip);
+
+    // A highly compressible 4 KiB payload, comfortably over the 1024-byte threshold.
+    let original = vec![b'a'; 4096];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("gzip"),
+        "large bodies must be sent with Content-Encoding: gzip when gzip is selected"
+    );
+    let sent = backend.last_body().expect("a body was sent");
+    assert!(
+        sent.len() < original.len(),
+        "compressed body ({}) must be smaller than the original ({})",
+        sent.len(),
+        original.len()
+    );
+    assert_ne!(sent, original, "the sent body must actually be encoded");
+
+    // The sent bytes must decode back to the original via gzip.
+    let mut decoder = flate2::read::GzDecoder::new(&sent[..]);
+    let mut decompressed = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decompressed).expect("decode");
+    assert_eq!(decompressed, original, "gzip round-trip must be lossless");
+}
+
+/// When `request_compression()` is never called on the builder, large bodies are brotli-compressed:
+/// the builder's default encoding is brotli, so the backend sees `Content-Encoding: br`. This
+/// exercises the builder default via the public builder path (not the `Default` derive), guarding
+/// against the default silently changing.
+#[tokio::test]
+async fn builder_default_request_compression_is_brotli() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    // `client_with` builds a client without ever calling `.request_compression(...)`.
+    let client = client_with(backend.clone(), 0);
+
+    let original = vec![b'a'; 4096];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("br"),
+        "the default compression must be brotli"
+    );
+}
+
+/// A request body below the 1024-byte threshold is sent verbatim, with no `Content-Encoding`.
+#[tokio::test]
+async fn small_request_body_is_not_compressed() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    let original = vec![b'a'; 100];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert!(
+        backend.last_header("Content-Encoding").is_none(),
+        "small bodies must not be compressed"
+    );
+    assert_eq!(
+        backend.last_body().expect("a body was sent"),
+        original,
+        "small bodies must be sent verbatim"
     );
 }
 
