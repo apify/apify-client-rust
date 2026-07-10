@@ -7,9 +7,15 @@
 This directory documents the public API of the Apify Rust client. The same descriptions
 are available as rustdoc comments and can be browsed with `cargo doc --open`.
 
+> **Note:** the cross-file links between these pages (e.g. to `actors.md`, `runs.md`, or
+> `../examples/`) are written for the repository (GitHub) view. Because the pages are
+> concatenated onto the crate root via `include_str!` when building rustdoc, those relative
+> links do not resolve in `cargo doc` output — read the cross-references on GitHub.
+
 ## Contents
 
 - [Getting started](#getting-started)
+- [Imports](#imports)
 - [`ApifyClient` and the builder](#apifyclient-and-the-builder)
 - [Resource clients](#resource-clients)
   - [Actors](actors.md)
@@ -120,12 +126,18 @@ The `User-Agent` header has the form
 `isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable (the platform variable the
 reference clients read; rendered lowercase to match them).
 
-Accessor methods return resource clients (see the per-resource pages):
+## Resource clients
+
+Accessor methods on `ApifyClient` return resource clients — the collection accessor (plural)
+lists/creates, and the single-resource accessor (singular) operates on one resource by id:
 
 `actors`/`actor`, `builds`/`build`, `runs`/`run`, `tasks`/`task`, `datasets`/`dataset`,
 `key_value_stores`/`key_value_store`, `request_queues`/`request_queue`,
 `schedules`/`schedule`, `webhooks`/`webhook`, `webhook_dispatches`/`webhook_dispatch`,
 `store`, `me`/`user`, `log`.
+
+Each resource has a dedicated page, linked under **Resource clients** in the [Contents](#contents)
+above (Actors, runs, builds, tasks, storages, schedules, webhooks, and store/users/logs).
 
 ## Error handling
 

@@ -160,6 +160,43 @@ println!("exported {} bytes of CSV", csv.len());
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
 | `unlock_requests()` | — | `Value` | Release all this client's locks. |
 
+`paginate_requests(page_limit)` returns a `RequestQueueRequestsIterator` — a lazy, page-fetching
+iterator (parity with the Store iterator in [Store, users and logs](misc.md#apify-store--clientstore)).
+Its `next()` is `async` and fallible, returning
+`ApifyClientResult<Option<RequestQueueRequest>>`, fetching the next page on demand and yielding
+`Ok(None)` once the queue is exhausted. `page_limit` bounds the requests fetched per page (`None`
+uses the server default). Drive it with `.await?`:
+
+```rust,no_run
+use apify_client::models::RequestQueueRequest;
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let queue = client.request_queues().get_or_create(None).await?;
+let queue_client = client.request_queue(&queue.id);
+
+// Add a request first so the iteration below has something to yield.
+queue_client
+    .add_request(
+        &RequestQueueRequest {
+            id: None,
+            url: "https://example.com/".to_string(),
+            unique_key: Some("example".to_string()),
+            method: Some("GET".to_string()),
+            user_data: None,
+            extra: Default::default(),
+        },
+        false,
+    )
+    .await?;
+
+let mut iter = queue_client.paginate_requests(None);
+while let Some(request) = iter.next().await? {
+    println!("{:?}: {}", request.id, request.url);
+}
+# Ok(())
+# }
+```
+
 The `forefront` boolean (on `add_request`, `update_request`, `batch_add_requests`,
 `prolong_request_lock`, `delete_request_lock`) controls queue ordering: `true` puts the
 request(s) at the **front** of the queue so they are handled before the existing backlog;

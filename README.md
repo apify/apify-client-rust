@@ -29,14 +29,22 @@ serde_json = "1"          # for the `serde_json::Value` responses used in the Qu
 The Quick start below reads dynamically-typed records with `serde_json::Value`, so a fresh
 project needs `serde_json`. Two more dependencies are needed only for specific features:
 
-- `futures-util = "0.3"` — to consume `LogClient::stream()` (log streaming/redirection); it
-  provides the `StreamExt` trait used by the [`log_redirection`](examples/log_redirection.rs)
-  example. See [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
+- `futures-util = "0.3"` — to consume any of the log streams (`LogClient::stream()` /
+  `stream_with_options()` and the run shortcuts `RunClient::get_streamed_log()` /
+  `get_streamed_log_with_options()`); it provides the `StreamExt` trait used to poll the returned
+  stream. Both the [`log_redirection`](examples/log_redirection.rs) and
+  [`raw_log`](examples/raw_log.rs) examples import `futures_util::StreamExt` for this. See
+  [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
   fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `chrono::DateTime<Utc>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the
   `monthly_usage` example in [`docs/misc.md`](docs/misc.md#users--clientme--clientuserid) and the
   account example) need it as a direct dependency.
+- `reqwest = "0.12"` — only if you build a custom HTTP transport by constructing a
+  `reqwest::Client` yourself and passing it to `ReqwestBackend::with_client(...)` (see
+  [Custom HTTP transport](#custom-http-transport)). `reqwest` is **not** re-exported, so that
+  snippet needs it as a direct dependency, and its version must match this crate's `reqwest`
+  version (`0.12`) so the `reqwest::Client` types are compatible.
 
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
@@ -88,6 +96,7 @@ use apify_client::ApifyClient;
 let client = ApifyClient::builder()
     .token("my-api-token")
     .base_url("https://api.apify.com")     // `/v2` is appended automatically
+    .public_base_url("https://api.apify.com") // origin for public/shareable URLs; defaults to `base_url`
     .max_retries(8)                         // default: 8
     .min_delay_between_retries(Duration::from_millis(500)) // default: 500ms
     .timeout(Duration::from_secs(360))      // default: 360s
@@ -220,7 +229,7 @@ If you need these, call them directly through a custom `HttpBackend` or open an 
 ## Error handling
 
 All fallible methods return `Result<T, ApifyClientError>`. API errors expose the parsed
-`type`, `message`, `status_code` and request details.
+error `type` (as the field `error_type`), `message`, `status_code` and request details.
 
 An Actor (or task/store) id may be a bare id, a `username/name` reference, or the equivalent
 `username~name` form (the client encodes the first `/` as `~` on the wire, so the two are
@@ -249,8 +258,13 @@ match client.actor("nonexistent~actor").get().await {
 
 ## Custom HTTP transport
 
-The transport is a replaceable component. Implement `http_client::HttpBackend` and inject
-it with `ApifyClientBuilder::http_backend`:
+The transport is a replaceable component: any type implementing `http_client::HttpBackend` can be
+injected with `ApifyClientBuilder::http_backend`. The most common customization is to reuse the
+built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom proxy, TLS, connection
+pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
+`HttpBackend` (a single `async fn send`) on your own type instead. The snippet below constructs a
+`reqwest::Client` directly, so it requires adding `reqwest = "0.12"` (matching this crate's
+`reqwest` version) as your own dependency — see [Installation](#installation):
 
 ```rust,no_run
 use std::sync::Arc;

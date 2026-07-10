@@ -29,6 +29,20 @@ const MAX_SUCCESS_STATUS_CODE: u16 = 300;
 /// Matches the reference client's `async-retry` default factor of 2.
 const BACKOFF_FACTOR: u32 = 2;
 
+/// Request bodies at least this many bytes are compressed before sending. Smaller bodies are
+/// left uncompressed because the CPU cost outweighs the transfer savings. Matches the reference
+/// client's `MIN_COMPRESS_BYTES` threshold.
+const MIN_COMPRESS_BYTES: usize = 1024;
+/// `Content-Encoding` value used for brotli-compressed request bodies.
+const CONTENT_ENCODING_BROTLI: &str = "br";
+/// Brotli quality level (0–11). The reference client compresses request bodies at quality 6,
+/// which balances ratio against CPU cost; we mirror that.
+const BROTLI_QUALITY: u32 = 6;
+/// Brotli sliding-window size (log2), 22 is the library default (a 4 MiB window).
+const BROTLI_WINDOW_SIZE: u32 = 22;
+/// Internal buffer size for the brotli encoder.
+const BROTLI_BUFFER_SIZE: usize = 4096;
+
 /// HTTP method of a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -234,6 +248,10 @@ impl HttpClient {
                 .insert("Authorization".to_string(), format!("Bearer {token}"));
         }
 
+        // Compress the request body once (not per attempt) when it is large enough, mirroring the
+        // reference client. The API accepts brotli-encoded request bodies.
+        maybe_compress_request(&mut request);
+
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
 
@@ -301,6 +319,53 @@ impl HttpClient {
     pub(crate) fn stream_credentials(&self) -> (Option<String>, String) {
         (self.token.clone(), self.user_agent.clone())
     }
+}
+
+/// Compresses `request.body` in place when it is present, at least [`MIN_COMPRESS_BYTES`] long,
+/// and no `Content-Encoding` is already set, adding a `Content-Encoding: br` header.
+///
+/// Mirrors the reference client, which prefers brotli (`br`) for request-body compression. Rust's
+/// brotli support is always compiled in (the pure-Rust `brotli` crate), so there is no runtime
+/// path where brotli is unavailable and a gzip fallback would ever apply — hence brotli only.
+fn maybe_compress_request(request: &mut HttpRequest) {
+    let Some(body) = request.body.as_ref() else {
+        return;
+    };
+    if body.len() < MIN_COMPRESS_BYTES {
+        return;
+    }
+    // Respect a caller-provided `Content-Encoding` (case-insensitive): the body is then assumed to
+    // already be encoded, so re-compressing it would corrupt it.
+    let already_encoded = request
+        .headers
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("Content-Encoding"));
+    if already_encoded {
+        return;
+    }
+
+    let compressed = brotli_compress(body);
+    request.headers.insert(
+        "Content-Encoding".to_string(),
+        CONTENT_ENCODING_BROTLI.to_string(),
+    );
+    request.body = Some(compressed);
+}
+
+/// Brotli-compresses `data`. Writing to an in-memory `Vec` is infallible, so this cannot fail.
+fn brotli_compress(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut writer = brotli::CompressorWriter::new(
+        Vec::new(),
+        BROTLI_BUFFER_SIZE,
+        BROTLI_QUALITY,
+        BROTLI_WINDOW_SIZE,
+    );
+    writer
+        .write_all(data)
+        .expect("writing to an in-memory Vec never fails");
+    writer.into_inner()
 }
 
 /// Returns the path + query portion of a URL, for error reporting.

@@ -232,6 +232,11 @@ fn env_var_set(name: &str) -> bool {
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
+    // `std::env::consts::OS` is the idiomatic Rust source for the platform token and already yields
+    // the short, lowercase identifier the JS reference switched to (`linux`, `macos`, `windows`,
+    // `android`, ...) rather than uname-style names (`Linux`, `Darwin`, `Windows_NT`). We keep the
+    // idiomatic Rust spelling (`macos`/`windows`) instead of hardcoding Node's `os.platform()`
+    // strings (`darwin`/`win32`), which would be an anti-idiomatic copy.
     let os = std::env::consts::OS;
     // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
     // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
@@ -382,6 +387,41 @@ mod user_agent_tests {
         match prev_literal {
             Some(v) => std::env::set_var("isAtHome", v),
             None => std::env::remove_var("isAtHome"),
+        }
+    }
+
+    // The OS token must be the short, lowercase platform identifier (aligned with the JS
+    // reference's `os.platform()`), never a uname-style capitalized name. We assert it equals the
+    // idiomatic `std::env::consts::OS`, is lowercase, and is not one of the uname-style spellings.
+    #[test]
+    fn user_agent_os_token_is_short_lowercase_platform() {
+        let ua = build_user_agent(None);
+        // Extract the OS token exactly as it appears in the produced header — the first
+        // component inside the parentheses: `(<os>; Rust/...)` — and assert against that,
+        // not against the std constant, so the test exercises `build_user_agent`'s output.
+        let os = ua
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(';'))
+            .map(|(token, _)| token.trim())
+            .expect("user agent must contain an `(<os>; Rust/...` section");
+        assert!(
+            !os.is_empty(),
+            "user agent OS token must not be empty, got `{ua}`"
+        );
+        assert!(
+            ua.contains(&format!("({os}; Rust/")),
+            "OS token must be the first parenthesised component, got `{ua}`"
+        );
+        assert_eq!(
+            os,
+            os.to_ascii_lowercase(),
+            "OS token must be lowercase, got `{os}`"
+        );
+        for uname_style in ["Linux", "Darwin", "Windows_NT"] {
+            assert_ne!(
+                os, uname_style,
+                "OS token must not be a uname-style name like `{uname_style}`"
+            );
         }
     }
 

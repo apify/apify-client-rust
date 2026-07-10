@@ -4,6 +4,16 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.4.8] - 2026-07-09
+
+### Added
+- Request bodies of at least 1024 bytes are now brotli-compressed and sent with
+  `Content-Encoding: br`.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-08T143931Z`.
+- Bumped crate version to `0.4.8`.
+
 ## [0.4.7] - 2026-07-07
 
 ### Changed
