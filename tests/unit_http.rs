@@ -393,12 +393,15 @@ async fn large_request_body_is_gzip_compressed_when_selected() {
     assert_eq!(decompressed, original, "gzip round-trip must be lossless");
 }
 
-/// The default request compression is brotli: without selecting an encoding, a large body is sent
-/// with `Content-Encoding: br` (guards against the default silently changing).
+/// When `request_compression()` is never called on the builder, large bodies are brotli-compressed:
+/// the builder's default encoding is brotli, so the backend sees `Content-Encoding: br`. This
+/// exercises the builder default via the public builder path (not the `Default` derive), guarding
+/// against the default silently changing.
 #[tokio::test]
-async fn default_request_compression_is_brotli() {
+async fn builder_default_request_compression_is_brotli() {
     let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
-    let client = client_with_compression(backend.clone(), RequestCompression::default());
+    // `client_with` builds a client without ever calling `.request_compression(...)`.
+    let client = client_with(backend.clone(), 0);
 
     let original = vec![b'a'; 4096];
     client

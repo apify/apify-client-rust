@@ -57,6 +57,7 @@ const GZIP_COMPRESSION_LEVEL: u32 = 6;
 /// because Rust's brotli support is always compiled in and would leave no runtime path to gzip.
 /// [`Brotli`](RequestCompression::Brotli) is the default (best ratio).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum RequestCompression {
     /// Brotli (`Content-Encoding: br`). The default: best compression ratio, and the encoding the
     /// reference client prefers.
