@@ -337,8 +337,9 @@ pub const KEY_LIST_MAX_LIMIT: i64 = 1000;
 /// Unlike the offset/limit-paginated [`ListIterator`](crate::ListIterator), key-value stores use
 /// cursor-based pagination: each page is anchored by the previous page's
 /// `nextExclusiveStartKey`. Termination mirrors the reference client's `listKeys()` generator —
-/// the walk stops once a page comes back empty, the API stops returning a next cursor, or the
-/// caller's `limit` is exhausted.
+/// the walk stops once the page reports `isTruncated == false` (the authoritative end-of-data
+/// signal), a page comes back empty, the API stops returning a next cursor, or the caller's
+/// `limit` is exhausted.
 pub struct KeyValueStoreKeysIterator {
     client: KeyValueStoreClient,
     /// Base listing options. The `prefix`/`collection`/`signature` filters are carried into every
@@ -384,6 +385,7 @@ impl KeyValueStoreKeysIterator {
         self.first_page = false;
 
         let page = self.client.list_keys(page_options).await?;
+        let is_truncated = page.is_truncated;
         let mut items = page.items;
         let received = items.len() as i64;
 
@@ -399,9 +401,14 @@ impl KeyValueStoreKeysIterator {
         }
         self.next_exclusive_start_key = page.next_exclusive_start_key;
 
-        // Stop when the page is empty, the API returns no further cursor, or the caller's cap is
-        // reached — the same three termination conditions as the reference `listKeys()` loop.
+        // Stop when the page is empty; the model reports no more keys (`is_truncated == false`,
+        // the authoritative "more data?" signal); the API returns no next cursor to advance on
+        // (a robustness fallback in case the flag and cursor disagree — e.g. `isTruncated:true`
+        // with a null cursor — which also prevents re-fetching the same first page); or the
+        // caller's cap is reached. Leading with `is_truncated` avoids one wasted empty fetch when
+        // a final page still carries a cursor, matching the model semantics.
         if received == 0
+            || !is_truncated
             || self.next_exclusive_start_key.is_none()
             || matches!(self.remaining, Some(r) if r <= 0)
         {

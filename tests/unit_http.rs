@@ -706,6 +706,52 @@ async fn iterate_keys_walks_cursor_pages() {
     );
 }
 
+/// `iterate_keys` terminates on the model's `isTruncated == false` flag (the authoritative
+/// end-of-data signal), not merely on a null cursor. If the API sends the final page with
+/// `isTruncated:false` but still carries a non-null `nextExclusiveStartKey`, the walk must stop
+/// and not perform a wasted extra fetch. (The mock repeats its last scripted page, so a regression
+/// that followed the stale cursor would loop; the iteration guard below catches that.)
+#[tokio::test]
+async fn iterate_keys_stops_on_is_truncated_even_with_trailing_cursor() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k0"},{"key":"k1"}],"isTruncated":true,"nextExclusiveStartKey":"k1"}}"#.to_vec(),
+        ),
+        // Final page: no more data (isTruncated:false) yet a non-null trailing cursor.
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"items":[{"key":"k2"}],"isTruncated":false,"nextExclusiveStartKey":"k2"}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut it = client
+        .key_value_store("some-store")
+        .iterate_keys(Default::default());
+    let mut keys = Vec::new();
+    let mut guard = 0;
+    while let Some(key) = it.next().await.expect("ok") {
+        keys.push(key.key);
+        guard += 1;
+        assert!(
+            guard < 100,
+            "iterate_keys did not terminate on isTruncated=false"
+        );
+    }
+
+    assert_eq!(
+        keys,
+        vec!["k0", "k1", "k2"],
+        "all keys across pages must be yielded"
+    );
+    assert_eq!(
+        backend.call_count(),
+        2,
+        "isTruncated:false ends the walk on the second page; no wasted fetch despite the trailing cursor"
+    );
+}
+
 /// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size
 /// (reference parity): with `limit=2` the first request asks for `limit=2` and, once two keys
 /// are consumed, the walk stops without a second fetch even though the API advertised more keys.

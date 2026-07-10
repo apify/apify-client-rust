@@ -85,7 +85,7 @@ types is:
 - Shared: `ListOptions`, `StorageListOptions`
 - Client configuration: `RequestCompression`
 
-plus the common container `PaginationList`, the query helper `QueryParams`, `ListIterator`
+plus the common container `PaginationList`, `ListIterator`
 (the return type of every collection client's `iterate()` method), `StoreActorIterator`
 (a type alias for `ListIterator<ActorStoreListItem>`, the return type of
 `StoreCollectionClient::iterate`), and the two cursor-based iterators `KeyValueStoreKeysIterator`
