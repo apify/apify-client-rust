@@ -119,12 +119,18 @@ Builder options:
 | `min_delay_between_retries(d)` | `500ms` | Base backoff delay (doubled each retry, with jitter). |
 | `timeout(d)` | `360s` | Overall per-request timeout budget. |
 | `user_agent_suffix(s)` | none | Extra text appended to the `User-Agent` header. |
+| `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
 | `http_backend(b)` | reqwest | Replaceable HTTP transport (`HttpBackend`). |
 
+Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
+`request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is
+preferred; select gzip for environments or intermediaries that do not handle brotli.
+
 The `User-Agent` header has the form
-`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where
-`isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable (the platform variable the
-reference clients read; rendered lowercase to match them).
+`ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where the `{os}`
+token matches the reference client's `os.platform()` value (e.g. `darwin`, `win32`, `linux`) so it
+is identical across all Apify clients, and `isAtHome` reflects the `APIFY_IS_AT_HOME` environment
+variable (the platform variable the reference clients read; rendered lowercase to match them).
 
 ## Resource clients
 

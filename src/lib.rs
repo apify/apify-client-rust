@@ -59,6 +59,7 @@ mod version;
 pub use client::{ApifyClient, ApifyClientBuilder};
 pub use common::{ListOptions, PaginationList, QueryParams, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
+pub use http_client::RequestCompression;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
 // Re-export the most commonly used option/parameter types for ergonomic access.

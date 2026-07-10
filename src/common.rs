@@ -232,12 +232,11 @@ fn env_var_set(name: &str) -> bool {
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub fn build_user_agent(suffix: Option<&str>) -> String {
-    // `std::env::consts::OS` is the idiomatic Rust source for the platform token and already yields
-    // the short, lowercase identifier the JS reference switched to (`linux`, `macos`, `windows`,
-    // `android`, ...) rather than uname-style names (`Linux`, `Darwin`, `Windows_NT`). We keep the
-    // idiomatic Rust spelling (`macos`/`windows`) instead of hardcoding Node's `os.platform()`
-    // strings (`darwin`/`win32`), which would be an anti-idiomatic copy.
-    let os = std::env::consts::OS;
+    // The OS token must be byte-for-byte identical across all Apify clients, which means it must
+    // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
+    // own spellings (`macos`, `windows`, `solaris`), so map those to the Node `os.platform()`
+    // tokens (`darwin`, `win32`, `sunos`); the rest already agree.
+    let os = node_platform_token();
     // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
     // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
     // variable (`false` when the variable is missing), matching the JS reference, which reads
@@ -260,6 +259,30 @@ pub fn build_user_agent(suffix: Option<&str>) -> String {
         }
     }
     ua
+}
+
+/// Returns the OS token for the User-Agent header, matching the reference JS client's
+/// `os.platform()` value for the platform this code is running on.
+fn node_platform_token() -> &'static str {
+    map_os_to_node_platform(std::env::consts::OS)
+}
+
+/// Maps a Rust `std::env::consts::OS` value to the corresponding Node.js `os.platform()` token.
+///
+/// The User-Agent OS field must be identical across every Apify client, and the reference client
+/// derives it from Node's `os.platform()`. Rust and Node agree on most tokens (`linux`, `android`,
+/// `freebsd`, `openbsd`, `netbsd`, `aix`, ...), which pass through unchanged; the three that differ
+/// are translated to Node's spelling. Any unknown value passes through as-is (best effort).
+fn map_os_to_node_platform(os: &str) -> &str {
+    match os {
+        // Rust `macos` == Node `darwin`.
+        "macos" => "darwin",
+        // Rust `windows` == Node `win32`.
+        "windows" => "win32",
+        // Rust `solaris` == Node `sunos`.
+        "solaris" => "sunos",
+        other => other,
+    }
 }
 
 /// Encodes a resource id so it is safe to embed in a URL path. Apify uses the
@@ -345,7 +368,7 @@ pub fn sign_storage_content(
 
 #[cfg(test)]
 mod user_agent_tests {
-    use super::build_user_agent;
+    use super::{build_user_agent, map_os_to_node_platform, node_platform_token};
 
     // `build_user_agent` keys the flag solely on the `APIFY_IS_AT_HOME` env var (per the
     // requirements and the JS reference). A bare `isAtHome` env var must NOT affect it. The value
@@ -390,15 +413,15 @@ mod user_agent_tests {
         }
     }
 
-    // The OS token must be the short, lowercase platform identifier (aligned with the JS
-    // reference's `os.platform()`), never a uname-style capitalized name. We assert it equals the
-    // idiomatic `std::env::consts::OS`, is lowercase, and is not one of the uname-style spellings.
+    // The OS token in the emitted User-Agent must exactly equal the reference JS client's
+    // `os.platform()` value for this platform (so every Apify client reports the same token). We
+    // extract the token from the produced header and assert it equals `node_platform_token()`,
+    // is lowercase, and is never a Rust-native spelling (`macos`/`windows`) or a uname-style name.
     #[test]
-    fn user_agent_os_token_is_short_lowercase_platform() {
+    fn user_agent_os_token_matches_node_platform() {
         let ua = build_user_agent(None);
         // Extract the OS token exactly as it appears in the produced header — the first
-        // component inside the parentheses: `(<os>; Rust/...)` — and assert against that,
-        // not against the std constant, so the test exercises `build_user_agent`'s output.
+        // component inside the parentheses: `(<os>; Rust/...)`.
         let os = ua
             .split_once('(')
             .and_then(|(_, rest)| rest.split_once(';'))
@@ -408,20 +431,35 @@ mod user_agent_tests {
             !os.is_empty(),
             "user agent OS token must not be empty, got `{ua}`"
         );
-        assert!(
-            ua.contains(&format!("({os}; Rust/")),
-            "OS token must be the first parenthesised component, got `{ua}`"
+        assert_eq!(
+            os,
+            node_platform_token(),
+            "OS token must equal the Node `os.platform()` token, got `{ua}`"
         );
         assert_eq!(
             os,
             os.to_ascii_lowercase(),
             "OS token must be lowercase, got `{os}`"
         );
-        for uname_style in ["Linux", "Darwin", "Windows_NT"] {
+        // Must never emit the Rust-native spellings or uname-style names.
+        for forbidden in ["macos", "windows", "Linux", "Darwin", "Windows_NT"] {
             assert_ne!(
-                os, uname_style,
-                "OS token must not be a uname-style name like `{uname_style}`"
+                os, forbidden,
+                "OS token must be the Node `os.platform()` token, not `{forbidden}`"
             );
+        }
+    }
+
+    // The Rust->Node platform mapping must translate the three tokens that differ and leave every
+    // shared token untouched, so the emitted value is byte-for-byte identical to the reference.
+    #[test]
+    fn os_token_maps_rust_spellings_to_node_platform() {
+        assert_eq!(map_os_to_node_platform("macos"), "darwin");
+        assert_eq!(map_os_to_node_platform("windows"), "win32");
+        assert_eq!(map_os_to_node_platform("solaris"), "sunos");
+        // Tokens Rust and Node already share must pass through unchanged.
+        for shared in ["linux", "android", "freebsd", "openbsd", "netbsd", "aix"] {
+            assert_eq!(map_os_to_node_platform(shared), shared);
         }
     }
 

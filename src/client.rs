@@ -27,7 +27,9 @@ use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::clients::webhook_dispatch::WebhookDispatchClient;
 use crate::clients::webhook_dispatch_collection::WebhookDispatchCollectionClient;
 use crate::common::build_user_agent;
-use crate::http_client::{HttpBackend, HttpClient, ReqwestBackend, RetryConfig};
+use crate::http_client::{
+    HttpBackend, HttpClient, RequestCompression, ReqwestBackend, RetryConfig,
+};
 
 /// Default base URL of the Apify API (without the `/v2` suffix).
 const DEFAULT_BASE_URL: &str = "https://api.apify.com";
@@ -60,6 +62,7 @@ pub struct ApifyClientBuilder {
     timeout: Duration,
     user_agent_suffix: Option<String>,
     http_backend: Option<Arc<dyn HttpBackend>>,
+    request_compression: RequestCompression,
 }
 
 impl Default for ApifyClientBuilder {
@@ -73,6 +76,7 @@ impl Default for ApifyClientBuilder {
             timeout: DEFAULT_TIMEOUT,
             user_agent_suffix: None,
             http_backend: None,
+            request_compression: RequestCompression::default(),
         }
     }
 }
@@ -124,6 +128,18 @@ impl ApifyClientBuilder {
         self
     }
 
+    /// Selects the algorithm used to compress large request bodies (default
+    /// [`RequestCompression::Brotli`]).
+    ///
+    /// The client compresses request bodies of at least 1024 bytes; this chooses whether that
+    /// uses brotli (`Content-Encoding: br`) or gzip (`Content-Encoding: gzip`). Brotli is
+    /// preferred (matching the reference client); select [`RequestCompression::Gzip`] for
+    /// environments or intermediaries that do not handle brotli.
+    pub fn request_compression(mut self, compression: RequestCompression) -> Self {
+        self.request_compression = compression;
+        self
+    }
+
     /// Replaces the default [`reqwest`]-based HTTP backend with a custom implementation.
     ///
     /// This is the seam that makes the transport a replaceable component.
@@ -146,7 +162,13 @@ impl ApifyClientBuilder {
             timeout: self.timeout,
         };
 
-        let http = HttpClient::new(backend, self.token, user_agent, retry);
+        let http = HttpClient::new(
+            backend,
+            self.token,
+            user_agent,
+            retry,
+            self.request_compression,
+        );
 
         let trimmed = self.base_url.trim_end_matches('/');
         let base_url = format!("{trimmed}/v2");
