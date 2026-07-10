@@ -157,6 +157,6 @@ println!("build {} status {:?}", build.id, build.status);
 ## Actor versions and environment variables
 
 `ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.
-`ActorVersionCollectionClient`: `list(options)`, `create(version)`.
+`ActorVersionCollectionClient`: `list(options)`, `iterate(options)`, `create(version)`.
 `ActorEnvVarClient`: `get`, `update`, `delete`.
-`ActorEnvVarCollectionClient`: `list()`, `create(env_var)`.
+`ActorEnvVarCollectionClient`: `list()`, `iterate()`, `create(env_var)`.
