@@ -56,7 +56,7 @@ use apify_client::ApifyClient;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ApifyClient::new("my-api-token");
     let user = client.me().get().await?.expect("account");
-    println!("Logged in as {:?}", user.username);
+    println!("Logged in as {}", user.username.as_deref().unwrap_or("(none)"));
     Ok(())
 }
 ```

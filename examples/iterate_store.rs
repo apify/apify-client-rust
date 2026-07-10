@@ -19,7 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut count = 0;
     while let Some(actor) = iter.next().await? {
-        println!("{}: {:?}", actor.id, actor.title.or(actor.name));
+        let label = actor
+            .title
+            .or(actor.name)
+            .unwrap_or_else(|| "(untitled)".to_string());
+        println!("{}: {label}", actor.id);
         count += 1;
         if count >= 10 {
             break;

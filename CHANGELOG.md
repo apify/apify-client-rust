@@ -43,6 +43,17 @@ to [Semantic Versioning](https://semver.org/).
   endpoint is not implemented by the reference JS client, so it is out of scope; its removal
   corrects an earlier scope violation.
 
+### Documentation
+- Documented all `ActorStartOptions` fields in `docs/actors.md` (added the previously undocumented
+  `restart_on_error`, `force_permission_level`, and `webhooks`).
+- Listed `JSONL` in the `download_items` format summary in `docs/storages.md` for consistency with
+  the `DownloadItemsFormat` variant list.
+- Noted why the request-queue iterator is named `paginate_requests` (mirrors the reference JS
+  `paginateRequests`) rather than an `iterate_*` verb.
+- Made the `run_store_actor` example resilient to Store ranking shifts by falling back to the
+  well-known `apify/hello-world` identifier, and cleaned up `Option` output in the `get_account`
+  and `iterate_store` examples and the `docs/README.md` quick-start snippet.
+
 ## [0.5.0] - 2026-07-10
 
 ### Added
