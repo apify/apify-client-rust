@@ -9,6 +9,7 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Webhook>` | Lists webhooks. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Webhook>` | Lazily iterates all webhooks across pages (auto-pagination). |
 | `create(webhook)` | `&impl Serialize` | `Webhook` | Creates a webhook. |
 
 ## `WebhookClient`
@@ -23,7 +24,8 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 
 ## Webhook dispatches
 
-`WebhookDispatchCollectionClient`: `list(options)`.
+`WebhookDispatchCollectionClient`: `list(options)`, `iterate(options)` (lazy
+`ListIterator<WebhookDispatch>` auto-pagination).
 `WebhookDispatchClient`: `get()`.
 
 ## The `Webhook` model

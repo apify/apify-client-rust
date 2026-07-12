@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::clients::base::{create_resource, list_resource, ResourceContext};
+use crate::clients::pagination::{list_iterator, ListIterator};
 use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -32,6 +33,16 @@ impl ActorVersionCollectionClient {
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all versions matching `options`, fetching pages on demand.
+    ///
+    /// `options.limit` caps the *total* number of items yielded across all pages, unlike
+    /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
+    /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
+    /// [`ListIterator`] for details.
+    pub fn iterate(&self, options: ListOptions) -> ListIterator<ActorVersion> {
+        list_iterator!(self, options, list)
     }
 
     /// Creates a new Actor version.

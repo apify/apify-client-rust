@@ -98,6 +98,84 @@ async fn get_webhook_dispatch() {
     assert_eq!(fetched.id, dispatch.id);
 }
 
+/// Iteration: the webhook collection iterator yields a just-created webhook across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_webhooks() {
+    let client = require_client!();
+    let webhook = client
+        .webhooks()
+        .create(&webhook_definition())
+        .await
+        .expect("create webhook");
+
+    let cleanup_client = client.clone();
+    let id = webhook.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.webhook(&id).delete().await;
+    });
+
+    let target = webhook.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .webhooks()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |w| w.id == target,
+        )
+        .await,
+        "webhook iteration should yield the created webhook"
+    );
+}
+
+/// Iteration: the webhook-dispatch collection iterator yields a dispatch we just triggered.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_webhook_dispatches() {
+    let client = require_client!();
+    let webhook = client
+        .webhooks()
+        .create(&webhook_definition())
+        .await
+        .expect("create webhook");
+
+    let cleanup_client = client.clone();
+    let id = webhook.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.webhook(&id).delete().await;
+    });
+
+    // Trigger a real dispatch so there is a known dispatch id to find.
+    let dispatch = client
+        .webhook(&webhook.id)
+        .test()
+        .await
+        .expect("test webhook");
+    assert!(!dispatch.id.is_empty());
+
+    let target = dispatch.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .webhook_dispatches()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |d| d.id == target,
+        )
+        .await,
+        "webhook-dispatch iteration should yield the triggered dispatch"
+    );
+}
+
 /// Complex flow: create -> get -> update -> delete a webhook.
 #[tokio::test(flavor = "multi_thread")]
 async fn webhook_crud_flow() {

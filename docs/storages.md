@@ -33,6 +33,7 @@ let dataset_client = client.dataset(&dataset.id);
 ## Datasets — `client.datasets()` / `client.dataset(id)`
 
 `DatasetCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<Dataset>` auto-pagination),
 `get_or_create(name: Option<&str>)`.
 `StorageListOptions`: `offset`, `limit`, `desc`, `unnamed`, `ownership`.
 
@@ -60,9 +61,10 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `update(fields)` | `&impl Serialize` | `Dataset` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the dataset. |
 | `list_items::<T>(options)` | `DatasetListItemsOptions` | `PaginationList<T>` | Reads items (pagination via response headers). |
+| `iterate_items::<T>(options)` | `DatasetListItemsOptions` | `ListIterator<T>` | Lazily iterates all items across pages (auto-pagination). |
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
 | `get_statistics()` | — | `Option<Value>` | Field statistics. |
-| `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/CSV/XLSX/XML/RSS/HTML. |
+| `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
 
 `DatasetListItemsOptions` (all optional):
@@ -111,7 +113,9 @@ println!("exported {} bytes of CSV", csv.len());
 
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
-`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
+`KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<KeyValueStore>` auto-pagination),
+`get_or_create(name: Option<&str>)`.
 
 `KeyValueStoreClient`:
 
@@ -120,8 +124,8 @@ println!("exported {} bytes of CSV", csv.len());
 | `get()` | — | `Option<KeyValueStore>` | Store metadata. |
 | `update(fields)` | `&impl Serialize` | `KeyValueStore` | Updates metadata. |
 | `delete()` | — | `()` | Deletes the store. |
-| `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists keys (key-based pagination). |
-| `get_records(options)` | `GetRecordsOptions { collection, prefix, signature }` | `Vec<u8>` | Downloads all records as a ZIP archive (raw bytes). |
+| `list_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysPage` | Lists one page of keys (key-based pagination). |
+| `iterate_keys(options)` | `ListKeysOptions` | `KeyValueStoreKeysIterator` | Lazily iterates all keys across pages (cursor-based auto-pagination). |
 | `record_exists(key)` | `&str` | `bool` | Whether a record exists (HEAD). |
 | `get_record(key)` | `&str` | `Option<KeyValueStoreRecord>` | Reads a record's raw value. |
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
@@ -131,13 +135,50 @@ println!("exported {} bytes of CSV", csv.len());
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
 | `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
 
-`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`.
+`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`. Like
+`StoreListOptions.limit`, the meaning of `limit` depends on the method: for `list_keys` it is a
+single page's size (max keys returned by one call, capped at 1000 by the API); for `iterate_keys`
+it is a cap on the *total* number of keys yielded across all pages (unset iterates the whole
+store).
 `KeyValueStoreRecord` exposes `value: Vec<u8>`, `content_type`, plus `as_text()` and
 `json::<T>()` helpers.
 
+`iterate_keys(options)` returns a `KeyValueStoreKeysIterator` — the auto-paginating counterpart to
+`list_keys` (which returns a single page). Key-value stores use cursor-based pagination, so the
+iterator threads the `nextExclusiveStartKey` cursor through for you. Its `next()` is `async` and
+fallible, returning `ApifyClientResult<Option<KeyValueStoreKey>>` and yielding `Ok(None)` once the
+store is exhausted. `options.limit` caps the total number of keys yielded (unset iterates the whole
+store); each individual request is bounded to the endpoint's maximum page size (1000), so a larger
+cap still paginates. `prefix`/`collection`/`signature` filter every page:
+
+```rust,no_run
+# use apify_client::{ApifyClient, ListKeysOptions};
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+// Obtain a store id from a metadata model (e.g. get_or_create), then iterate its keys.
+let store = client.key_value_stores().get_or_create(None).await?;
+let mut keys = client.key_value_store(&store.id).iterate_keys(ListKeysOptions::default());
+while let Some(key) = keys.next().await? {
+    // `size` is optional; default to 0 bytes when the API does not report it.
+    println!("{} ({} bytes)", key.key, key.size.unwrap_or(0));
+}
+# Ok(())
+# }
+```
+
+`KeyValueStoreKey` (from `apify_client::models`) is the element type yielded by the iterator and
+listed in `KeyValueStoreKeysPage::items`. Its fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `String` | The record key (always present). |
+| `size` | `Option<i64>` | Size of the record value in bytes, if reported by the API. |
+| `extra` | `Extra` | Any other fields returned by the API. |
+
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
 
-`RequestQueueCollectionClient`: `list(options: StorageListOptions)`, `get_or_create(name: Option<&str>)`.
+`RequestQueueCollectionClient`: `list(options: StorageListOptions)`,
+`iterate(options: StorageListOptions)` (lazy `ListIterator<RequestQueue>` auto-pagination),
+`get_or_create(name: Option<&str>)`.
 
 `RequestQueueClient` (chainable `with_client_key(key)` for lock coordination):
 
@@ -162,6 +203,9 @@ println!("exported {} bytes of CSV", csv.len());
 
 `paginate_requests(page_limit)` returns a `RequestQueueRequestsIterator` — a lazy, page-fetching
 iterator (parity with the Store iterator in [Store, users and logs](misc.md#apify-store--clientstore)).
+It is named `paginate_requests` (rather than an `iterate_*` verb like the dataset/key-value-store
+iterators) to mirror the reference JavaScript client's `paginateRequests` method, keeping the
+public interface consistent across the two clients.
 Its `next()` is `async` and fallible, returning
 `ApifyClientResult<Option<RequestQueueRequest>>`, fetching the next page on demand and yielding
 `Ok(None)` once the queue is exhausted. `page_limit` bounds the requests fetched per page (`None`

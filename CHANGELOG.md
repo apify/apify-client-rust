@@ -4,6 +4,57 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-07-10
+
+### Added
+- Lazy async pagination iterators on every collection client, via a shared generic
+  `ListIterator<T>` (exported at the crate root). New `iterate()` methods on the actor, actor
+  version, environment-variable, build, run, dataset, key-value-store, request-queue, schedule,
+  task, webhook, and webhook-dispatch collection clients, plus `DatasetClient::iterate_items()`
+  for dataset items. Each yields one item at a time, fetching pages on demand — the idiomatic
+  counterpart to the reference client's async-iterable list results. The options' `limit` caps
+  the total number of items yielded (matching the reference client), and `ListIterator::with_chunk_size`
+  sets the per-request page size.
+- `KeyValueStoreClient::iterate_keys()`, returning a cursor-based `KeyValueStoreKeysIterator`
+  that auto-paginates a store's keys via `exclusiveStartKey`/`nextExclusiveStartKey` (the
+  auto-paginating counterpart to `list_keys`, matching the reference client's `listKeys()`
+  async-iterable).
+- Re-exported `StoreActorIterator` at the crate root.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-10T105921Z`. The spec delta (added `401`/`402`
+  error responses and relaxed field nullability/optionality) needs no code change: error
+  responses are handled generically and response models are forward-compatible.
+- `StoreCollectionClient::iterate` now uses the shared `ListIterator`, and `StoreActorIterator`
+  is a type alias for `ListIterator<ActorStoreListItem>`. As part of this, `store().iterate()`'s
+  `options.limit` changed from a per-page size (0.5.0) to a cap on the total number of items
+  yielded, for consistency with the reference client and the other `iterate()` methods; set the
+  per-page size with `ListIterator::with_chunk_size` instead. The `StoreActorIterator` type alias
+  itself is unchanged.
+- Corrected the `src/models.rs` module doc to describe forward-compatibility accurately.
+- Documented `ApifyClient::set_status_message` and `BuildClient::get_openapi_definition` in the
+  `docs/` pages and README.
+- Simplified the total-cap truncation in the offset and key-value-store iterators (removed a
+  dead `.max(0)` clamp on an already-positive remaining count).
+- Bumped crate version to `0.6.0`.
+
+### Removed
+- `KeyValueStoreClient::get_records` and `GetRecordsOptions`. The `GET /v2/key-value-stores/{storeId}/records`
+  endpoint is not implemented by the reference JS client, so it is out of scope; its removal
+  corrects an earlier scope violation.
+
+### Documentation
+- Documented all `ActorStartOptions` fields in `docs/actors.md` (added the previously undocumented
+  `restart_on_error`, `force_permission_level`, and `webhooks`), and linked the task `start`/`call`
+  rows in `docs/tasks.md` to that field table.
+- Listed `JSONL` in the `download_items` format summary in `docs/storages.md` for consistency with
+  the `DownloadItemsFormat` variant list.
+- Noted why the request-queue iterator is named `paginate_requests` (mirrors the reference JS
+  `paginateRequests`) rather than an `iterate_*` verb.
+- Made the `run_store_actor` example resilient to Store ranking shifts by falling back to the
+  well-known `apify/hello-world` identifier, and cleaned up `Option` output in the `get_account`
+  and `iterate_store` examples and the `docs/README.md` quick-start snippet.
+
 ## [0.5.0] - 2026-07-10
 
 ### Added

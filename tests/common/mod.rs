@@ -116,6 +116,75 @@ impl Drop for Cleanup {
     }
 }
 
+/// Upper bound on how many items an iteration test pulls while searching for a specific
+/// just-created resource. Iteration tests sort newest-first, so the target is normally in the
+/// first page; the cap only guards against an unbounded scan on a busy shared account.
+pub const ITER_SEARCH_CAP: usize = 1000;
+
+/// Drives a lazy [`ListIterator`](apify_client::ListIterator) looking for an item matching
+/// `pred`, pulling at most [`ITER_SEARCH_CAP`] items. Returns `true` as soon as a match is
+/// found. Used by the per-collection iteration tests to confirm a just-created resource is
+/// reachable through the iterator (exercising the transparent page-fetching path).
+pub async fn iter_contains<T, F>(mut iter: apify_client::ListIterator<T>, mut pred: F) -> bool
+where
+    F: FnMut(&T) -> bool,
+{
+    let mut pulled = 0usize;
+    while let Some(item) = iter.next().await.expect("iteration should not error") {
+        if pred(&item) {
+            return true;
+        }
+        pulled += 1;
+        if pulled >= ITER_SEARCH_CAP {
+            break;
+        }
+    }
+    false
+}
+
+/// Number of times [`iter_contains_eventually`] rebuilds the iterator and re-scans while waiting
+/// for a just-created resource to become visible in its collection LIST endpoint.
+pub const ITER_RETRY_ATTEMPTS: usize = 16;
+
+/// Delay between the attempts made by [`iter_contains_eventually`].
+pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Like [`iter_contains`], but tolerant of eventual consistency in collection LIST endpoints.
+///
+/// A resource created through a write endpoint is not always immediately reflected in its
+/// collection's LIST response — the write and the list index converge asynchronously on the
+/// server. A create-then-iterate test that scans the collection exactly once therefore races that
+/// convergence and flakes when the just-created entity has not yet propagated.
+///
+/// This helper rebuilds a fresh iterator via `make_iter` and re-scans it with [`iter_contains`] up
+/// to [`ITER_RETRY_ATTEMPTS`] times, sleeping [`ITER_RETRY_BACKOFF`] between attempts, returning
+/// `true` as soon as `pred` matches. When the entity is already visible it matches on the first
+/// attempt and returns immediately with no sleeping — so it is a no-op in the common
+/// already-consistent case and only pays the backoff on the rare lagging run.
+///
+/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = ~15s of retrying before giving up.
+/// This is deliberately larger than a "couple of seconds": the only Apify propagation lag actually
+/// measured in this suite is the dataset-items count settling at ~10s, and the collection LIST
+/// index convergence time is not independently measured, so a ~2s budget could let the flake recur
+/// at a lower (harder-to-diagnose) frequency. ~15s gives real headroom above the ~10s observation
+/// while still failing fast enough on a genuinely-missing entity (a true bug). The cost lands only
+/// on lagging or genuinely-failing runs; a consistent account never sleeps.
+pub async fn iter_contains_eventually<T, F, Mk>(mut make_iter: Mk, mut pred: F) -> bool
+where
+    Mk: FnMut() -> apify_client::ListIterator<T>,
+    F: FnMut(&T) -> bool,
+{
+    for attempt in 0..ITER_RETRY_ATTEMPTS {
+        if iter_contains(make_iter(), &mut pred).await {
+            return true;
+        }
+        if attempt + 1 < ITER_RETRY_ATTEMPTS {
+            tokio::time::sleep(ITER_RETRY_BACKOFF).await;
+        }
+    }
+    false
+}
+
 /// Generates a unique, collision-resistant resource name for test isolation.
 ///
 /// The name embeds the test-specific `prefix`, a random UUID fragment, and is kept short

@@ -66,14 +66,15 @@ pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 pub use clients::actor::{ActorBuildOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
-pub use clients::key_value_store::{GetRecordOptions, GetRecordsOptions, ListKeysOptions};
+pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
 pub use clients::log::LogOptions;
-pub use clients::request_queue::ListRequestsOptions;
+pub use clients::pagination::ListIterator;
+pub use clients::request_queue::{ListRequestsOptions, RequestQueueRequestsIterator};
 pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
-pub use clients::store_collection::StoreListOptions;
+pub use clients::store_collection::{StoreActorIterator, StoreListOptions};
 
 // Compile-test the code snippets in the README and the external `docs/` pages so every
 // in-documentation code snippet stays valid and runnable. Pulling each Markdown file in as

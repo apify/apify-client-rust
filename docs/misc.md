@@ -10,9 +10,12 @@
 | `iterate(options)` | `StoreListOptions` | `StoreActorIterator` | Lazy, page-fetching iterator. |
 
 `StoreListOptions`: `offset`, `limit`, `search`, `sort_by`, `category`, `username`,
-`pricing_model`.
+`pricing_model`. `limit` means a single page's size for `list`, but a cap on the *total* number of
+items yielded for `iterate` (see below).
 
-`StoreActorIterator::next()` is `async` and fallible — it returns
+`StoreActorIterator` is a type alias for `ListIterator<ActorStoreListItem>` (the shared iterator
+returned by every collection's `iterate`), re-exported at the crate root alongside `ListIterator`
+itself. Its `next()` is `async` and fallible — it returns
 `ApifyClientResult<Option<ActorStoreListItem>>` (i.e. `Result<Option<ActorStoreListItem>, ApifyClientError>`),
 fetching the next page on demand and yielding `Ok(None)` once the listing is exhausted. Drive it
 with `.await?`:
@@ -24,6 +27,23 @@ let mut iter = client.store().iterate(StoreListOptions::default());
 while let Some(actor) = iter.next().await? {
     // `title` is the human-readable name; fall back to the technical `name`.
     println!("{}: {:?}", actor.id, actor.title.or(actor.name));
+}
+# Ok(())
+# }
+```
+
+`options.limit` caps the total number of Actors the iterator yields (unset iterates the whole
+Store). The per-request page size is separate: call `.with_chunk_size(n)` on the returned
+`StoreActorIterator` to fetch `n` Actors per API call (when unset, the API's default page size is
+used). If you set a large `limit` cap, also set `with_chunk_size` so the first request does not ask
+for the entire cap at once — for example, `client.store().iterate(opts).with_chunk_size(50)`:
+
+```rust,no_run
+# use apify_client::{ApifyClient, StoreListOptions};
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let mut iter = client.store().iterate(StoreListOptions::default()).with_chunk_size(50);
+while let Some(actor) = iter.next().await? {
+    println!("{}", actor.id);
 }
 # Ok(())
 # }

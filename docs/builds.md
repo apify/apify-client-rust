@@ -8,6 +8,7 @@ collections are available via `actor.builds()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Build>` | Lists builds. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Build>` | Lazily iterates all builds across pages (auto-pagination). |
 
 ## `BuildClient`
 
@@ -17,6 +18,7 @@ collections are available via `actor.builds()`.
 | `abort()` | — | `Build` | Aborts the build. |
 | `delete()` | — | `()` | Deletes the build. |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `Build` | Polls until the build is terminal. |
+| `get_openapi_definition()` | — | `Option<serde_json::Value>` | Fetches the OpenAPI definition generated for the build (raw JSON, endpoint `.../openapi.json`). |
 | `log()` | — | `LogClient` | Access the build's log. |
 
 The returned `Build` model's fields (`id`, `status`, `build_number`, …) are documented in

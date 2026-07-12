@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::clients::base::{delete_resource, get_resource, update_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{parse_data_envelope, sign_storage_content, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
@@ -209,10 +210,13 @@ impl DatasetClient {
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
         let count = items.len() as i64;
+        // Fall back to `0` ("total unknown"), never `count`: a total equal to the items already
+        // returned would look complete and stop iteration after page one, dropping later items.
+        // `0` routes iteration to the short-page/empty-page backstop, which walks every page.
         let total = response
             .header("x-apify-pagination-total")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(count);
+            .unwrap_or(0);
         let offset = response
             .header("x-apify-pagination-offset")
             .and_then(|v| v.parse().ok())
@@ -230,6 +234,49 @@ impl DatasetClient {
             desc: options.desc.unwrap_or(false),
             items,
         })
+    }
+
+    /// Lazily iterates over all items in the dataset, fetching pages on demand.
+    ///
+    /// The idiomatic-Rust counterpart of the reference client's async-iterable
+    /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
+    /// transparently paging. The caller's `options.limit` caps the total number of items yielded
+    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
+    ///
+    /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) are forwarded on every page
+    /// request. Paging advances the offset by the number of items each page returns, exactly
+    /// like the reference JavaScript client (`currentOffset += items.length`). Because the offset
+    /// advances by the post-filter count rather than the raw window size, filtered iteration is
+    /// not exact — this matches the reference client, and it can distort results two ways:
+    ///
+    /// - Duplicates: when a page's filtered count is smaller than its raw window, the next page
+    ///   starts at an offset that overlaps the previous window, so some items are yielded more
+    ///   than once.
+    /// - Dropped items: when a filter removes *every* item in a raw window, the page comes back
+    ///   with no items; iteration treats that empty page as the end of the dataset (the empty-page
+    ///   backstop in [`ListIterator`]) and stops, even though unfiltered items still exist at
+    ///   higher offsets.
+    ///
+    /// If you need every filtered item exactly once, apply the filter client-side over an
+    /// unfiltered iteration instead.
+    pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
+        &self,
+        options: DatasetListItemsOptions,
+    ) -> ListIterator<T> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
+        ListIterator::new(
+            start,
+            total_limit,
+            Box::new(move |offset, page_limit| {
+                let client = client.clone();
+                let mut options = options.clone();
+                options.offset = Some(offset);
+                options.limit = page_limit;
+                Box::pin(async move { client.list_items::<T>(options).await })
+            }),
+        )
     }
 
     /// Downloads dataset items serialized in the given `format`, returning the raw bytes.

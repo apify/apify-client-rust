@@ -44,6 +44,84 @@ async fn get_dataset() {
     assert_eq!(fetched.id, dataset.id);
 }
 
+/// Iteration: the dataset collection iterator yields a just-created dataset across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_datasets() {
+    let client = require_client!();
+    let name = common::unique_name("dataset-iter");
+    let dataset = client
+        .datasets()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create dataset");
+
+    let cleanup_client = client.clone();
+    let id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&id).delete().await;
+    });
+
+    // Newest-first with a small page size so the iterator must fetch at least one page.
+    let target = dataset.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .datasets()
+                    .iterate(apify_client::StorageListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |d| d.id == target,
+        )
+        .await,
+        "dataset iteration should yield the created dataset"
+    );
+}
+
+/// Iteration: dataset item iterator yields every pushed item exactly once across multiple pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_dataset_items() {
+    let client = require_client!();
+    let name = common::unique_name("dataset-items-iter");
+    let dataset = client
+        .datasets()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create dataset");
+
+    let cleanup_client = client.clone();
+    let id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&id).delete().await;
+    });
+
+    let dataset_client = client.dataset(&dataset.id);
+    // Push 5 items so a page size of 2 forces three pages.
+    dataset_client
+        .push_items(&json!([{ "n": 0 }, { "n": 1 }, { "n": 2 }, { "n": 3 }, { "n": 4 }]))
+        .await
+        .expect("push items");
+
+    // A page size of 2 forces three pages; `limit` is a total-item cap (left unset here) rather
+    // than the page size, so every pushed item must still be yielded across pages.
+    let mut iter = dataset_client
+        .iterate_items::<serde_json::Value>(apify_client::DatasetListItemsOptions::default())
+        .with_chunk_size(2);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(item) = iter.next().await.expect("iterate items") {
+        let n = item["n"].as_i64().expect("item has n");
+        assert!(seen.insert(n), "item {n} yielded more than once");
+    }
+    assert_eq!(
+        seen,
+        (0..5).collect::<std::collections::HashSet<_>>(),
+        "item iteration must yield every pushed item exactly once across pages"
+    );
+}
+
 /// Complex flow: create -> get -> push items -> read items -> update -> delete.
 #[tokio::test(flavor = "multi_thread")]
 async fn dataset_crud_flow() {

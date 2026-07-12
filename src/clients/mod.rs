@@ -19,6 +19,7 @@ pub mod dataset_collection;
 pub mod key_value_store;
 pub mod key_value_store_collection;
 pub mod log;
+pub mod pagination;
 pub mod request_queue;
 pub mod request_queue_collection;
 pub mod run;

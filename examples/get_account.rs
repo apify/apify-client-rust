@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let user = client.me().get().await?.expect("current user");
     println!("Account id: {}", user.id);
-    println!("Username: {:?}", user.username);
+    println!("Username: {}", user.username.as_deref().unwrap_or("(none)"));
 
     // Monthly usage for the current billing cycle (`None` == current cycle).
     let usage = client.me().monthly_usage().await?;

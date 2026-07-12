@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::clients::base::{create_resource, list_resource, ResourceContext};
+use crate::clients::pagination::{list_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -51,6 +52,19 @@ impl ActorCollectionClient {
             .add_bool("my", options.my)
             .add_str("sortBy", options.sort_by);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all Actors matching `options`, fetching pages on demand.
+    ///
+    /// Returns a [`ListIterator`] whose `next()` yields one Actor at a time, transparently
+    /// fetching subsequent pages until the listing is exhausted.
+    ///
+    /// `options.limit` caps the *total* number of items yielded across all pages, unlike
+    /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
+    /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
+    /// [`ListIterator`] for details.
+    pub fn iterate(&self, options: ActorListOptions) -> ListIterator<Actor> {
+        list_iterator!(self, options, list)
     }
 
     /// Creates a new Actor with the given definition.

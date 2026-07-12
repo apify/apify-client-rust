@@ -7,6 +7,7 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ListOptions` | `PaginationList<Task>` | Lists tasks. |
+| `iterate(options)` | `ListOptions` | `ListIterator<Task>` | Lazily iterates all tasks across pages (auto-pagination). |
 | `create(task)` | `&impl Serialize` | `Task` | Creates a task. |
 
 ## `TaskClient`
@@ -16,8 +17,8 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `get()` | — | `Option<Task>` | Fetches the task. |
 | `update(fields)` | `&impl Serialize` | `Task` | Updates the task. |
 | `delete()` | — | `()` | Deletes the task. |
-| `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. |
+| `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. See [`ActorStartOptions`](actors.md#actorstartoptions) for the full field list. |
+| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. Same [`ActorStartOptions`](actors.md#actorstartoptions) as `start`. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Option<Value>` / `Value` | The task's saved input. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
 | `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |

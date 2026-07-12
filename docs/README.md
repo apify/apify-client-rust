@@ -35,7 +35,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.5"
+apify-client = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -56,7 +56,7 @@ use apify_client::ApifyClient;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ApifyClient::new("my-api-token");
     let user = client.me().get().await?.expect("account");
-    println!("Logged in as {:?}", user.username);
+    println!("Logged in as {}", user.username.as_deref().unwrap_or("(none)"));
     Ok(())
 }
 ```
@@ -78,15 +78,19 @@ types is:
 - Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
-- Key-value stores: `ListKeysOptions`, `GetRecordsOptions`, `GetRecordOptions`
+- Key-value stores: `ListKeysOptions`, `GetRecordOptions`
 - Request queues: `ListRequestsOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
 - Client configuration: `RequestCompression`
 
-plus the common container `PaginationList` and the query helper `QueryParams`. Import any of them
-directly from `apify_client`:
+plus the common container `PaginationList`, `ListIterator`
+(the return type of every collection client's `iterate()` method), `StoreActorIterator`
+(a type alias for `ListIterator<ActorStoreListItem>`, the return type of
+`StoreCollectionClient::iterate`), and the two cursor-based iterators `KeyValueStoreKeysIterator`
+(from `KeyValueStoreClient::iterate_keys`) and `RequestQueueRequestsIterator` (from
+`RequestQueueClient::paginate_requests`). Import any of them directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};
@@ -167,6 +171,32 @@ reach those values the client maps Rust's native `std::env::consts::OS` spelling
 (`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
 (`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
 
+### Convenience methods
+
+Beyond the resource accessors, `ApifyClient` exposes one convenience method:
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `set_status_message(message, is_terminal)` | `message: &str`, `is_terminal: bool` | `ActorRun` | Sets the status message of the *current* Actor run. |
+
+`set_status_message` updates the run identified by the `ACTOR_RUN_ID` environment variable, so it
+only works when called from inside an Actor run. `message` is the human-readable status text; when
+`is_terminal` is `true` the message becomes final and is not overwritten by later updates. It
+returns the updated [`ActorRun`](runs.md), or
+[`ApifyClientError::InvalidArgument`](#error-handling) if `ACTOR_RUN_ID` is not set.
+
+```rust,no_run
+use apify_client::ApifyClient;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = ApifyClient::new("my-api-token");
+    // Called from inside an Actor run (reads ACTOR_RUN_ID from the environment).
+    client.set_status_message("Processing input…", false).await?;
+    Ok(())
+}
+```
+
 ## Resource clients
 
 Accessor methods on `ApifyClient` return resource clients — the collection accessor (plural)
@@ -179,6 +209,36 @@ lists/creates, and the single-resource accessor (singular) operates on one resou
 
 Each resource has a dedicated page, linked under **Resource clients** in the [Contents](#contents)
 above (Actors, runs, builds, tasks, storages, schedules, webhooks, and store/users/logs).
+
+### Iterating collections
+
+A collection's `list(...)` method returns a single `PaginationList` page. To walk every item
+across all pages without tracking offsets yourself, call `iterate(...)` instead: it returns a
+lazy `ListIterator` (re-exported at the crate root) that fetches the next page from the API on
+demand as you consume items. Every collection client provides it (`actors`, `builds`, `runs`,
+`tasks`, `datasets`, `key_value_stores`, `request_queues`, `schedules`, `webhooks`,
+`webhook_dispatches`, `store`, and the nested Actor `versions`/`env_vars`). `DatasetClient`
+exposes `iterate_items()` for dataset items, and `KeyValueStoreClient` exposes `iterate_keys()`
+for store keys (cursor-based). The options' `limit` caps the total number of items yielded (unset
+iterates everything); to control the per-request page size, call `.with_chunk_size(n)` on the
+returned iterator (offset-paginated iterators only).
+
+```rust,no_run
+use apify_client::{ApifyClient, ActorListOptions};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = ApifyClient::new("my-api-token");
+    let mut actors = client.actors().iterate(ActorListOptions {
+        my: Some(true),
+        ..Default::default()
+    });
+    while let Some(actor) = actors.next().await? {
+        println!("{}", actor.id);
+    }
+    Ok(())
+}
+```
 
 ## Error handling
 

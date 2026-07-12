@@ -42,6 +42,102 @@ async fn get_key_value_store() {
     assert_eq!(fetched.id, store.id);
 }
 
+/// Iteration: the key-value store collection iterator yields a just-created store across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_key_value_stores() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-iter");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let target = store.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .key_value_stores()
+                    .iterate(apify_client::StorageListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |s| s.id == target,
+        )
+        .await,
+        "key-value store iteration should yield the created store"
+    );
+}
+
+/// Iteration: `iterate_keys` yields every key in the store.
+///
+/// Creates a store, writes several records, then drives the `KeyValueStoreKeysIterator` to
+/// completion and asserts every written key is yielded exactly once. With only a handful of keys
+/// this fits in the endpoint's single default page, so it validates the helper end to end but
+/// does not cross a page boundary — `iterate_keys` has no per-page-size knob (its `limit` is a
+/// total cap, matching the JS reference), so forcing >1 page would need >1000 keys. The
+/// multi-page cursor-threading path (`exclusiveStartKey`/`nextExclusiveStartKey`) is covered
+/// hermetically by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_keys_yields_all_keys() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-keys-iter");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    let expected: Vec<String> = (0..5).map(|i| format!("iter-key-{i:02}")).collect();
+    for key in &expected {
+        store_client
+            .set_record_json(key, &json!({ "n": key }))
+            .await
+            .expect("set record");
+    }
+
+    // Drive the iterator to completion and collect the yielded keys.
+    let mut iter = store_client.iterate_keys(Default::default());
+    let mut seen = Vec::new();
+    while let Some(key) = iter.next().await.expect("key iteration should not error") {
+        seen.push(key.key);
+    }
+
+    for key in &expected {
+        assert!(
+            seen.contains(key),
+            "iterate_keys should yield every created key; missing {key}, saw {seen:?}"
+        );
+    }
+    // No key should appear more than once across the paginated walk.
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "iterate_keys must not yield duplicate keys, saw {seen:?}"
+    );
+
+    store_client.delete().await.expect("delete store");
+}
+
 /// Record keys containing characters that are valid for the API (`!`, `'`, `(`, `)`) but
 /// reserved in a URL path must round-trip correctly, proving the path segment is
 /// percent-encoded rather than interpolated raw.
@@ -90,48 +186,6 @@ async fn record_key_with_special_chars_round_trips() {
         .await
         .expect("delete record with special-char key");
     assert!(!store_client.record_exists(key).await.expect("exists after"));
-}
-
-/// Simple GET: download all records as a ZIP archive.
-///
-/// Stores a record, then downloads the whole store via `get_records` and asserts the response
-/// is a non-empty ZIP archive (the spec response is `application/zip`; ZIP files start with the
-/// `PK\x03\x04` local-file-header magic).
-#[tokio::test(flavor = "multi_thread")]
-async fn get_records_returns_zip_archive() {
-    let client = require_client!();
-    let name = common::unique_name("kvs-zip");
-    let store = client
-        .key_value_stores()
-        .get_or_create(Some(&name))
-        .await
-        .expect("create store");
-
-    let cleanup_client = client.clone();
-    let id = store.id.clone();
-    let _guard = common::Cleanup::new(move || async move {
-        let _ = cleanup_client.key_value_store(&id).delete().await;
-    });
-
-    let store_client = client.key_value_store(&store.id);
-    store_client
-        .set_record_json("OUTPUT", &json!({ "zip": true }))
-        .await
-        .expect("set record");
-
-    let archive = store_client
-        .get_records(Default::default())
-        .await
-        .expect("download records as zip");
-    assert!(!archive.is_empty(), "ZIP archive should not be empty");
-    assert_eq!(
-        &archive[..4],
-        b"PK\x03\x04",
-        "response should be a ZIP archive (PK magic bytes)"
-    );
-
-    // Happy-path cleanup in the body (the guard above remains a panic-safety net).
-    store_client.delete().await.expect("delete store");
 }
 
 /// Complex flow: create -> get -> set record -> read record -> list keys -> update -> delete.

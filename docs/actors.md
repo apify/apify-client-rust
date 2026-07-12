@@ -8,6 +8,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options)` | `ActorListOptions { offset, limit, desc, my, sort_by }` | `PaginationList<Actor>` | Lists your Actors. |
+| `iterate(options)` | `ActorListOptions` | `ListIterator<Actor>` | Lazily iterates all Actors across pages (auto-pagination). |
 | `create(actor)` | `&impl Serialize` | `Actor` | Creates an Actor from a definition. |
 
 ## `ActorClient`
@@ -32,10 +33,22 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 
 ### `ActorStartOptions`
 
-`build`, `memory_mbytes`, `timeout_secs`, `wait_for_finish`, `max_items`,
-`max_total_charge_usd`, `content_type` — all optional. Used by both `start` and `call`
-(for `call`, `wait_for_finish` is server-side; the `wait_secs` argument controls
-client-side polling).
+All fields are optional. Used by both `start` and `call` here, and by the identical `start` /
+`call` methods on [tasks](tasks.md) (for `call`, `wait_for_finish` is server-side; the
+`wait_secs` argument controls client-side polling).
+
+| Field | Type | Description |
+|---|---|---|
+| `build` | `Option<String>` | Tag or number of the build to run (e.g. `latest`, `0.1.2`). |
+| `memory_mbytes` | `Option<i64>` | Memory in megabytes allocated for the run. |
+| `timeout_secs` | `Option<i64>` | Timeout for the run in seconds (`0` means no timeout). |
+| `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
+| `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
+| `max_total_charge_usd` | `Option<f64>` | Maximum total charge in USD (pay-per-event Actors). |
+| `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json`. |
+| `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
+| `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
+| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
 
 The `wait_secs` argument of `call` (and of `wait_for_finish` on runs/builds) controls the
 client-side polling budget:
@@ -156,6 +169,6 @@ println!("build {} status {:?}", build.id, build.status);
 ## Actor versions and environment variables
 
 `ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.
-`ActorVersionCollectionClient`: `list(options)`, `create(version)`.
+`ActorVersionCollectionClient`: `list(options)`, `iterate(options)`, `create(version)`.
 `ActorEnvVarClient`: `get`, `update`, `delete`.
-`ActorEnvVarCollectionClient`: `list()`, `create(env_var)`.
+`ActorEnvVarCollectionClient`: `list()`, `iterate()`, `create(env_var)`.

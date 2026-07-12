@@ -83,6 +83,41 @@ async fn run_actor_and_read_outputs() {
     );
 }
 
+/// Iteration: the run collection iterator yields a run we just started across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_runs() {
+    let client = require_client!();
+    // Ensure at least one run exists on the account by calling the public hello-world Actor.
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+
+    // Newest-first with a small page size so the just-finished run is near the front. `limit`
+    // is a total-item cap, so it is left unset here; page size is set via `with_chunk_size`.
+    let target = run.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .runs()
+                    .iterate(
+                        apify_client::ListOptions {
+                            desc: Some(true),
+                            ..Default::default()
+                        },
+                        Default::default(),
+                    )
+                    .with_chunk_size(5)
+            },
+            move |r| r.id == target,
+        )
+        .await,
+        "run iteration should yield the started run"
+    );
+}
+
 /// Convenience: access the Actor's last run.
 #[tokio::test(flavor = "multi_thread")]
 async fn last_run_access() {

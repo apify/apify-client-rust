@@ -1,6 +1,7 @@
 //! Client for an Actor-run collection (`/v2/actor-runs`, `/v2/actors/{id}/runs`, etc.).
 
 use crate::clients::base::{list_resource, ResourceContext};
+use crate::clients::pagination::ListIterator;
 use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -76,5 +77,32 @@ impl RunCollectionClient {
             .add_str("startedAfter", filter.started_after)
             .add_str("startedBefore", filter.started_before);
         list_resource(&self.ctx, None, &params).await
+    }
+
+    /// Lazily iterates over all runs matching `options`/`filter`, fetching pages on demand.
+    ///
+    /// The idiomatic-Rust counterpart of the reference client's async-iterable run listing;
+    /// yields one [`ActorRun`] at a time across all pages.
+    ///
+    /// `options.limit` caps the *total* number of runs yielded across all pages, unlike
+    /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
+    /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
+    /// [`ListIterator`] for details.
+    pub fn iterate(&self, options: ListOptions, filter: RunListOptions) -> ListIterator<ActorRun> {
+        let client = self.clone();
+        let start = options.offset.unwrap_or(0);
+        let total_limit = options.limit;
+        ListIterator::new(
+            start,
+            total_limit,
+            Box::new(move |offset, page_limit| {
+                let client = client.clone();
+                let mut options = options.clone();
+                let filter = filter.clone();
+                options.offset = Some(offset);
+                options.limit = page_limit;
+                Box::pin(async move { client.list(options, filter).await })
+            }),
+        )
     }
 }

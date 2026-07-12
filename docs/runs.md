@@ -8,6 +8,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `list(options, filter)` | `ListOptions`, `RunListOptions { status, started_after, started_before }` | `PaginationList<ActorRun>` | Lists runs, optionally filtered by status and start time. |
+| `iterate(options, filter)` | `ListOptions`, `RunListOptions` | `ListIterator<ActorRun>` | Lazily iterates all runs across pages (auto-pagination). |
 
 ## `RunClient`
 

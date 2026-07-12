@@ -52,6 +52,42 @@ async fn get_schedule() {
     assert_eq!(fetched.id, schedule.id);
 }
 
+/// Iteration: the schedule collection iterator yields a just-created schedule across pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_schedules() {
+    let client = require_client!();
+    let name = common::unique_name("schedule-iter");
+    let schedule = client
+        .schedules()
+        .create(&schedule_definition(&name))
+        .await
+        .expect("create schedule");
+
+    let cleanup_client = client.clone();
+    let id = schedule.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.schedule(&id).delete().await;
+    });
+
+    let target = schedule.id.clone();
+    assert!(
+        common::iter_contains_eventually(
+            || {
+                client
+                    .schedules()
+                    .iterate(apify_client::ListOptions {
+                        desc: Some(true),
+                        ..Default::default()
+                    })
+                    .with_chunk_size(5)
+            },
+            move |s| s.id == target,
+        )
+        .await,
+        "schedule iteration should yield the created schedule"
+    );
+}
+
 /// Complex flow: create -> get -> update -> delete a schedule.
 #[tokio::test(flavor = "multi_thread")]
 async fn schedule_crud_flow() {
