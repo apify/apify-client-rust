@@ -4,6 +4,15 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-07-14
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-13T092445Z`. The spec delta (added `402`/`408`
+  error responses on the resurrect and run-sync-get-dataset-items endpoints, and relaxed the
+  `required` constraints on the run/build/key-value-store/webhook stats sub-objects) needs no
+  code change: error responses are handled generically and response models are forward-compatible.
+- Bumped crate version to `0.6.1`.
+
 ## [0.6.0] - 2026-07-10
 
 ### Added
