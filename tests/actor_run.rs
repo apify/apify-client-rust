@@ -137,3 +137,247 @@ async fn last_run_access() {
         .expect("get last run");
     assert!(last.is_some(), "there should be a last succeeded run");
 }
+
+/// Simple GET: run-scoped storage metadata accessors (`.dataset().get()`/`.get_statistics()`,
+/// `.key_value_store().get()`/`.list_keys()`, `.request_queue().get()`/`.list_head()`) all
+/// succeed against a finished run's default storages.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_scoped_storage_metadata_reads() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+
+    let run_client = client.run(&run.id);
+
+    let dataset = run_client.dataset();
+    assert!(
+        dataset.get().await.expect("get run dataset").is_some(),
+        "a run's default dataset should exist"
+    );
+    assert!(
+        dataset
+            .get_statistics()
+            .await
+            .expect("get run dataset statistics")
+            .is_some(),
+        "a run's default dataset should report statistics"
+    );
+
+    let kvs = run_client.key_value_store();
+    assert!(
+        kvs.get().await.expect("get run key-value store").is_some(),
+        "a run's default key-value store should exist"
+    );
+    let keys = kvs
+        .list_keys(Default::default())
+        .await
+        .expect("list run key-value store keys");
+    assert!(
+        keys.items.iter().any(|k| k.key == "OUTPUT"),
+        "hello-world's default store should contain an OUTPUT key"
+    );
+
+    let rq = run_client.request_queue();
+    assert!(
+        rq.get().await.expect("get run request queue").is_some(),
+        "a run's default request queue should exist"
+    );
+    let head = rq
+        .list_head(Some(10))
+        .await
+        .expect("list run request queue head");
+    assert!(head.items.len() as i64 <= 10);
+}
+
+/// Builds and returns a fresh private Actor whose container sleeps for ~60s before exiting.
+///
+/// Several lifecycle tests (`abort`, `reboot`, `metamorph`) need a run that is reliably still
+/// `RUNNING` a few seconds after it starts — `apify/hello-world` finishes in a couple of
+/// seconds, which is too fast to hit mid-run reliably. `name_prefix` should be unique per test so
+/// concurrent runs of this suite (or of the same suite in another language) don't collide.
+async fn create_slow_actor(client: &apify_client::ApifyClient, name_prefix: &str) -> ActorFixture {
+    let name = common::unique_name(name_prefix).replace('-', "");
+    let name = format!("a{}", &name[..name.len().min(20)]);
+
+    let definition = serde_json::json!({
+        "name": name,
+        "isPublic": false,
+        "versions": [{
+            "versionNumber": "0.0",
+            "sourceType": "SOURCE_FILES",
+            "buildTag": "latest",
+            "sourceFiles": [
+                {
+                    "name": "Dockerfile",
+                    "format": "TEXT",
+                    "content": "FROM apify/actor-node:20\nCOPY . ./\nCMD node main.js"
+                },
+                {
+                    "name": "main.js",
+                    "format": "TEXT",
+                    "content": "console.log('sleeping'); setTimeout(() => console.log('woke'), 60000);"
+                }
+            ]
+        }]
+    });
+
+    let actor = client
+        .actors()
+        .create(&definition)
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
+    let actor_client = client.actor(&actor.id);
+    let build = actor_client
+        .build("0.0", Default::default())
+        .await
+        .expect("start build");
+    client
+        .build(&build.id)
+        .wait_for_finish(Some(120))
+        .await
+        .expect("wait for build");
+
+    ActorFixture {
+        id: actor.id,
+        _cleanup: guard,
+    }
+}
+
+/// A slow Actor created by [`create_slow_actor`], kept alive with its cleanup guard.
+struct ActorFixture {
+    id: String,
+    _cleanup: common::Cleanup,
+}
+
+/// Lifecycle: abort a running Actor run.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_abort() {
+    let client = require_client!();
+    let actor = create_slow_actor(&client, "run-abort").await;
+    let actor_client = client.actor(&actor.id);
+
+    let run = actor_client
+        .start(None::<&serde_json::Value>, Default::default())
+        .await
+        .expect("start slow run");
+    let run_client = client.run(&run.id);
+
+    let aborted = run_client
+        .abort(Some(false))
+        .await
+        .expect("abort running Actor");
+    assert!(
+        matches!(
+            aborted.status.as_deref(),
+            Some("ABORTING") | Some("ABORTED")
+        ),
+        "expected ABORTING or ABORTED after abort, got {:?}",
+        aborted.status
+    );
+
+    let finished = run_client
+        .wait_for_finish(Some(60))
+        .await
+        .expect("wait for aborted run to settle");
+    assert_eq!(finished.status.as_deref(), Some("ABORTED"));
+}
+
+/// Lifecycle: reboot a running Actor run (restarts its container, keeping the run ID and
+/// storages). The run is aborted afterward to avoid burning extra compute.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_reboot() {
+    let client = require_client!();
+    let actor = create_slow_actor(&client, "run-reboot").await;
+    let actor_client = client.actor(&actor.id);
+
+    let run = actor_client
+        .start(None::<&serde_json::Value>, Default::default())
+        .await
+        .expect("start slow run");
+    let run_client = client.run(&run.id);
+
+    let rebooted = run_client.reboot().await.expect("reboot running Actor");
+    assert_eq!(rebooted.id, run.id, "reboot must keep the same run ID");
+    assert!(
+        !rebooted.is_terminal(),
+        "a freshly-rebooted run should still be active, got status {:?}",
+        rebooted.status
+    );
+
+    let _ = run_client.abort(Some(false)).await;
+}
+
+/// Lifecycle: resurrecting a finished run starts it again (a new active run reusing the same
+/// run ID). The resurrected run is aborted immediately afterward to avoid burning extra compute.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_resurrect() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+
+    let run_client = client.run(&run.id);
+    let resurrected = run_client
+        .resurrect(Default::default())
+        .await
+        .expect("resurrect finished run");
+    assert!(
+        !resurrected.is_terminal(),
+        "a just-resurrected run should be active again, got status {:?}",
+        resurrected.status
+    );
+
+    // Clean up the extra compute immediately; we only need to prove `resurrect` restarts it.
+    let _ = run_client.abort(Some(false)).await;
+}
+
+/// Lifecycle: metamorphing a running Actor run into another Actor's run swaps it in place —
+/// waiting for the (now `apify/hello-world`) run to finish should succeed.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_metamorph() {
+    let client = require_client!();
+    let actor = create_slow_actor(&client, "run-morph").await;
+    let actor_client = client.actor(&actor.id);
+
+    let run = actor_client
+        .start(None::<&serde_json::Value>, Default::default())
+        .await
+        .expect("start slow run");
+    let run_client = client.run(&run.id);
+
+    // `act_id` stays the original Actor's ID after metamorph (the run is still conceptually
+    // "owned" by the Actor that started it); the target Actor's code is what actually runs. The
+    // meaningful proof that the swap happened is behavioral: our own Actor's script sleeps for
+    // ~60s and would never finish this fast on its own, so a `SUCCEEDED` result well within the
+    // wait budget below can only mean the run's container is now actually executing
+    // `apify/hello-world`, which exits in a few seconds.
+    let morphed = run_client
+        .metamorph::<serde_json::Value>("apify/hello-world", None, Default::default())
+        .await
+        .expect("metamorph into hello-world");
+    assert_eq!(morphed.id, run.id, "metamorph must keep the same run ID");
+
+    let finished = run_client
+        .wait_for_finish(Some(30))
+        .await
+        .expect("wait for morphed run");
+    assert_eq!(
+        finished.status.as_deref(),
+        Some("SUCCEEDED"),
+        "the morphed run should finish quickly as a successful hello-world run, not keep \
+         running the original ~60s sleep script"
+    );
+}

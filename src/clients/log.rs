@@ -9,7 +9,13 @@ use futures_util::Stream;
 use crate::clients::base::{get_raw, ResourceContext};
 use crate::common::QueryParams;
 use crate::error::{ApifyClientError, ApifyClientResult};
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, HEADER_AUTHORIZATION, HEADER_USER_AGENT};
+
+/// Query parameter (and its value) that requests a live streaming connection to the log,
+/// rather than the buffered whole-log response.
+const STREAM_QUERY_PARAM: &str = "stream";
+/// Value sent for [`STREAM_QUERY_PARAM`] (the API only checks for presence, not the value).
+const STREAM_QUERY_PARAM_VALUE: &str = "1";
 
 /// Options for retrieving or streaming a log ([`LogClient::get_with_options`] /
 /// [`LogClient::stream_with_options`]).
@@ -105,13 +111,16 @@ impl LogClient {
         // the buffered backend path. The retry policy does not apply to an open stream.
         let client = reqwest::Client::new();
         let mut params = QueryParams::new();
-        params.push_raw("stream".to_string(), "1".to_string());
+        params.push_raw(
+            STREAM_QUERY_PARAM.to_string(),
+            STREAM_QUERY_PARAM_VALUE.to_string(),
+        );
         params.add_bool("raw", options.raw);
         let url = params.apply_to_url(&self.stream_url);
 
-        let mut builder = client.get(&url).header("User-Agent", &self.user_agent);
+        let mut builder = client.get(&url).header(HEADER_USER_AGENT, &self.user_agent);
         if let Some(token) = &self.token {
-            builder = builder.header("Authorization", format!("Bearer {token}"));
+            builder = builder.header(HEADER_AUTHORIZATION, format!("Bearer {token}"));
         }
 
         let response = builder.send().await.map_err(ApifyClientError::from)?;

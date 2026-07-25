@@ -3,8 +3,8 @@
 use serde::Serialize;
 
 use crate::clients::base::{
-    delete_resource, get_resource, post_action, post_with_body, update_resource, wait_for_finish,
-    ResourceContext,
+    delete_resource, get_resource, post_action, post_raw_with_extra_header, post_with_body,
+    update_resource, wait_for_finish, ResourceContext,
 };
 use crate::clients::dataset::DatasetClient;
 use crate::clients::key_value_store::KeyValueStoreClient;
@@ -12,7 +12,7 @@ use crate::clients::log::LogClient;
 use crate::clients::request_queue::RequestQueueClient;
 use crate::common::{to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON};
 use crate::models::ActorRun;
 
 /// Header the API uses to deduplicate charge requests (matching the reference client).
@@ -152,10 +152,7 @@ impl RunClient {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
-        let content_type = options
-            .content_type
-            .as_deref()
-            .unwrap_or("application/json");
+        let content_type = options.content_type.as_deref().unwrap_or(CONTENT_TYPE_JSON);
         post_with_body(&self.ctx, Some("metamorph"), &params, body, content_type).await
     }
 
@@ -192,23 +189,18 @@ impl RunClient {
             .unwrap_or_else(|| self.generate_idempotency_key(&options.event_name));
         let body = serde_json::json!({ "eventName": options.event_name, "count": count });
         let body_bytes = serde_json::to_vec(&body)?;
-        let url = self.ctx.url(Some("charge"));
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert(CHARGE_IDEMPOTENCY_HEADER.to_string(), idempotency_key);
-        // A successful `HttpClient::call` already guarantees a 2xx status; the (empty) body
-        // is intentionally ignored rather than parsed as a `data` envelope.
-        self.ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Post,
-                url,
-                headers,
-                body: Some(body_bytes),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        Ok(())
+        // A successful call already guarantees a 2xx status; the (empty) body is intentionally
+        // ignored rather than parsed as a `data` envelope.
+        post_raw_with_extra_header(
+            &self.ctx,
+            Some("charge"),
+            &QueryParams::new(),
+            body_bytes,
+            CONTENT_TYPE_JSON,
+            CHARGE_IDEMPOTENCY_HEADER,
+            idempotency_key,
+        )
+        .await
     }
 
     /// Builds a per-charge idempotency key of the form

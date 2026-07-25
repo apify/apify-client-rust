@@ -1,8 +1,7 @@
 //! # apify-client
 //!
-//! **Official, but experimental — AI-generated and AI-maintained.** This is an official Apify
-//! client, but it is experimental: it is generated and maintained by AI. Review the code before
-//! relying on it in production and report issues on the repository.
+//! See the top-level [README](https://github.com/apify/apify-client-rust#readme) for the
+//! client's status and support disclosure.
 //!
 //! An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 //!
@@ -69,7 +68,9 @@ pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, Down
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
 pub use clients::log::LogOptions;
 pub use clients::pagination::ListIterator;
-pub use clients::request_queue::{ListRequestsOptions, RequestQueueRequestsIterator};
+pub use clients::request_queue::{
+    BatchAddRequestsOptions, ListRequestsOptions, RequestQueueRequestsIterator,
+};
 pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
@@ -107,3 +108,15 @@ struct DocsRunsDoctests;
 #[doc = include_str!("../docs/builds.md")]
 #[cfg(doctest)]
 struct DocsBuildsDoctests;
+
+#[doc = include_str!("../docs/tasks.md")]
+#[cfg(doctest)]
+struct DocsTasksDoctests;
+
+#[doc = include_str!("../docs/schedules.md")]
+#[cfg(doctest)]
+struct DocsSchedulesDoctests;
+
+#[doc = include_str!("../docs/webhooks.md")]
+#[cfg(doctest)]
+struct DocsWebhooksDoctests;

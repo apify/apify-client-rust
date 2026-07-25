@@ -5,14 +5,14 @@ use std::collections::VecDeque;
 use serde::Serialize;
 
 use crate::clients::base::{
-    delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
-    update_resource, ResourceContext,
+    delete_item, delete_resource, get_raw, get_resource, get_resource_required, head_exists,
+    put_raw, update_resource, ResourceContext, SMALL_REQUEST_TIMEOUT,
 };
 use crate::common::{
     create_hmac_signature, encode_path_segment, sign_storage_content, QueryParams,
 };
 use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
+use crate::http_client::HttpClient;
 use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
 
 /// Options for listing keys in a key-value store.
@@ -260,21 +260,19 @@ impl KeyValueStoreClient {
     }
 
     /// Deletes the record with the given key.
+    ///
+    /// Unlike the store's own [`delete`](Self::delete), a missing record is **not** treated as a
+    /// no-op: this call propagates a `404` as an error. That matches the JS reference client,
+    /// whose `deleteRecord` calls the HTTP client directly (no not-found catch), while only its
+    /// base whole-resource `_delete()` maps 404 to success.
     pub async fn delete_record(&self, key: &str) -> ApifyClientResult<()> {
-        let url = self
-            .ctx
-            .url(Some(&format!("records/{}", encode_path_segment(key))));
-        self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Delete,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        Ok(())
+        delete_item(
+            &self.ctx,
+            Some(&format!("records/{}", encode_path_segment(key))),
+            &QueryParams::new(),
+            SMALL_REQUEST_TIMEOUT,
+        )
+        .await
     }
 }
 

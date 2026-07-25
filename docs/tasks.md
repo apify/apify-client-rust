@@ -25,6 +25,34 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `runs()` | — | `RunCollectionClient` | The task's runs. |
 | `webhooks()` | — | `WebhookCollectionClient` | The task's webhooks. |
 
+### Creating a task
+
+`create` takes the same shape as the [Create task API](https://docs.apify.com/api/v2/actor-tasks-post):
+at minimum `actId` (the Actor to run) and a `name`; `options` and `input` seed the task's default
+run configuration and input (both optional, and both overridable per-run via `start`/`call`).
+
+```rust,no_run
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let task = client
+    .tasks()
+    .create(&json!({
+        "actId": "apify/hello-world",
+        "name": "my-hello-world-task",
+        "options": { "memoryMbytes": 256 },
+        "input": { "message": "hi" }
+    }))
+    .await?;
+println!("created task {}", task.id);
+# Ok(())
+# }
+```
+
+See the [`tasks_schedules_webhooks`](../examples/tasks_schedules_webhooks.rs) example for the
+task's full lifecycle (create, run, inspect its webhooks, update, delete).
+
 ## The `Task` model
 
 `Task` lives in `apify_client::models` (`use apify_client::models::Task;`). Returned by `get`,

@@ -6,14 +6,14 @@ use serde_json::Value;
 use crate::client::ApifyClient;
 use crate::clients::actor::ActorStartOptions;
 use crate::clients::base::{
-    delete_resource, get_resource, post_with_body, update_resource, ResourceContext,
+    delete_resource, get_resource, post_with_body, put_action_raw, update_resource, ResourceContext,
 };
 use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
 use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON};
 use crate::models::{ActorRun, Task};
 
 /// Client for a specific Actor task.
@@ -60,7 +60,7 @@ impl TaskClient {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
-        post_with_body(&self.ctx, Some("runs"), &params, body, "application/json").await
+        post_with_body(&self.ctx, Some("runs"), &params, body, CONTENT_TYPE_JSON).await
     }
 
     /// Starts the task and waits (client-side polling) for it to finish.
@@ -93,21 +93,14 @@ impl TaskClient {
     /// Updates the task's saved input.
     pub async fn update_input<T: Serialize>(&self, input: &T) -> ApifyClientResult<Value> {
         let body = serde_json::to_vec(input)?;
-        let url = self.ctx.url(Some("input"));
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
-        let response = self
-            .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Put,
-                url,
-                headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        Ok(serde_json::from_slice(&response.body)?)
+        put_action_raw(
+            &self.ctx,
+            Some("input"),
+            &QueryParams::new(),
+            body,
+            CONTENT_TYPE_JSON,
+        )
+        .await
     }
 
     /// Returns a client for the last run of this task, optionally filtered by run status.

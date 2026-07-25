@@ -22,7 +22,7 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.6"
+apify-client = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -50,7 +50,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.6", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.7", default-features = false, features = ["rustls"] }
 ```
 
 ## Quick start
@@ -220,6 +220,7 @@ run with `cargo run --example <name>`:
 - `iterate_store` — lazily iterate Actors in the Apify Store.
 - `log_redirection` — run a separate Actor and redirect its run log into your output live, with each line prefixed by the source Actor's name.
 - `raw_log` — fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`.
+- `tasks_schedules_webhooks` — create an Actor task, a schedule that runs it, and a webhook that watches it.
 
 See [`docs/`](docs) for the full API documentation.
 

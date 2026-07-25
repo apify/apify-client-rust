@@ -23,6 +23,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .list_items::<serde_json::Value>(Default::default())
         .await?;
     println!("Dataset {} has {} item(s)", dataset.id, items.items.len());
+    let renamed = dataset_client
+        .update(
+            &json!({ "name": format!("{}-renamed", dataset.name.as_deref().unwrap_or("dataset")) }),
+        )
+        .await?;
+    println!("Dataset renamed to {:?}", renamed.name);
     dataset_client.delete().await?;
 
     // ---- Key-value store: create, set, get ----
@@ -38,6 +44,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .expect("OUTPUT was just written and is readable within the same store");
     println!("KVS {} OUTPUT = {} bytes", store.id, record.value.len());
+    let renamed = store_client
+        .update(&json!({ "name": format!("{}-renamed", store.name.as_deref().unwrap_or("kvs")) }))
+        .await?;
+    println!("KVS renamed to {:?}", renamed.name);
     store_client.delete().await?;
 
     // ---- Request queue: create, add, read ----
@@ -55,6 +65,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("RQ {} added request {}", queue.id, added.request_id);
     let head = queue_client.list_head(Some(10)).await?;
     println!("RQ head has {} request(s)", head.items.len());
+    let renamed = queue_client
+        .update(&json!({ "name": format!("{}-renamed", queue.name.as_deref().unwrap_or("rq")) }))
+        .await?;
+    println!("RQ renamed to {:?}", renamed.name);
     queue_client.delete().await?;
 
     Ok(())

@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError, LastRunOptions, RequestCompression};
+use apify_client::models::RequestQueueRequest;
+use apify_client::{
+    ApifyClient, ApifyClientError, BatchAddRequestsOptions, LastRunOptions, RequestCompression,
+};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -869,5 +872,189 @@ async fn iterate_keys_large_cap_clamps_page_size() {
         urls[1].contains("exclusiveStartKey=k1"),
         "the cursor must still advance across the clamped pages, got {}",
         urls[1]
+    );
+}
+
+/// Builds a minimal request for the `batch_add_requests` tests below.
+fn rq_request(unique_key: &str) -> RequestQueueRequest {
+    RequestQueueRequest {
+        id: None,
+        url: format!("https://example.com/{unique_key}"),
+        unique_key: Some(unique_key.to_string()),
+        method: Some("GET".to_string()),
+        user_data: None,
+        extra: Default::default(),
+    }
+}
+
+/// `batch_add_requests` count-chunks input larger than the 25-per-call API limit and merges
+/// each chunk's `processedRequests`/`unprocessedRequests` into one result. With the default
+/// `max_parallel` (5) comfortably above the 2 chunks a 30-item input produces, both chunk calls
+/// are dispatched without the caller having to do anything — this asserts the merge is complete
+/// and correct regardless of how the two concurrent calls interleave.
+#[tokio::test]
+async fn batch_add_requests_chunks_and_merges_across_calls() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"processedRequests":[{"uniqueKey":"a","requestId":"r-a","wasAlreadyPresent":false,"wasAlreadyHandled":false}],"unprocessedRequests":[]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"processedRequests":[{"uniqueKey":"b","requestId":"r-b","wasAlreadyPresent":false,"wasAlreadyHandled":false}],"unprocessedRequests":[]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let requests: Vec<RequestQueueRequest> =
+        (0..30).map(|i| rq_request(&format!("k{i}"))).collect();
+    let result = client
+        .request_queue("some-queue")
+        .batch_add_requests(&requests, false)
+        .await
+        .expect("batch add should succeed");
+
+    assert_eq!(
+        backend.call_count(),
+        2,
+        "30 requests must be split into exactly 2 chunks (25 + 5)"
+    );
+    let processed = result["processedRequests"]
+        .as_array()
+        .expect("processedRequests array");
+    assert_eq!(
+        processed.len(),
+        2,
+        "results from both chunk calls must be merged into one array"
+    );
+    assert!(result["unprocessedRequests"]
+        .as_array()
+        .expect("unprocessedRequests array")
+        .is_empty());
+}
+
+/// A chunk whose response reports `unprocessedRequests` (typically caused by rate limiting) is
+/// retried with the still-unprocessed subset, and the retry's results are merged into the final
+/// response. This exercises `_batchAddRequestsWithRetries` parity: the first call reports 3
+/// requests processed and 2 unprocessed; the retry (with only the 2 remaining) reports both
+/// processed, so the final result has all 5 processed and none unprocessed.
+#[tokio::test]
+async fn batch_add_requests_retries_unprocessed_requests() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"processedRequests":[{"uniqueKey":"u0","requestId":"r0","wasAlreadyPresent":false,"wasAlreadyHandled":false},{"uniqueKey":"u1","requestId":"r1","wasAlreadyPresent":false,"wasAlreadyHandled":false},{"uniqueKey":"u2","requestId":"r2","wasAlreadyPresent":false,"wasAlreadyHandled":false}],"unprocessedRequests":[{"uniqueKey":"u3","url":"https://example.com/u3","method":"GET"},{"uniqueKey":"u4","url":"https://example.com/u4","method":"GET"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"processedRequests":[{"uniqueKey":"u3","requestId":"r3","wasAlreadyPresent":false,"wasAlreadyHandled":false},{"uniqueKey":"u4","requestId":"r4","wasAlreadyPresent":false,"wasAlreadyHandled":false}],"unprocessedRequests":[]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let requests: Vec<RequestQueueRequest> = (0..5).map(|i| rq_request(&format!("u{i}"))).collect();
+    let result = client
+        .request_queue("some-queue")
+        .batch_add_requests_with_options(
+            &requests,
+            BatchAddRequestsOptions {
+                min_delay_between_unprocessed_requests_retries: Some(Duration::from_millis(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("batch add should not fail even before all retries complete");
+
+    assert_eq!(
+        backend.call_count(),
+        2,
+        "the unprocessed pair must be retried in a second call"
+    );
+    assert_eq!(
+        result["processedRequests"]
+            .as_array()
+            .expect("processedRequests array")
+            .len(),
+        5,
+        "all 5 requests must end up processed after the retry"
+    );
+    assert!(result["unprocessedRequests"]
+        .as_array()
+        .expect("unprocessedRequests array")
+        .is_empty());
+}
+
+/// When a chunk call fails outright (not merely reporting `unprocessedRequests`, but erroring),
+/// `batch_add_requests` must not propagate the error: the reference client's
+/// `_batchAddRequestsWithRetries` guarantees this method's signature never throws for a partial
+/// failure. The not-yet-processed requests must instead show up as `unprocessedRequests`.
+#[tokio::test]
+async fn batch_add_requests_chunk_error_becomes_unprocessed_not_a_failure() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        400,
+        br#"{"error":{"type":"invalid-request","message":"bad batch"}}"#.to_vec(),
+    )]);
+    // No transport retries and no application-level retries, so exactly one call is made.
+    let client = client_with(backend.clone(), 0);
+
+    let requests = vec![rq_request("e0"), rq_request("e1")];
+    let result = client
+        .request_queue("some-queue")
+        .batch_add_requests_with_options(
+            &requests,
+            BatchAddRequestsOptions {
+                max_unprocessed_requests_retries: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("a failed chunk must not fail the overall call");
+
+    assert_eq!(backend.call_count(), 1);
+    assert!(result["processedRequests"]
+        .as_array()
+        .expect("processedRequests array")
+        .is_empty());
+    let unprocessed = result["unprocessedRequests"]
+        .as_array()
+        .expect("unprocessedRequests array");
+    assert_eq!(
+        unprocessed.len(),
+        2,
+        "both requests must be reported unprocessed after the chunk call failed"
+    );
+}
+
+/// Requests whose combined serialized size exceeds the API's payload byte limit are sliced into
+/// multiple `requests/batch` calls even when their count is well under the 25-per-call cap,
+/// mirroring the reference client's `sliceArrayByByteLength`. Three ~4 MiB requests (~12 MiB
+/// total) exceed the ~9 MiB limit, so they cannot all fit in one call.
+#[tokio::test]
+async fn batch_add_requests_slices_by_byte_length() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"processedRequests":[],"unprocessedRequests":[]}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let big_value = "a".repeat(4 * 1024 * 1024); // ~4 MiB
+    let requests: Vec<RequestQueueRequest> = (0..3)
+        .map(|i| {
+            let mut r = rq_request(&format!("big{i}"));
+            r.user_data = Some(serde_json::Value::String(big_value.clone()));
+            r
+        })
+        .collect();
+
+    client
+        .request_queue("some-queue")
+        .batch_add_requests(&requests, false)
+        .await
+        .expect("batch add should succeed");
+
+    assert!(
+        backend.call_count() > 1,
+        "requests too large to fit in one payload must be split across multiple calls, got {} call(s)",
+        backend.call_count()
     );
 }

@@ -87,3 +87,24 @@ async fn get_limits() {
     let limits = client.me().limits().await.expect("get limits");
     assert!(limits.is_object(), "limits should be a JSON object");
 }
+
+/// Simple GET: `client.user(id)` fetches a user's (public) profile by ID, as opposed to
+/// `client.me()`, which is only ever tested against the current account.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_user_by_id() {
+    let client = require_client!();
+    let me = client
+        .me()
+        .get()
+        .await
+        .expect("get current user")
+        .expect("current user should exist");
+
+    let by_id = client
+        .user(&me.id)
+        .get()
+        .await
+        .expect("get user by id")
+        .expect("user should exist");
+    assert_eq!(by_id.id, me.id);
+}

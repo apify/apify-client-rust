@@ -71,3 +71,8 @@ fn example_create_build_run_actor() {
 fn example_raw_log() {
     run_example("raw_log");
 }
+
+#[test]
+fn example_tasks_schedules_webhooks() {
+    run_example("tasks_schedules_webhooks");
+}

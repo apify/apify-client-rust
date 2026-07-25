@@ -28,6 +28,33 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 `ListIterator<WebhookDispatch>` auto-pagination).
 `WebhookDispatchClient`: `get()`.
 
+### Creating a webhook
+
+`create` takes the same shape as the [Create webhook API](https://docs.apify.com/api/v2/webhooks-post):
+`eventTypes`, a `condition` (`{ actorId }`, `{ actorTaskId }` or `{ actorRunId }`, selecting what the
+webhook watches) and a `requestUrl` to POST to.
+
+```rust,no_run
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run(client: ApifyClient, task_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let webhook = client
+    .webhooks()
+    .create(&json!({
+        "eventTypes": ["ACTOR.RUN.SUCCEEDED"],
+        "condition": { "actorTaskId": task_id },
+        "requestUrl": "https://example.com/webhook"
+    }))
+    .await?;
+println!("created webhook {}", webhook.id);
+# Ok(())
+# }
+```
+
+See the [`tasks_schedules_webhooks`](../examples/tasks_schedules_webhooks.rs) example for
+`test()`-ing a webhook, listing its dispatches, `update` and `delete`.
+
 ## The `Webhook` model
 
 `Webhook` and `WebhookDispatch` live in `apify_client::models`

@@ -3,10 +3,10 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::clients::base::{get_resource, get_resource_required, ResourceContext};
+use crate::clients::base::{get_resource, get_resource_required, put_raw, ResourceContext};
 use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON};
 use crate::models::User;
 
 /// Client for a specific user (or the current user via [`ApifyClient::me`]).
@@ -76,20 +76,14 @@ impl UserClient {
     pub async fn update_limits<T: Serialize>(&self, new_limits: &T) -> ApifyClientResult<()> {
         self.require_me("update_limits")?;
         let body = serde_json::to_vec(new_limits)?;
-        let url = self.ctx.url(Some("limits"));
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
-        self.ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Put,
-                url,
-                headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        Ok(())
+        put_raw(
+            &self.ctx,
+            Some("limits"),
+            &QueryParams::new(),
+            body,
+            CONTENT_TYPE_JSON,
+        )
+        .await
     }
 
     fn require_me(&self, method: &str) -> ApifyClientResult<()> {

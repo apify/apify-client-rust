@@ -9,6 +9,16 @@ are available as rustdoc comments and can be browsed with `cargo doc --open`.
 > `../examples/`) are written for the repository (GitHub) view. Because the pages are
 > concatenated onto the crate root via `include_str!` when building rustdoc, those relative
 > links do not resolve in `cargo doc` output — read the cross-references on GitHub.
+>
+> **Note:** code blocks on these pages sometimes contain lines starting with `# ` (a `#` followed
+> by a space), e.g. `# use apify_client::ApifyClient;` or a wrapping `# async fn run() -> ... {`.
+> This is a [rustdoc convention](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html#hiding-portions-of-the-example):
+> those lines are compiled (and, for `no_run` blocks, type-checked) as part of the example, but
+> hidden from rendered documentation. Viewing this page as plain Markdown (e.g. on GitHub), you
+> will see those `# `-prefixed lines as ordinary code — they are boilerplate (imports, a
+> `fn`/`async fn` wrapper the snippet needs to compile standalone) rather than something to
+> delete or treat as unusual; ignore them when reading, or run `cargo doc --open` to see the page
+> with them hidden.
 
 ## Contents
 
@@ -33,7 +43,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.6"
+apify-client = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

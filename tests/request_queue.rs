@@ -306,3 +306,79 @@ async fn request_queue_lock_lifecycle() {
 
     queue_client.delete().await.expect("delete queue");
 }
+
+/// Complex flow: `update_request`, `batch_add_requests` and `batch_delete_requests`, none of
+/// which are exercised by `request_queue_crud_flow` (which uses the single-request
+/// `add_request`/`delete_request` instead).
+#[tokio::test(flavor = "multi_thread")]
+async fn request_queue_batch_and_update_flow() {
+    let client = require_client!();
+    let name = common::unique_name("rq-batch");
+
+    let queue = client
+        .request_queues()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&cleanup_id).delete().await;
+    });
+
+    let queue_client = client.request_queue(&queue.id);
+
+    // Batch-add several requests in one call.
+    let batch: Vec<RequestQueueRequest> = (0..5)
+        .map(|i| RequestQueueRequest {
+            id: None,
+            url: format!("https://example.com/batch/{i}"),
+            unique_key: Some(format!("batch-{i}")),
+            method: Some("GET".to_string()),
+            user_data: None,
+            extra: Default::default(),
+        })
+        .collect();
+    let result = queue_client
+        .batch_add_requests(&batch, false)
+        .await
+        .expect("batch add requests");
+    let processed = result["processedRequests"]
+        .as_array()
+        .expect("processedRequests array")
+        .clone();
+    assert_eq!(processed.len(), 5, "all 5 requests should be processed");
+
+    // Update one of the added requests (mark it handled).
+    let first_id = processed[0]["requestId"]
+        .as_str()
+        .expect("requestId should be a string")
+        .to_string();
+    let fetched = queue_client
+        .get_request(&first_id)
+        .await
+        .expect("get request")
+        .expect("request should exist");
+    let mut to_update = fetched.clone();
+    to_update
+        .extra
+        .insert("handledAt".to_string(), json!("2026-01-01T00:00:00.000Z"));
+    let updated = queue_client
+        .update_request(&to_update, false)
+        .await
+        .expect("update request");
+    assert_eq!(updated.request_id, first_id);
+
+    // Batch-delete the requests by unique key.
+    let delete_ids: Vec<serde_json::Value> = batch
+        .iter()
+        .map(|r| json!({ "uniqueKey": r.unique_key }))
+        .collect();
+    queue_client
+        .batch_delete_requests(&delete_ids)
+        .await
+        .expect("batch delete requests");
+
+    queue_client.delete().await.expect("delete queue");
+}

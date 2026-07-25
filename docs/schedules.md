@@ -19,6 +19,37 @@ Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single
 | `delete()` | — | `()` | Deletes the schedule. |
 | `get_log()` | — | `Option<String>` | Fetches the schedule's invocation log. |
 
+### Creating a schedule
+
+`create` takes the same shape as the
+[Create schedule API](https://docs.apify.com/api/v2/schedules-post): `cronExpression` and
+`isEnabled` are required, plus an `actions` array of `{ type, actorId | actorTaskId, ... }` objects
+describing what the schedule runs (`type` is `"RUN_ACTOR"` or `"RUN_ACTOR_TASK"`).
+
+```rust,no_run
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run(client: ApifyClient, task_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let schedule = client
+    .schedules()
+    .create(&json!({
+        "name": "my-daily-schedule",
+        "cronExpression": "0 12 * * *",
+        "isEnabled": true,
+        "actions": [
+            { "type": "RUN_ACTOR_TASK", "actorTaskId": task_id }
+        ]
+    }))
+    .await?;
+println!("created schedule {}", schedule.id);
+# Ok(())
+# }
+```
+
+See the [`tasks_schedules_webhooks`](../examples/tasks_schedules_webhooks.rs) example for a
+schedule bound to a task, plus `get_log`, `update` and `delete`.
+
 ## The `Schedule` model
 
 `Schedule` lives in `apify_client::models` (`use apify_client::models::Schedule;`). Returned by

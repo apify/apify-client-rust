@@ -48,6 +48,19 @@ const BROTLI_BUFFER_SIZE: usize = 4096;
 /// default level (6).
 const GZIP_COMPRESSION_LEVEL: u32 = 6;
 
+/// Header carrying the client's identifying `User-Agent` string.
+pub(crate) const HEADER_USER_AGENT: &str = "User-Agent";
+/// Header carrying the bearer token used for authentication.
+pub(crate) const HEADER_AUTHORIZATION: &str = "Authorization";
+/// Header declaring a request (or response) body's media type. Used throughout `clients::base`
+/// and the resource clients that build a request by hand.
+pub(crate) const HEADER_CONTENT_TYPE: &str = "Content-Type";
+/// The plain `application/json` media type, for endpoints that accept it without a charset.
+pub(crate) const CONTENT_TYPE_JSON: &str = "application/json";
+/// `application/json` with an explicit UTF-8 charset, used by endpoints that store or forward
+/// the body as text (dataset items, key-value-store JSON records).
+pub(crate) const CONTENT_TYPE_JSON_UTF8: &str = "application/json; charset=utf-8";
+
 /// Algorithm used to compress large request bodies before they are sent.
 ///
 /// The Apify API accepts both brotli (`br`) and gzip (`gzip`) request bodies. The reference JS
@@ -269,11 +282,11 @@ impl HttpClient {
         // Inject auth + user-agent headers shared by every endpoint.
         request
             .headers
-            .insert("User-Agent".to_string(), self.user_agent.clone());
+            .insert(HEADER_USER_AGENT.to_string(), self.user_agent.clone());
         if let Some(token) = &self.token {
             request
                 .headers
-                .insert("Authorization".to_string(), format!("Bearer {token}"));
+                .insert(HEADER_AUTHORIZATION.to_string(), format!("Bearer {token}"));
         }
 
         // Compress the request body once (not per attempt) when it is large enough, mirroring the

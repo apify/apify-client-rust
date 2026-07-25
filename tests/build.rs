@@ -172,3 +172,73 @@ async fn build_actor_flow() {
     // Clean up.
     actor_client.delete().await.expect("delete actor");
 }
+
+/// `BuildClient::abort()` and `BuildClient::delete()`: start a deliberately slow build, abort it
+/// mid-build, then delete it. A trivial build finishes too fast to reliably hit the RUNNING
+/// state, so this Actor's Dockerfile sleeps before the (never-reached) `COPY`/`CMD` steps.
+#[tokio::test(flavor = "multi_thread")]
+async fn build_abort_and_delete() {
+    let client = require_client!();
+    let name = common::unique_name("build-abort").replace('-', "");
+    let name = format!("b{}", &name[..name.len().min(20)]);
+
+    let definition = json!({
+        "name": name,
+        "isPublic": false,
+        "versions": [{
+            "versionNumber": "0.0",
+            "sourceType": "SOURCE_FILES",
+            "buildTag": "latest",
+            "sourceFiles": [
+                {
+                    "name": "Dockerfile",
+                    "format": "TEXT",
+                    "content": "FROM apify/actor-node:20\nRUN sleep 90\nCOPY . ./\nCMD node main.js"
+                },
+                { "name": "main.js", "format": "TEXT", "content": "console.log('unreachable');" }
+            ]
+        }]
+    });
+
+    let actor = client
+        .actors()
+        .create(&definition)
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
+    let actor_client = client.actor(&actor.id);
+    let build = actor_client
+        .build("0.0", Default::default())
+        .await
+        .expect("start slow build");
+    let build_client = client.build(&build.id);
+
+    let aborted = build_client.abort().await.expect("abort build");
+    assert!(
+        matches!(
+            aborted.status.as_deref(),
+            Some("ABORTING") | Some("ABORTED")
+        ),
+        "expected ABORTING or ABORTED after abort, got {:?}",
+        aborted.status
+    );
+
+    let finished = build_client
+        .wait_for_finish(Some(60))
+        .await
+        .expect("wait for aborted build to settle");
+    assert_eq!(finished.status.as_deref(), Some("ABORTED"));
+
+    build_client.delete().await.expect("delete build");
+    assert!(build_client
+        .get()
+        .await
+        .expect("get build after delete")
+        .is_none());
+}

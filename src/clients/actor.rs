@@ -16,7 +16,7 @@ use crate::clients::run_collection::RunCollectionClient;
 use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::common::{parse_data_envelope, QueryParams};
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON};
 use crate::models::{Actor, ActorRun, Build};
 
 /// Options shared by [`ActorClient::start`] and [`ActorClient::call`] (and the task
@@ -134,7 +134,7 @@ impl ActorClient {
         let content_type = options
             .content_type
             .clone()
-            .unwrap_or_else(|| "application/json".to_string());
+            .unwrap_or_else(|| CONTENT_TYPE_JSON.to_string());
         let body = match input {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
@@ -173,7 +173,7 @@ impl ActorClient {
             .add_str("tag", options.tag)
             .add_bool("useCache", options.use_cache)
             .add_int("waitForFinish", options.wait_for_finish);
-        post_with_body(&self.ctx, Some("builds"), &params, None, "application/json").await
+        post_with_body(&self.ctx, Some("builds"), &params, None, CONTENT_TYPE_JSON).await
     }
 
     /// Resolves the Actor's default build and returns a client for it.
@@ -235,7 +235,7 @@ impl ActorClient {
             Some("validate-input"),
             &params,
             Some(body),
-            Some("application/json"),
+            Some(CONTENT_TYPE_JSON),
         )
         .await
     }

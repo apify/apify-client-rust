@@ -141,3 +141,58 @@ async fn task_crud_flow() {
     task_client.delete().await.expect("delete task");
     assert!(task_client.get().await.expect("get after delete").is_none());
 }
+
+/// `TaskClient::webhooks()` (the task's webhook sub-collection) and the task's `runs/last` alias
+/// (`last_run`/`last_run_with_options`), neither of which are exercised by `task_crud_flow`.
+#[tokio::test(flavor = "multi_thread")]
+async fn task_webhooks_and_last_run() {
+    let client = require_client!();
+    let name = common::unique_name("task-webhooks");
+
+    let task = client
+        .tasks()
+        .create(&task_definition(&name))
+        .await
+        .expect("create task");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&cleanup_id).delete().await;
+    });
+
+    let task_client = client.task(&task.id);
+
+    // Simple GET: the task's webhook collection (likely empty, but the endpoint must respond).
+    let webhooks = task_client
+        .webhooks()
+        .list(Default::default())
+        .await
+        .expect("list task webhooks");
+    assert!(webhooks.total >= 0);
+
+    // Run the task and wait for it to finish, then access it through the `runs/last` alias.
+    let run = task_client
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call task");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+
+    let last = task_client
+        .last_run(Some("SUCCEEDED"))
+        .get()
+        .await
+        .expect("get task last run")
+        .expect("there should be a last succeeded run");
+    assert_eq!(last.id, run.id);
+
+    let last_with_options = task_client
+        .last_run_with_options(apify_client::LastRunOptions {
+            status: Some("SUCCEEDED".to_string()),
+            origin: Some("API".to_string()),
+        })
+        .get()
+        .await
+        .expect("get task last run with options");
+    assert!(last_with_options.is_some());
+}

@@ -14,7 +14,9 @@ use crate::common::{
     catch_not_found, parse_data_envelope, to_safe_id, PaginationList, QueryParams,
 };
 use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
+use crate::http_client::{
+    HttpClient, HttpMethod, HttpRequest, HttpResponse, CONTENT_TYPE_JSON, HEADER_CONTENT_TYPE,
+};
 
 /// How long to wait between polls while waiting for a run/build to finish.
 const WAIT_FOR_FINISH_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -164,33 +166,59 @@ pub(crate) async fn update_resource<B: Serialize, T: DeserializeOwned>(
     sub_path: Option<&str>,
     body: &B,
 ) -> ApifyClientResult<T> {
-    let url = ctx
-        .merged_params(&QueryParams::new())
-        .apply_to_url(&ctx.url(sub_path));
+    update_resource_with_params(
+        ctx,
+        sub_path,
+        &QueryParams::new(),
+        body,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await
+}
+
+/// A `PUT` with a JSON body, extra query parameters and a configurable timeout, unwrapping the
+/// `data` envelope from the response. Used by endpoints whose update also takes parameters
+/// beyond the resource's own (e.g. request-queue `updateRequest`'s `forefront`/`clientKey`, with
+/// the reference client's `MEDIUM_TIMEOUT_MILLIS`).
+pub(crate) async fn update_resource_with_params<B: Serialize, T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: &B,
+    timeout: Duration,
+) -> ApifyClientResult<T> {
     let body_bytes = serde_json::to_vec(body)?;
-    let mut headers = std::collections::HashMap::new();
-    headers.insert("Content-Type".to_string(), "application/json".to_string());
-    let response = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Put,
-            url,
-            headers,
-            body: Some(body_bytes),
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await?;
+    let response = put_send(
+        ctx,
+        sub_path,
+        params,
+        Some(body_bytes),
+        Some(CONTENT_TYPE_JSON),
+        timeout,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
-/// A `DELETE` that maps `404` to a successful no-op.
+/// A `DELETE` that maps `404` to a successful no-op. Used by every resource's whole-item
+/// `delete()` (matching the reference client's base `_delete()`).
 pub(crate) async fn delete_resource(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
 ) -> ApifyClientResult<()> {
-    let url = ctx
-        .merged_params(&QueryParams::new())
-        .apply_to_url(&ctx.url(sub_path));
+    delete_resource_with_params(ctx, sub_path, &QueryParams::new(), DEFAULT_REQUEST_TIMEOUT).await
+}
+
+/// A `DELETE` with extra query parameters and a configurable timeout that maps `404` to a
+/// successful no-op. Used by whole-resource deletes that also carry parameters (currently none
+/// need both, but this keeps [`delete_resource`] and callers with extra params on one path).
+pub(crate) async fn delete_resource_with_params(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    timeout: Duration,
+) -> ApifyClientResult<()> {
+    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let result = ctx
         .http
         .call(HttpRequest {
@@ -198,10 +226,37 @@ pub(crate) async fn delete_resource(
             url,
             headers: Default::default(),
             body: None,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
+            timeout,
         })
         .await;
     catch_not_found(result.map(|_| ()))?;
+    Ok(())
+}
+
+/// A `DELETE` of a single item within a collection (a request-queue request/lock, a
+/// key-value-store record) that **propagates** any error status, including `404`.
+///
+/// This intentionally does *not* map 404 to a no-op, unlike [`delete_resource`]: the JS reference
+/// client's `deleteRequest`/`deleteRecord` call the HTTP client directly with no
+/// `catchNotFoundOrThrow`, while only its base `_delete()` (used by whole-resource `delete()`)
+/// catches not-found. Mirroring that split keeps this client's behavior consistent with the
+/// reference for both cases, even though the two look inconsistent with each other locally.
+pub(crate) async fn delete_item(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    timeout: Duration,
+) -> ApifyClientResult<()> {
+    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
+    ctx.http
+        .call(HttpRequest {
+            method: HttpMethod::Delete,
+            url,
+            headers: Default::default(),
+            body: None,
+            timeout,
+        })
+        .await?;
     Ok(())
 }
 
@@ -223,7 +278,10 @@ pub(crate) async fn create_resource<B: Serialize, T: DeserializeOwned>(
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(None));
     let body_bytes = serde_json::to_vec(body)?;
     let mut headers = std::collections::HashMap::new();
-    headers.insert("Content-Type".to_string(), "application/json".to_string());
+    headers.insert(
+        HEADER_CONTENT_TYPE.to_string(),
+        CONTENT_TYPE_JSON.to_string(),
+    );
     let response = ctx
         .http
         .call(HttpRequest {
@@ -296,21 +354,103 @@ async fn post_send(
     params: &QueryParams,
     body: Option<Vec<u8>>,
     content_type: Option<&str>,
-) -> ApifyClientResult<crate::http_client::HttpResponse> {
+) -> ApifyClientResult<HttpResponse> {
+    send_with_body(
+        ctx,
+        HttpMethod::Post,
+        sub_path,
+        params,
+        body,
+        content_type,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await
+}
+
+/// Shared `PUT` sender, the `PUT` counterpart of [`post_send`]. Builds the URL with merged query
+/// params, sets the optional `Content-Type`, and returns the raw response.
+async fn put_send(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+    timeout: Duration,
+) -> ApifyClientResult<HttpResponse> {
+    send_with_body(
+        ctx,
+        HttpMethod::Put,
+        sub_path,
+        params,
+        body,
+        content_type,
+        timeout,
+    )
+    .await
+}
+
+/// Shared sender for a request that may carry a body and an optional `Content-Type`, used by
+/// both [`post_send`] and [`put_send`].
+async fn send_with_body(
+    ctx: &ResourceContext,
+    method: HttpMethod,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+    timeout: Duration,
+) -> ApifyClientResult<HttpResponse> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let mut headers = std::collections::HashMap::new();
     if let Some(ct) = content_type {
-        headers.insert("Content-Type".to_string(), ct.to_string());
+        headers.insert(HEADER_CONTENT_TYPE.to_string(), ct.to_string());
     }
     ctx.http
         .call(HttpRequest {
-            method: HttpMethod::Post,
+            method,
             url,
             headers,
             body,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
+            timeout,
         })
         .await
+}
+
+/// A `PUT` that unwraps the `data` envelope from the response, with a configurable timeout and
+/// an optional body/content-type. Used by endpoints that `PUT` without a JSON-serializable body
+/// (e.g. request-queue `prolongRequestLock`, which sends no body).
+pub(crate) async fn put_action<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+    timeout: Duration,
+) -> ApifyClientResult<T> {
+    let response = put_send(ctx, sub_path, params, body, content_type, timeout).await?;
+    parse_data_envelope(&response.body)
+}
+
+/// A `PUT` that returns the raw response body, deserialized directly **without** unwrapping a
+/// `data` envelope. Mirrors [`post_action_raw`] for `PUT` endpoints that return a bare JSON body
+/// (e.g. task `updateInput`).
+pub(crate) async fn put_action_raw<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Vec<u8>,
+    content_type: &str,
+) -> ApifyClientResult<T> {
+    let response = put_send(
+        ctx,
+        sub_path,
+        params,
+        Some(body),
+        Some(content_type),
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
+    Ok(serde_json::from_slice(&response.body)?)
 }
 
 /// A `GET` returning the raw response body bytes (no `data` envelope). Maps `404`/`HEAD`
@@ -319,10 +459,22 @@ pub(crate) async fn get_raw(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
     params: &QueryParams,
-) -> ApifyClientResult<Option<crate::http_client::HttpResponse>> {
+) -> ApifyClientResult<Option<HttpResponse>> {
+    let result = get_raw_required(ctx, sub_path, params).await;
+    catch_not_found(result)
+}
+
+/// A `GET` returning the raw response (headers + body, no `data` envelope) and propagating any
+/// error status, including `404`. Used by endpoints whose response is not resource-shaped and
+/// for which a missing resource should surface as an error rather than `None` (dataset items
+/// listing/export, dataset statistics).
+pub(crate) async fn get_raw_required(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+) -> ApifyClientResult<HttpResponse> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    let result = ctx
-        .http
+    ctx.http
         .call(HttpRequest {
             method: HttpMethod::Get,
             url,
@@ -330,8 +482,7 @@ pub(crate) async fn get_raw(
             body: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
         })
-        .await;
-    catch_not_found(result)
+        .await
 }
 
 /// A `HEAD` request returning whether the resource exists (`true` on 2xx, `false` on 404).
@@ -354,7 +505,8 @@ pub(crate) async fn head_exists(
     Ok(catch_not_found(result)?.is_some())
 }
 
-/// A `PUT` with raw bytes and a content type (used for KVS record uploads).
+/// A `PUT` with raw bytes and a content type (used for KVS record uploads and user limit
+/// updates), discarding the response body on success.
 pub(crate) async fn put_raw(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -362,12 +514,51 @@ pub(crate) async fn put_raw(
     body: Vec<u8>,
     content_type: &str,
 ) -> ApifyClientResult<()> {
+    put_send(
+        ctx,
+        sub_path,
+        params,
+        Some(body),
+        Some(content_type),
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A `POST` with raw bytes and a content type, discarding the response body on success. Used for
+/// dataset item pushes, whose body is arbitrary (not envelope-shaped) user JSON and which return
+/// no data.
+pub(crate) async fn post_raw(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Vec<u8>,
+    content_type: &str,
+) -> ApifyClientResult<()> {
+    post_send(ctx, sub_path, params, Some(body), Some(content_type)).await?;
+    Ok(())
+}
+
+/// A `POST` with a JSON body and one extra header beyond `Content-Type`, discarding the response
+/// body on success. The only current use is `RunClient::charge`, which must send an
+/// `idempotency-key` header so a transport-retried charge is applied at most once.
+pub(crate) async fn post_raw_with_extra_header(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Vec<u8>,
+    content_type: &str,
+    header_name: &str,
+    header_value: String,
+) -> ApifyClientResult<()> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let mut headers = std::collections::HashMap::new();
-    headers.insert("Content-Type".to_string(), content_type.to_string());
+    headers.insert(HEADER_CONTENT_TYPE.to_string(), content_type.to_string());
+    headers.insert(header_name.to_string(), header_value);
     ctx.http
         .call(HttpRequest {
-            method: HttpMethod::Put,
+            method: HttpMethod::Post,
             url,
             headers,
             body: Some(body),
@@ -399,7 +590,10 @@ pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let body_bytes = serde_json::to_vec(body)?;
     let mut headers = std::collections::HashMap::new();
-    headers.insert("Content-Type".to_string(), "application/json".to_string());
+    headers.insert(
+        HEADER_CONTENT_TYPE.to_string(),
+        CONTENT_TYPE_JSON.to_string(),
+    );
     let response = ctx
         .http
         .call(HttpRequest {

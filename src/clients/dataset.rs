@@ -4,12 +4,21 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::clients::base::{delete_resource, get_resource, update_resource, ResourceContext};
+use crate::clients::base::{
+    delete_resource, get_raw_required, get_resource, post_raw, update_resource, ResourceContext,
+};
 use crate::clients::pagination::ListIterator;
-use crate::common::{parse_data_envelope, sign_storage_content, PaginationList, QueryParams};
+use crate::common::{sign_storage_content, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON_UTF8};
 use crate::models::Dataset;
+
+/// Response header reporting the total item count across the whole dataset (not just this page).
+const HEADER_PAGINATION_TOTAL: &str = "x-apify-pagination-total";
+/// Response header reporting the offset the returned page started at.
+const HEADER_PAGINATION_OFFSET: &str = "x-apify-pagination-offset";
+/// Response header reporting the page size actually applied.
+const HEADER_PAGINATION_LIMIT: &str = "x-apify-pagination-limit";
 
 /// Options for listing or downloading dataset items.
 ///
@@ -195,18 +204,7 @@ impl DatasetClient {
     ) -> ApifyClientResult<PaginationList<T>> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
-        let response = self
-            .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
+        let response = get_raw_required(&self.ctx, Some("items"), &params).await?;
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
         let count = items.len() as i64;
@@ -214,15 +212,15 @@ impl DatasetClient {
         // returned would look complete and stop iteration after page one, dropping later items.
         // `0` routes iteration to the short-page/empty-page backstop, which walks every page.
         let total = response
-            .header("x-apify-pagination-total")
+            .header(HEADER_PAGINATION_TOTAL)
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let offset = response
-            .header("x-apify-pagination-offset")
+            .header(HEADER_PAGINATION_OFFSET)
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let limit = response
-            .header("x-apify-pagination-limit")
+            .header(HEADER_PAGINATION_LIMIT)
             .and_then(|v| v.parse().ok())
             .unwrap_or(count);
 
@@ -293,18 +291,7 @@ impl DatasetClient {
         let mut params = QueryParams::new();
         params.add_str("format", Some(format.as_str()));
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
-        let response = self
-            .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
+        let response = get_raw_required(&self.ctx, Some("items"), &params).await?;
         Ok(response.body)
     }
 
@@ -313,23 +300,14 @@ impl DatasetClient {
     /// `items` must serialize to a JSON object or an array of objects.
     pub async fn push_items<T: Serialize>(&self, items: &T) -> ApifyClientResult<()> {
         let body = serde_json::to_vec(items)?;
-        let url = self.ctx.url(Some("items"));
-        let mut headers = std::collections::HashMap::new();
-        headers.insert(
-            "Content-Type".to_string(),
-            "application/json; charset=utf-8".to_string(),
-        );
-        self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Post,
-                url,
-                headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        Ok(())
+        post_raw(
+            &self.ctx,
+            Some("items"),
+            &QueryParams::new(),
+            body,
+            CONTENT_TYPE_JSON_UTF8,
+        )
+        .await
     }
 
     /// Builds a public URL for downloading this dataset's items.
@@ -362,21 +340,6 @@ impl DatasetClient {
 
     /// Returns statistical information about the dataset, or `None` if unavailable.
     pub async fn get_statistics(&self) -> ApifyClientResult<Option<Value>> {
-        let result: ApifyClientResult<Value> = async {
-            let response = self
-                .ctx
-                .http
-                .call(HttpRequest {
-                    method: HttpMethod::Get,
-                    url: self.ctx.url(Some("statistics")),
-                    headers: Default::default(),
-                    body: None,
-                    timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-                })
-                .await?;
-            parse_data_envelope(&response.body)
-        }
-        .await;
-        crate::common::catch_not_found(result)
+        get_resource(&self.ctx, Some("statistics"), &QueryParams::new()).await
     }
 }
