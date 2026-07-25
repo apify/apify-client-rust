@@ -1,5 +1,8 @@
 # Store, users and logs
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## Apify Store — `client.store()`
 
 `StoreCollectionClient`:

@@ -83,6 +83,74 @@ async fn run_actor_and_read_outputs() {
     );
 }
 
+/// Complex flow: the Run resource's remaining CRUD operations not exercised elsewhere —
+/// `update()`, `ApifyClient::set_status_message` (which delegates to `update()` with a fixed
+/// body shape), `delete()`, and confirming `get()` returns `None` afterward. Together with
+/// `run_actor_and_read_outputs` (create/get/list via `runs().list()`), this covers all five
+/// CRUD-flow operations `test_requirements.md` asks for on a resource that supports them.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_update_set_status_message_and_delete() {
+    let client = require_client!();
+
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+    let run_client = client.run(&run.id);
+
+    // `update()` directly: set a non-terminal status message.
+    let updated = run_client
+        .update(&serde_json::json!({
+            "statusMessage": "updated via RunClient::update",
+            "isStatusMessageTerminal": false,
+        }))
+        .await
+        .expect("update run");
+    assert_eq!(
+        updated.status_message.as_deref(),
+        Some("updated via RunClient::update")
+    );
+
+    // `ApifyClient::set_status_message` reads `ACTOR_RUN_ID` from the environment and delegates
+    // to `run(id).update(...)`. Env vars are process-global, so this test owns the variable for
+    // its duration and restores it afterward.
+    let prev_run_id = std::env::var("ACTOR_RUN_ID").ok();
+    std::env::set_var("ACTOR_RUN_ID", &run.id);
+    let via_set_status_message = client
+        .set_status_message("updated via set_status_message", true)
+        .await;
+    match prev_run_id {
+        Some(v) => std::env::set_var("ACTOR_RUN_ID", v),
+        None => std::env::remove_var("ACTOR_RUN_ID"),
+    }
+    let via_set_status_message = via_set_status_message.expect("set_status_message");
+    assert_eq!(
+        via_set_status_message.status_message.as_deref(),
+        Some("updated via set_status_message")
+    );
+
+    // `get()` reflects the latest update.
+    let fetched = run_client
+        .get()
+        .await
+        .expect("get run")
+        .expect("run should still exist");
+    assert_eq!(
+        fetched.status_message.as_deref(),
+        Some("updated via set_status_message")
+    );
+
+    // `delete()`, then `get()` must return `None`.
+    run_client.delete().await.expect("delete run");
+    let after_delete = run_client.get().await.expect("get run after delete");
+    assert!(
+        after_delete.is_none(),
+        "run should not exist after delete(), got {after_delete:?}"
+    );
+}
+
 /// Iteration: the run collection iterator yields a run we just started across pages.
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_runs() {

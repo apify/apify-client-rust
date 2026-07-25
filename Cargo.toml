@@ -2,7 +2,7 @@
 name = "apify-client"
 version = "0.7.0"
 authors = ["Apify Technologies <support@apify.com>"]
-description = "An official, but experimental, AI-generated and AI-maintained Rust client for the Apify API (https://apify.com)."
+description = "Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"
 edition = "2021"
 repository = "https://github.com/apify/apify-client-rust"

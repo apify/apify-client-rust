@@ -146,6 +146,12 @@ fn unprocessed_retry_backoff(min_delay: Duration, attempt: u32) -> Duration {
     Duration::from_millis(base_millis.saturating_add(extra_millis))
 }
 
+/// Modulus applied to the current sub-second nanoseconds to derive [`random_fraction`]'s
+/// numerator; also its denominator, so the result lands in `[0, 1)`. `1_000_000` (one
+/// microsecond's worth of nanoseconds) is an arbitrary but sufficiently fine-grained choice for
+/// jitter — not a value with external meaning to name after anything more specific.
+const RANDOM_FRACTION_MODULUS: u32 = 1_000_000;
+
 /// A cheap, non-crypto random fraction in `[0, 1)` for backoff jitter (mirrors JS `Math.random()`
 /// in spirit, not in distribution quality — this is jitter, not a security-sensitive value).
 fn random_fraction() -> f64 {
@@ -153,7 +159,7 @@ fn random_fraction() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    f64::from(nanos % 1_000_000) / 1_000_000.0
+    f64::from(nanos % RANDOM_FRACTION_MODULUS) / f64::from(RANDOM_FRACTION_MODULUS)
 }
 
 /// Options for [`RequestQueueClient::list_requests`].

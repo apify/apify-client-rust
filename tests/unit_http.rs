@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
+use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, HttpResponse};
 use apify_client::models::RequestQueueRequest;
 use apify_client::{
     ApifyClient, ApifyClientError, BatchAddRequestsOptions, LastRunOptions, RequestCompression,
+    RunChargeOptions,
 };
 use async_trait::async_trait;
 
@@ -24,6 +25,7 @@ struct MockBackend {
     urls: Mutex<Vec<String>>,
     last_headers: Mutex<std::collections::HashMap<String, String>>,
     last_body: Mutex<Option<Vec<u8>>>,
+    last_method: Mutex<Option<HttpMethod>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,7 @@ impl MockBackend {
             urls: Mutex::new(Vec::new()),
             last_headers: Mutex::new(std::collections::HashMap::new()),
             last_body: Mutex::new(None),
+            last_method: Mutex::new(None),
         })
     }
 
@@ -69,6 +72,10 @@ impl MockBackend {
     fn last_body(&self) -> Option<Vec<u8>> {
         self.last_body.lock().unwrap().clone()
     }
+
+    fn last_method(&self) -> Option<HttpMethod> {
+        *self.last_method.lock().unwrap()
+    }
 }
 
 #[async_trait]
@@ -79,6 +86,7 @@ impl HttpBackend for MockBackend {
         self.urls.lock().unwrap().push(request.url.clone());
         *self.last_headers.lock().unwrap() = request.headers.clone();
         *self.last_body.lock().unwrap() = request.body.clone();
+        *self.last_method.lock().unwrap() = Some(request.method);
         let mut queue = self.responses.lock().unwrap();
         let outcome = if queue.len() > 1 {
             queue.remove(0)
@@ -1056,5 +1064,140 @@ async fn batch_add_requests_slices_by_byte_length() {
         backend.call_count() > 1,
         "requests too large to fit in one payload must be split across multiple calls, got {} call(s)",
         backend.call_count()
+    );
+}
+
+/// `RunClient::charge` sends `POST .../actor-runs/{runId}/charge` with an auto-generated
+/// `idempotency-key` header of the documented `{runId}-{eventName}-{millis}-{random}` shape, and
+/// a JSON body carrying `eventName`/`count`. Hermetic coverage of the one thing
+/// `post_raw_with_extra_header` exists for (the idempotency header) — `charge` itself is not
+/// covered by a live integration test because it bills real money and requires a pay-per-event
+/// Actor unavailable as a fixture here, so this offline test is the only guard on its request
+/// shape.
+#[tokio::test]
+async fn charge_sends_idempotency_key_header_and_body() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    client
+        .run("run123")
+        .charge(RunChargeOptions {
+            event_name: "pageScraped".to_string(),
+            count: Some(3),
+            idempotency_key: None,
+        })
+        .await
+        .expect("charge should succeed");
+
+    assert_eq!(backend.last_method(), Some(HttpMethod::Post));
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/actor-runs/run123/charge"),
+        "expected a POST to .../actor-runs/run123/charge, got {url}"
+    );
+
+    let key = backend
+        .last_header("idempotency-key")
+        .expect("charge must send an idempotency-key header");
+    // Documented shape: `{runId}-{eventName}-{millis}-{random}`. `event_name` above has no
+    // dashes, so splitting from the right on '-' unambiguously separates the trailing
+    // `millis`/`random` numeric segments from the `runId-eventName` prefix.
+    let parts: Vec<&str> = key.rsplitn(3, '-').collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "expected `runId-eventName-millis-random`, got {key}"
+    );
+    let (random_suffix, millis, prefix) = (parts[0], parts[1], parts[2]);
+    assert_eq!(prefix, "run123-pageScraped");
+    assert!(
+        !millis.is_empty() && millis.chars().all(|c| c.is_ascii_digit()),
+        "millis segment should be numeric, got {millis} in {key}"
+    );
+    assert!(
+        !random_suffix.is_empty() && random_suffix.chars().all(|c| c.is_ascii_digit()),
+        "random segment should be numeric, got {random_suffix} in {key}"
+    );
+
+    let body = backend.last_body().expect("a body was sent");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("body should be JSON");
+    assert_eq!(body["eventName"], "pageScraped");
+    assert_eq!(body["count"], 3);
+}
+
+/// `RunClient::charge` with `idempotency_key: None` still sends a header when `count` is
+/// omitted, defaulting the body's `count` to `1`.
+#[tokio::test]
+async fn charge_defaults_count_to_one() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    client
+        .run("run123")
+        .charge(RunChargeOptions {
+            event_name: "pageScraped".to_string(),
+            count: None,
+            idempotency_key: None,
+        })
+        .await
+        .expect("charge should succeed");
+
+    let body = backend.last_body().expect("a body was sent");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("body should be JSON");
+    assert_eq!(body["count"], 1, "count should default to 1 when omitted");
+}
+
+/// `UserClient::update_limits` sends `PUT .../users/me/limits` with the serialized body.
+/// Hermetic coverage: the live variant would mutate the shared test account's real limits,
+/// which is unsafe under the concurrent-test-account requirement, so this offline test is the
+/// only guard on its request shape.
+#[tokio::test]
+async fn update_limits_sends_put_with_body() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    client
+        .me()
+        .update_limits(&serde_json::json!({ "maxMonthlyUsageUsd": 500 }))
+        .await
+        .expect("update_limits should succeed");
+
+    assert_eq!(backend.last_method(), Some(HttpMethod::Put));
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/users/me/limits"),
+        "expected a PUT to .../users/me/limits, got {url}"
+    );
+
+    let body = backend.last_body().expect("a body was sent");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("body should be JSON");
+    assert_eq!(body["maxMonthlyUsageUsd"], 500);
+}
+
+/// The standalone `ApifyClient::log(build_or_run_id)` (`GET /v2/logs/{buildOrRunId}`) is
+/// distinct from the nested `run().log()`/`build().log()` accessors, which hit
+/// `.../actor-runs/{runId}/log` and `.../actor-builds/{buildId}/log` respectively. This is
+/// hermetic coverage of the standalone accessor's URL, which — unlike the nested variants — was
+/// previously exercised by no test at all.
+#[tokio::test]
+async fn standalone_log_hits_top_level_logs_endpoint() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"log output".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    let log = client
+        .log("some-build-or-run-id")
+        .get()
+        .await
+        .expect("get log");
+
+    assert_eq!(log.as_deref(), Some("log output"));
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/logs/some-build-or-run-id"),
+        "standalone log() must hit the top-level /logs/{{id}} endpoint, got {url}"
+    );
+    assert!(
+        !url.contains("/actor-runs/") && !url.contains("/actor-builds/"),
+        "standalone log() must not go through the nested run/build log path, got {url}"
     );
 }

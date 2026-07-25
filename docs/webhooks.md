@@ -4,6 +4,9 @@ Obtained via `client.webhooks()` / `client.webhook(id)` and
 `client.webhook_dispatches()` / `client.webhook_dispatch(id)`. Actor- and task-scoped
 webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `WebhookCollectionClient`
 
 | Method | Arguments | Returns | Description |

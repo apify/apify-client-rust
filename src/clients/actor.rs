@@ -7,14 +7,15 @@ use crate::client::ApifyClient;
 use crate::clients::actor_version::ActorVersionClient;
 use crate::clients::actor_version_collection::ActorVersionCollectionClient;
 use crate::clients::base::{
-    delete_resource, get_resource, post_with_body, update_resource, ResourceContext,
+    delete_resource, get_resource, get_resource_required, post_with_body, update_resource,
+    ResourceContext,
 };
 use crate::clients::build::BuildClient;
 use crate::clients::build_collection::BuildCollectionClient;
 use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
 use crate::clients::webhook_collection::WebhookCollectionClient;
-use crate::common::{parse_data_envelope, QueryParams};
+use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
 use crate::http_client::{HttpClient, CONTENT_TYPE_JSON};
 use crate::models::{Actor, ActorRun, Build};
@@ -186,19 +187,8 @@ impl ActorClient {
     ) -> ApifyClientResult<BuildClient> {
         let mut params = QueryParams::new();
         params.add_int("waitForFinish", wait_for_finish);
-        let url = params.apply_to_url(&self.ctx.url(Some("builds/default")));
-        let response = self
-            .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
-            .await?;
-        let build: Build = parse_data_envelope(&response.body)?;
+        let build: Build =
+            get_resource_required(&self.ctx, Some("builds/default"), &params).await?;
         Ok(BuildClient::new(
             self.ctx.http.clone(),
             &self.base_url,

@@ -146,17 +146,16 @@ pub(crate) async fn get_resource_required<T: DeserializeOwned>(
     sub_path: Option<&str>,
     params: &QueryParams,
 ) -> ApifyClientResult<T> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    let response = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Get,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await?;
+    let response = send_with_body(
+        ctx,
+        HttpMethod::Get,
+        sub_path,
+        params,
+        None,
+        None,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
@@ -206,29 +205,16 @@ pub(crate) async fn delete_resource(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
 ) -> ApifyClientResult<()> {
-    delete_resource_with_params(ctx, sub_path, &QueryParams::new(), DEFAULT_REQUEST_TIMEOUT).await
-}
-
-/// A `DELETE` with extra query parameters and a configurable timeout that maps `404` to a
-/// successful no-op. Used by whole-resource deletes that also carry parameters (currently none
-/// need both, but this keeps [`delete_resource`] and callers with extra params on one path).
-pub(crate) async fn delete_resource_with_params(
-    ctx: &ResourceContext,
-    sub_path: Option<&str>,
-    params: &QueryParams,
-    timeout: Duration,
-) -> ApifyClientResult<()> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    let result = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Delete,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout,
-        })
-        .await;
+    let result = send_with_body(
+        ctx,
+        HttpMethod::Delete,
+        sub_path,
+        &QueryParams::new(),
+        None,
+        None,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await;
     catch_not_found(result.map(|_| ()))?;
     Ok(())
 }
@@ -275,23 +261,17 @@ pub(crate) async fn create_resource<B: Serialize, T: DeserializeOwned>(
     params: &QueryParams,
     body: &B,
 ) -> ApifyClientResult<T> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(None));
     let body_bytes = serde_json::to_vec(body)?;
-    let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        HEADER_CONTENT_TYPE.to_string(),
-        CONTENT_TYPE_JSON.to_string(),
-    );
-    let response = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Post,
-            url,
-            headers,
-            body: Some(body_bytes),
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await?;
+    let response = send_with_body(
+        ctx,
+        HttpMethod::Post,
+        None,
+        params,
+        Some(body_bytes),
+        Some(CONTENT_TYPE_JSON),
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
@@ -303,17 +283,16 @@ pub(crate) async fn get_or_create_named<T: DeserializeOwned>(
 ) -> ApifyClientResult<T> {
     let mut params = QueryParams::new();
     params.add_str("name", name.map(|s| s.to_string()));
-    let url = params.apply_to_url(&ctx.url(None));
-    let response = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Post,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await?;
+    let response = send_with_body(
+        ctx,
+        HttpMethod::Post,
+        None,
+        &params,
+        None,
+        None,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
@@ -473,16 +452,16 @@ pub(crate) async fn get_raw_required(
     sub_path: Option<&str>,
     params: &QueryParams,
 ) -> ApifyClientResult<HttpResponse> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    ctx.http
-        .call(HttpRequest {
-            method: HttpMethod::Get,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await
+    send_with_body(
+        ctx,
+        HttpMethod::Get,
+        sub_path,
+        params,
+        None,
+        None,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await
 }
 
 /// A `HEAD` request returning whether the resource exists (`true` on 2xx, `false` on 404).
@@ -491,17 +470,16 @@ pub(crate) async fn head_exists(
     sub_path: Option<&str>,
     params: &QueryParams,
 ) -> ApifyClientResult<bool> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    let result = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Head,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await;
+    let result = send_with_body(
+        ctx,
+        HttpMethod::Head,
+        sub_path,
+        params,
+        None,
+        None,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await;
     Ok(catch_not_found(result)?.is_some())
 }
 
@@ -587,23 +565,17 @@ pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
     params: &QueryParams,
     body: &B,
 ) -> ApifyClientResult<T> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let body_bytes = serde_json::to_vec(body)?;
-    let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        HEADER_CONTENT_TYPE.to_string(),
-        CONTENT_TYPE_JSON.to_string(),
-    );
-    let response = ctx
-        .http
-        .call(HttpRequest {
-            method: HttpMethod::Delete,
-            url,
-            headers,
-            body: Some(body_bytes),
-            timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
-        .await?;
+    let response = send_with_body(
+        ctx,
+        HttpMethod::Delete,
+        sub_path,
+        params,
+        Some(body_bytes),
+        Some(CONTENT_TYPE_JSON),
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 

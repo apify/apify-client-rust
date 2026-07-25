@@ -2,6 +2,9 @@
 
 Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `TaskCollectionClient`
 
 | Method | Arguments | Returns | Description |

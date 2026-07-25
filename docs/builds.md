@@ -3,6 +3,9 @@
 Obtained via `client.builds()` (collection) and `client.build(id)` (single). Nested build
 collections are available via `actor.builds()`.
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `BuildCollectionClient`
 
 | Method | Arguments | Returns | Description |

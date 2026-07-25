@@ -12,7 +12,7 @@ use crate::common::{
     create_hmac_signature, encode_path_segment, sign_storage_content, QueryParams,
 };
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, CONTENT_TYPE_JSON_UTF8};
 use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
 
 /// Options for listing keys in a key-value store.
@@ -208,7 +208,7 @@ impl KeyValueStoreClient {
         value: &T,
     ) -> ApifyClientResult<()> {
         let bytes = serde_json::to_vec(value)?;
-        self.set_record_raw(key, bytes, "application/json; charset=utf-8")
+        self.set_record_raw(key, bytes, CONTENT_TYPE_JSON_UTF8)
             .await
     }
 

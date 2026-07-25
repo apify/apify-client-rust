@@ -3,6 +3,9 @@
 Obtained via `client.runs()` (collection) and `client.run(id)` (single). Nested run
 collections are available via `actor.runs()` and `task.runs()`.
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `RunCollectionClient`
 
 | Method | Arguments | Returns | Description |

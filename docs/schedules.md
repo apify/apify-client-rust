@@ -2,6 +2,9 @@
 
 Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single).
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `ScheduleCollectionClient`
 
 | Method | Arguments | Returns | Description |

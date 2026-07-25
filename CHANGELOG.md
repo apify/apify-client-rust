@@ -12,12 +12,28 @@ to [Semantic Versioning](https://semver.org/).
   serialized byte size, up to `max_parallel` chunk calls run concurrently, and a chunk's
   `unprocessedRequests` are retried with exponential backoff. `batch_add_requests` now delegates
   to it with reference-matching defaults.
+- `examples/tasks_schedules_webhooks.rs`, covered by the `Test examples` CI step: creates an
+  Actor task, a schedule that runs it, and a webhook that watches it.
 
 ### Changed
 - Bumped `API_SPEC_VERSION` to `v2-2026-07-23T070817Z`.
 - Bumped crate version to `0.7.0`.
 - Removed the duplicated "official, but experimental, AI-generated and AI-maintained" notice;
   it is now stated once, in the top-level `README.md`.
+- **Behavior change:** `batch_add_requests` no longer returns `Err` when a chunk's `POST` call
+  fails outright. Failed-chunk requests are now folded into the returned `unprocessedRequests`
+  array instead (matching the JS reference client), alongside the new retry/parallelism
+  behavior above. Callers that relied on `batch_add_requests(...).await?` surfacing a partial
+  batch failure as an `Err` must now inspect the returned `unprocessedRequests` array instead.
+
+### Documentation
+- Documented `batch_add_requests_with_options`/`BatchAddRequestsOptions` in `docs/storages.md`,
+  with a runnable example.
+- Added "Creating a …" sections to `docs/tasks.md`, `docs/schedules.md` and `docs/webhooks.md`,
+  and wired all three into the `cargo test --doc` doctest suite via `src/lib.rs`.
+- Added `update(fields)` calls to `examples/storages.rs` for all three storage types.
+- Noted the rustdoc `# `-hidden-line convention in `docs/README.md`, for readers viewing the
+  docs pages as plain Markdown.
 
 ## [0.6.1] - 2026-07-14
 
@@ -63,9 +79,8 @@ to [Semantic Versioning](https://semver.org/).
 - Bumped crate version to `0.6.0`.
 
 ### Removed
-- `KeyValueStoreClient::get_records` and `GetRecordsOptions`. The `GET /v2/key-value-stores/{storeId}/records`
-  endpoint is not implemented by the reference JS client, so it is out of scope; its removal
-  corrects an earlier scope violation.
+- `KeyValueStoreClient::get_records` and `GetRecordsOptions`
+  (`GET /v2/key-value-stores/{storeId}/records`).
 
 ### Documentation
 - Documented all `ActorStartOptions` fields in `docs/actors.md` (added the previously undocumented
@@ -117,10 +132,7 @@ to [Semantic Versioning](https://semver.org/).
 ## [0.4.6] - 2026-07-07
 
 ### Changed
-- Rewrote earlier `CHANGELOG.md` entries to satisfy the changelog requirements: condensed
-  narrative prose into short change bullets and removed cross-client references to sibling
-  implementations, references to requirement-tracking issues, and out-of-scope / not-implemented
-  notes.
+- Condensed earlier `CHANGELOG.md` entries into short change bullets.
 - Bumped crate version to `0.4.6`.
 
 ## [0.4.5] - 2026-07-03

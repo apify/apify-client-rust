@@ -293,3 +293,4 @@ Each example in [`../examples`](../examples) is runnable with
 | `iterate_store` | Lazily iterate Store Actors. |
 | `log_redirection` | Redirect a separate Actor's run log into your output live, prefixing each line with the source Actor's name. |
 | `raw_log` | Fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`. |
+| `tasks_schedules_webhooks` | Create an Actor task, a schedule that runs it, and a webhook that watches it. |

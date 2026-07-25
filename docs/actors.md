@@ -3,6 +3,9 @@
 Obtained via `client.actors()` (collection) and `client.actor(id)` (single). The `id` may
 be an Actor ID or a `username~name` (or `username/name`) reference.
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## `ActorCollectionClient`
 
 | Method | Arguments | Returns | Description |

@@ -1,5 +1,8 @@
 # Storages: datasets, key-value stores, request queues
 
+> Code blocks below use the rustdoc `# `-hidden-line convention — see
+> [`docs/README.md`](README.md) for what those lines are.
+
 ## Storage metadata models (`Dataset`, `KeyValueStore`, `RequestQueue`)
 
 `get` and `get_or_create` on each storage collection/client return a metadata model from
@@ -193,7 +196,8 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `update_request(request, forefront)` | `&RequestQueueRequest`, `bool` | `RequestQueueOperationInfo` | Updates a request. |
 | `delete_request(id)` | `&str` | `()` | Deletes a request. |
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Locks head requests. |
-| `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add. |
+| `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add with reference-matching defaults (see below). |
+| `batch_add_requests_with_options(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `Value` | Batch add with explicit retry/parallelism control (see below). |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
 | `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
@@ -245,6 +249,74 @@ The `forefront` boolean (on `add_request`, `update_request`, `batch_add_requests
 `prolong_request_lock`, `delete_request_lock`) controls queue ordering: `true` puts the
 request(s) at the **front** of the queue so they are handled before the existing backlog;
 `false` (the usual choice) appends them at the **back**.
+
+### Batch-adding requests — `batch_add_requests` / `batch_add_requests_with_options`
+
+`batch_add_requests(requests, forefront)` is the common case: it delegates to
+`batch_add_requests_with_options` with reference-matching defaults, so most callers never need
+the options form. Both handle an arbitrarily large `requests` slice safely and never fail merely
+because part of a large batch was rate-limited:
+
+- **Chunking.** The API's `requests/batch` endpoint accepts at most 25 requests per call and a
+  limited payload size. `requests` is split into chunks of at most 25 items, further sliced so
+  each chunk's serialized JSON stays under the API's byte-size limit (large `user_data` payloads
+  can make even a handful of requests exceed it).
+- **Parallelism.** Chunks are sent concurrently, up to `options.max_parallel` calls in flight at
+  once (default `5`).
+- **Unprocessed-request retries.** A chunk call can report some of its requests as
+  `unprocessedRequests` (typically transient rate-limiting). These are automatically retried, up
+  to `options.max_unprocessed_requests_retries` times (default `3`), with exponential backoff
+  starting at `options.min_delay_between_unprocessed_requests_retries` (default `500ms`).
+- **No throw on partial failure.** If a chunk call fails outright (not just reports
+  `unprocessedRequests`), the method does not return an `Err` for the whole batch: the requests in
+  that chunk are folded into the returned `unprocessedRequests` instead, matching the JS reference
+  client. Always check the returned `unprocessedRequests` array, not just `Ok`/`Err`, to detect a
+  partially-submitted batch.
+
+`BatchAddRequestsOptions` fields (all optional):
+
+- `forefront` — add all requests to the front of the queue (default `false`).
+- `max_unprocessed_requests_retries` — retry attempts for a chunk's `unprocessedRequests` (default
+  `3`).
+- `max_parallel` — maximum concurrent `requests/batch` calls (default `5`).
+- `min_delay_between_unprocessed_requests_retries` — base backoff delay before the first retry,
+  doubling (with jitter) on each subsequent one (default `500ms`).
+
+```rust,no_run
+use apify_client::{models::RequestQueueRequest, BatchAddRequestsOptions};
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let queue = client.request_queues().get_or_create(None).await?;
+let requests: Vec<RequestQueueRequest> = (0..100)
+    .map(|i| RequestQueueRequest {
+        id: None,
+        url: format!("https://example.com/{i}"),
+        unique_key: Some(format!("page-{i}")),
+        method: Some("GET".to_string()),
+        user_data: None,
+        extra: Default::default(),
+    })
+    .collect();
+
+// Explicit options: cap concurrency and retries beyond the defaults.
+let result = client
+    .request_queue(&queue.id)
+    .batch_add_requests_with_options(
+        &requests,
+        BatchAddRequestsOptions {
+            max_parallel: Some(2),
+            ..Default::default()
+        },
+    )
+    .await?;
+println!(
+    "processed {}, unprocessed {}",
+    result["processedRequests"].as_array().map_or(0, Vec::len),
+    result["unprocessedRequests"].as_array().map_or(0, Vec::len),
+);
+# Ok(())
+# }
+```
 
 Some request-queue methods return an untyped `serde_json::Value` because the API responses are
 open-ended and most callers do not consume them structurally. Their shapes (read fields with
