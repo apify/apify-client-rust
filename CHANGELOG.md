@@ -4,6 +4,21 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] - 2026-07-25
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-07-23T070817Z`. The spec delta (new `402`/`404`/`409`
+  error responses on the build/create-task/update-task endpoints, a new `408`/`402` pair on the
+  task run-sync endpoint, a new `ErrorType` enum value, relaxed nullability on the tagged-build
+  number and webhook-dispatch request URL, and Users/Tools API-reference sidebar regrouping)
+  needs no code change: error responses are handled generically, the changed fields are not
+  individually modelled (or were already optional), and the sidebar change does not affect the
+  spec's paths or schemas.
+- Bumped crate version to `0.6.2`.
+- Removed the duplicated "official, but experimental, AI-generated and AI-maintained" notice from
+  `docs/README.md`; it is now stated once, in the top-level `README.md`, per the updated
+  documentation requirement.
+
 ## [0.6.1] - 2026-07-14
 
 ### Changed
