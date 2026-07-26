@@ -1271,6 +1271,36 @@ async fn request_queue_small_timeout_methods_use_5s() {
     );
 }
 
+/// Regression guard for the round-6 review finding: `RequestQueueClient::get_request` is the one
+/// request-level method that must NOT send `clientKey`, matching the JS reference client's
+/// `getRequest` (which builds its params from bare `_params()`, unlike every sibling request-level
+/// method that merges in `clientKey: this.clientKey`). `list_head` is exercised alongside it as a
+/// sibling method that DOES send `clientKey`, so this also guards against the fix being
+/// over-applied to the rest of the client.
+#[tokio::test]
+async fn get_request_omits_client_key_but_sibling_methods_send_it() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(200, br#"{"data":{"url":"https://example.com/x"}}"#.to_vec()), // get_request
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // list_head
+    ]);
+    let client = client_with(backend.clone(), 0);
+    let rq = client.request_queue("q1").with_client_key("worker-1");
+
+    rq.get_request("r1").await.expect("get_request");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        !url.contains("clientKey"),
+        "get_request must not send clientKey, matching JS's getRequest, got {url}"
+    );
+
+    rq.list_head(None).await.expect("list_head");
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("clientKey=worker-1"),
+        "list_head must still send clientKey when set via with_client_key, got {url}"
+    );
+}
+
 /// Regression guard for the round-3 review finding: every `RequestQueueClient` method whose JS
 /// reference uses `MEDIUM_TIMEOUT_MILLIS` (30s) must send that timeout.
 #[tokio::test]

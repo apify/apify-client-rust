@@ -185,16 +185,17 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 
 `RequestQueueClient::with_client_key(client_key: impl Into<String>) -> RequestQueueClient`
 consumes `self` and returns a new client that sends the given `clientKey` as a query parameter on
-every request-level operation (`list_head`, `add_request`, `get_request`, `update_request`,
-`delete_request`, `list_and_lock_head`, the batch add/delete calls, `list_requests`,
-`prolong_request_lock`, `delete_request_lock`, `unlock_requests`). It is *not* sent on the
-queue-level metadata methods `get`, `update`, and `delete`, matching the JS reference client's
-omission of `clientKey` from `_get()` and friends there. `client_key` should be a stable, unique
-identifier for *this* consumer (e.g. one value per crawler process), reused across calls so the
-API can attribute locks to their owner. It has no effect on unlocked request-level operations
-(`add_request`, `list_requests`, …) beyond being sent along; it matters specifically for the
-locking methods
-below, whose lock ownership and `unlock_requests`'s scope are both keyed on it. See
+most request-level operations (`list_head`, `add_request`, `update_request`, `delete_request`,
+`list_and_lock_head`, the batch add/delete calls, `list_requests`, `prolong_request_lock`,
+`delete_request_lock`, `unlock_requests`). It is *not* sent on the queue-level metadata methods
+`get`, `update`, and `delete`, nor on `get_request` — matching the JS reference client, whose
+`getRequest` is the one request-level method that builds its params from bare `this._params()`
+instead of merging in `clientKey: this.clientKey` the way its siblings do. `client_key` should be
+a stable, unique identifier for *this* consumer (e.g. one value per crawler process), reused
+across calls so the API can attribute locks to their owner. It has no effect on unlocked
+request-level operations (`add_request`, `list_requests`, …) beyond being sent along; it matters
+specifically for the locking methods below, whose lock ownership and `unlock_requests`'s scope
+are both keyed on it. See
 [locking requests](#locking-requests) below for a worked example.
 
 | Method | Arguments | Returns | Description |

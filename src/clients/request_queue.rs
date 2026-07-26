@@ -266,11 +266,16 @@ impl RequestQueueClient {
     }
 
     /// Gets a request by ID, or `None` if it does not exist.
+    ///
+    /// Unlike the other request-level methods on this client, `get_request` does not send
+    /// `clientKey`: the JS reference client's `getRequest` builds its params from bare
+    /// `this._params()`, omitting the `clientKey: this.clientKey` merge that every other
+    /// request-level method includes.
     pub async fn get_request(&self, id: &str) -> ApifyClientResult<Option<RequestQueueRequest>> {
         get_resource_with_timeout(
             &self.ctx,
             Some(&format!("requests/{}", encode_path_segment(id))),
-            &self.base_params(),
+            &QueryParams::new(),
             SMALL_REQUEST_TIMEOUT,
         )
         .await

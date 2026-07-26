@@ -50,6 +50,10 @@ to [Semantic Versioning](https://semver.org/).
   `list_head`, `add_request`, `get_request`, `batch_delete_requests` now use 5s;
   `list_and_lock_head`, the `requests/batch` POST, `list_requests`, and `unlock_requests` now use
   30s.
+- `RequestQueueClient::get_request` no longer sends `clientKey`. The JS reference client's
+  `getRequest` is the one request-level method that builds its params from bare `_params()`
+  instead of merging in `clientKey: this.clientKey` like every sibling method does; `get_request`
+  previously sent it regardless of `with_client_key`.
 - `rust-integration-tests.yml`'s `pull_request.paths` filter now includes `README.md`,
   `docs/**`, and `build.rs`: a PR touching only those (which `cargo test --doc` and the
   `User-Agent` runtime-version build script depend on) previously would not trigger CI at all.
