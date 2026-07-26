@@ -26,6 +26,13 @@ to [Semantic Versioning](https://semver.org/).
   behavior above. Callers that relied on `batch_add_requests(...).await?` surfacing a partial
   batch failure as an `Err` must now inspect the returned `unprocessedRequests` array instead.
 
+### Fixed
+- `RequestQueueClient` timeouts now match the JS reference client (`SMALL_TIMEOUT_MILLIS`/5s or
+  `MEDIUM_TIMEOUT_MILLIS`/30s per method) instead of the 360s default: `get`, `update`, `delete`,
+  `list_head`, `add_request`, `get_request`, `batch_delete_requests` now use 5s;
+  `list_and_lock_head`, the `requests/batch` POST, `list_requests`, and `unlock_requests` now use
+  30s.
+
 ### Documentation
 - Documented `batch_add_requests_with_options`/`BatchAddRequestsOptions` in `docs/storages.md`,
   with a runnable example.

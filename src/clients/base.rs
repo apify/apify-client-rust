@@ -136,7 +136,19 @@ pub(crate) async fn get_resource<T: DeserializeOwned>(
     sub_path: Option<&str>,
     params: &QueryParams,
 ) -> ApifyClientResult<Option<T>> {
-    let result = get_resource_required(ctx, sub_path, params).await;
+    get_resource_with_timeout(ctx, sub_path, params, DEFAULT_REQUEST_TIMEOUT).await
+}
+
+/// A `GET` that unwraps the `data` envelope and maps `404` to `None`, with a configurable
+/// timeout. Used by endpoints whose reference-client counterpart specifies a timeout other than
+/// the default (e.g. request-queue `get`/`getRequest`/`listHead`, which use `SMALL_TIMEOUT_MILLIS`).
+pub(crate) async fn get_resource_with_timeout<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    timeout: Duration,
+) -> ApifyClientResult<Option<T>> {
+    let result = get_resource_required_with_timeout(ctx, sub_path, params, timeout).await;
     catch_not_found(result)
 }
 
@@ -146,16 +158,19 @@ pub(crate) async fn get_resource_required<T: DeserializeOwned>(
     sub_path: Option<&str>,
     params: &QueryParams,
 ) -> ApifyClientResult<T> {
-    let response = send_with_body(
-        ctx,
-        HttpMethod::Get,
-        sub_path,
-        params,
-        None,
-        None,
-        DEFAULT_REQUEST_TIMEOUT,
-    )
-    .await?;
+    get_resource_required_with_timeout(ctx, sub_path, params, DEFAULT_REQUEST_TIMEOUT).await
+}
+
+/// A `GET` that unwraps the `data` envelope, propagates errors (including `404`), and takes a
+/// configurable timeout. See [`get_resource_with_timeout`] for why this variant exists.
+pub(crate) async fn get_resource_required_with_timeout<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    timeout: Duration,
+) -> ApifyClientResult<T> {
+    let response =
+        send_with_body(ctx, HttpMethod::Get, sub_path, params, None, None, timeout).await?;
     parse_data_envelope(&response.body)
 }
 
@@ -205,6 +220,17 @@ pub(crate) async fn delete_resource(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
 ) -> ApifyClientResult<()> {
+    delete_resource_with_timeout(ctx, sub_path, DEFAULT_REQUEST_TIMEOUT).await
+}
+
+/// A `DELETE` that maps `404` to a successful no-op, with a configurable timeout. Used by
+/// resources whose reference-client `delete()` specifies a timeout other than the default (e.g.
+/// request-queue `delete`, which uses `SMALL_TIMEOUT_MILLIS`).
+pub(crate) async fn delete_resource_with_timeout(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    timeout: Duration,
+) -> ApifyClientResult<()> {
     let result = send_with_body(
         ctx,
         HttpMethod::Delete,
@@ -212,7 +238,7 @@ pub(crate) async fn delete_resource(
         &QueryParams::new(),
         None,
         None,
-        DEFAULT_REQUEST_TIMEOUT,
+        timeout,
     )
     .await;
     catch_not_found(result.map(|_| ()))?;
@@ -233,16 +259,16 @@ pub(crate) async fn delete_item(
     params: &QueryParams,
     timeout: Duration,
 ) -> ApifyClientResult<()> {
-    let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
-    ctx.http
-        .call(HttpRequest {
-            method: HttpMethod::Delete,
-            url,
-            headers: Default::default(),
-            body: None,
-            timeout,
-        })
-        .await?;
+    send_with_body(
+        ctx,
+        HttpMethod::Delete,
+        sub_path,
+        params,
+        None,
+        None,
+        timeout,
+    )
+    .await?;
     Ok(())
 }
 
@@ -306,7 +332,39 @@ pub(crate) async fn post_action<T: DeserializeOwned>(
     body: Option<Vec<u8>>,
     content_type: Option<&str>,
 ) -> ApifyClientResult<T> {
-    let response = post_send(ctx, sub_path, params, body, content_type).await?;
+    post_action_with_timeout(
+        ctx,
+        sub_path,
+        params,
+        body,
+        content_type,
+        DEFAULT_REQUEST_TIMEOUT,
+    )
+    .await
+}
+
+/// A `POST` that unwraps the `data` envelope from the response, with a configurable timeout. Used
+/// by endpoints whose reference-client counterpart specifies a timeout other than the default
+/// (e.g. request-queue `addRequest`/`listAndLockHead`/the `requests/batch` POST/`unlockRequests`,
+/// which use `SMALL_TIMEOUT_MILLIS`/`MEDIUM_TIMEOUT_MILLIS`).
+pub(crate) async fn post_action_with_timeout<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+    timeout: Duration,
+) -> ApifyClientResult<T> {
+    let response = send_with_body(
+        ctx,
+        HttpMethod::Post,
+        sub_path,
+        params,
+        body,
+        content_type,
+        timeout,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
@@ -558,12 +616,15 @@ pub(crate) async fn post_with_body<T: DeserializeOwned>(
     post_action(ctx, sub_path, params, body, Some(content_type)).await
 }
 
-/// A `DELETE` with a JSON body (used for batch request deletion).
+/// A `DELETE` with a JSON body and a configurable timeout (used for batch request deletion, whose
+/// reference-client counterpart — request-queue `batchDeleteRequests` — uses
+/// `SMALL_TIMEOUT_MILLIS` rather than the default).
 pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
     params: &QueryParams,
     body: &B,
+    timeout: Duration,
 ) -> ApifyClientResult<T> {
     let body_bytes = serde_json::to_vec(body)?;
     let response = send_with_body(
@@ -573,7 +634,7 @@ pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
         params,
         Some(body_bytes),
         Some(CONTENT_TYPE_JSON),
-        DEFAULT_REQUEST_TIMEOUT,
+        timeout,
     )
     .await?;
     parse_data_envelope(&response.body)

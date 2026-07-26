@@ -7,9 +7,10 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 
 use crate::clients::base::{
-    delete_item, delete_resource, delete_with_body, get_resource, get_resource_required,
-    post_action, post_with_body, put_action, update_resource, update_resource_with_params,
-    ResourceContext, MEDIUM_REQUEST_TIMEOUT, SMALL_REQUEST_TIMEOUT,
+    delete_item, delete_resource_with_timeout, delete_with_body,
+    get_resource_required_with_timeout, get_resource_with_timeout, post_action_with_timeout,
+    put_action, update_resource_with_params, ResourceContext, MEDIUM_REQUEST_TIMEOUT,
+    SMALL_REQUEST_TIMEOUT,
 };
 use crate::common::{encode_path_segment, QueryParams};
 use crate::error::ApifyClientResult;
@@ -216,24 +217,32 @@ impl RequestQueueClient {
 
     /// Fetches the queue metadata, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<RequestQueue>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource_with_timeout(&self.ctx, None, &QueryParams::new(), SMALL_REQUEST_TIMEOUT).await
     }
 
     /// Updates the queue metadata (e.g. `name`, `title`).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<RequestQueue> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource_with_params(
+            &self.ctx,
+            None,
+            &QueryParams::new(),
+            new_fields,
+            SMALL_REQUEST_TIMEOUT,
+        )
+        .await
     }
 
     /// Deletes the queue.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource_with_timeout(&self.ctx, None, SMALL_REQUEST_TIMEOUT).await
     }
 
     /// Lists requests from the head of the queue (without locking them).
     pub async fn list_head(&self, limit: Option<i64>) -> ApifyClientResult<RequestQueueHead> {
         let mut params = self.base_params();
         params.add_int("limit", limit);
-        get_resource_required(&self.ctx, Some("head"), &params).await
+        get_resource_required_with_timeout(&self.ctx, Some("head"), &params, SMALL_REQUEST_TIMEOUT)
+            .await
     }
 
     /// Adds a single request to the queue. If `forefront` is true, adds it to the front.
@@ -245,22 +254,24 @@ impl RequestQueueClient {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
         let body = serde_json::to_vec(request)?;
-        post_with_body(
+        post_action_with_timeout(
             &self.ctx,
             Some("requests"),
             &params,
             Some(body),
-            CONTENT_TYPE_JSON,
+            Some(CONTENT_TYPE_JSON),
+            SMALL_REQUEST_TIMEOUT,
         )
         .await
     }
 
     /// Gets a request by ID, or `None` if it does not exist.
     pub async fn get_request(&self, id: &str) -> ApifyClientResult<Option<RequestQueueRequest>> {
-        get_resource(
+        get_resource_with_timeout(
             &self.ctx,
             Some(&format!("requests/{}", encode_path_segment(id))),
             &self.base_params(),
+            SMALL_REQUEST_TIMEOUT,
         )
         .await
     }
@@ -313,7 +324,15 @@ impl RequestQueueClient {
         params
             .add_int("lockSecs", Some(lock_secs))
             .add_int("limit", limit);
-        post_action(&self.ctx, Some("head/lock"), &params, None, None).await
+        post_action_with_timeout(
+            &self.ctx,
+            Some("head/lock"),
+            &params,
+            None,
+            None,
+            MEDIUM_REQUEST_TIMEOUT,
+        )
+        .await
     }
 
     /// Adds multiple requests to the queue, using the default retry/parallelism/slicing behavior
@@ -491,12 +510,13 @@ impl RequestQueueClient {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
         let body = serde_json::to_vec(requests)?;
-        post_with_body(
+        post_action_with_timeout(
             &self.ctx,
             Some("requests/batch"),
             &params,
             Some(body),
-            CONTENT_TYPE_JSON,
+            Some(CONTENT_TYPE_JSON),
+            MEDIUM_REQUEST_TIMEOUT,
         )
         .await
     }
@@ -511,6 +531,7 @@ impl RequestQueueClient {
             Some("requests/batch"),
             &self.base_params(),
             &requests,
+            SMALL_REQUEST_TIMEOUT,
         )
         .await
     }
@@ -529,7 +550,13 @@ impl RequestQueueClient {
             .add_str("exclusiveStartId", options.exclusive_start_id)
             .add_str("cursor", options.cursor)
             .add_csv("filter", options.filter.as_deref());
-        get_resource_required(&self.ctx, Some("requests"), &params).await
+        get_resource_required_with_timeout(
+            &self.ctx,
+            Some("requests"),
+            &params,
+            MEDIUM_REQUEST_TIMEOUT,
+        )
+        .await
     }
 
     /// Prolongs the lock on a request for another `lock_secs` seconds.
@@ -592,12 +619,13 @@ impl RequestQueueClient {
 
     /// Unlocks all requests currently locked by this client (identified by `client_key`).
     pub async fn unlock_requests(&self) -> ApifyClientResult<serde_json::Value> {
-        post_action(
+        post_action_with_timeout(
             &self.ctx,
             Some("requests/unlock"),
             &self.base_params(),
             None,
             None,
+            MEDIUM_REQUEST_TIMEOUT,
         )
         .await
     }

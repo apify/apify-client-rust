@@ -26,6 +26,7 @@ struct MockBackend {
     last_headers: Mutex<std::collections::HashMap<String, String>>,
     last_body: Mutex<Option<Vec<u8>>>,
     last_method: Mutex<Option<HttpMethod>>,
+    last_timeout: Mutex<Option<Duration>>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ impl MockBackend {
             last_headers: Mutex::new(std::collections::HashMap::new()),
             last_body: Mutex::new(None),
             last_method: Mutex::new(None),
+            last_timeout: Mutex::new(None),
         })
     }
 
@@ -76,6 +78,10 @@ impl MockBackend {
     fn last_method(&self) -> Option<HttpMethod> {
         *self.last_method.lock().unwrap()
     }
+
+    fn last_timeout(&self) -> Option<Duration> {
+        *self.last_timeout.lock().unwrap()
+    }
 }
 
 #[async_trait]
@@ -87,6 +93,7 @@ impl HttpBackend for MockBackend {
         *self.last_headers.lock().unwrap() = request.headers.clone();
         *self.last_body.lock().unwrap() = request.body.clone();
         *self.last_method.lock().unwrap() = Some(request.method);
+        *self.last_timeout.lock().unwrap() = Some(request.timeout);
         let mut queue = self.responses.lock().unwrap();
         let outcome = if queue.len() > 1 {
             queue.remove(0)
@@ -1199,5 +1206,137 @@ async fn standalone_log_hits_top_level_logs_endpoint() {
     assert!(
         !url.contains("/actor-runs/") && !url.contains("/actor-builds/"),
         "standalone log() must not go through the nested run/build log path, got {url}"
+    );
+}
+
+/// Regression guard for the round-3 review finding: every `RequestQueueClient` method whose JS
+/// reference (`request_queue.ts`) uses `SMALL_TIMEOUT_MILLIS` (5s) must send that timeout, not
+/// the 360s default. `max_retries(0)` means a single attempt, so the timeout the mock backend
+/// observes is exactly the endpoint's configured base (no retry-driven growth).
+#[tokio::test]
+async fn request_queue_small_timeout_methods_use_5s() {
+    let five_secs = Duration::from_secs(5);
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(200, br#"{"data":{"id":"q1"}}"#.to_vec()), // get
+        MockOutcome::Status(200, br#"{"data":{"id":"q1"}}"#.to_vec()), // update
+        MockOutcome::Status(200, b"".to_vec()),                        // delete
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()),          // list_head
+        MockOutcome::Status(200, br#"{"data":{"requestId":"r1"}}"#.to_vec()), // add_request
+        MockOutcome::Status(200, br#"{"data":{"url":"https://example.com/x"}}"#.to_vec()), // get_request
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // batch_delete_requests
+        MockOutcome::Status(200, b"".to_vec()),               // delete_request
+        MockOutcome::Status(200, b"".to_vec()),               // delete_request_lock
+    ]);
+    let client = client_with(backend.clone(), 0);
+    let rq = client.request_queue("q1");
+
+    rq.get().await.expect("get");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "get()");
+
+    rq.update(&serde_json::json!({})).await.expect("update");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "update()");
+
+    rq.delete().await.expect("delete");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "delete()");
+
+    rq.list_head(None).await.expect("list_head");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "list_head()");
+
+    let request = rq_request("small-timeout-add");
+    rq.add_request(&request, false).await.expect("add_request");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "add_request()");
+
+    rq.get_request("r1").await.expect("get_request");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "get_request()");
+
+    rq.batch_delete_requests(&[serde_json::json!({"id": "r1"})])
+        .await
+        .expect("batch_delete_requests");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(five_secs),
+        "batch_delete_requests()"
+    );
+
+    rq.delete_request("r1").await.expect("delete_request");
+    assert_eq!(backend.last_timeout(), Some(five_secs), "delete_request()");
+
+    rq.delete_request_lock("r1", false)
+        .await
+        .expect("delete_request_lock");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(five_secs),
+        "delete_request_lock()"
+    );
+}
+
+/// Regression guard for the round-3 review finding: every `RequestQueueClient` method whose JS
+/// reference uses `MEDIUM_TIMEOUT_MILLIS` (30s) must send that timeout.
+#[tokio::test]
+async fn request_queue_medium_timeout_methods_use_30s() {
+    let thirty_secs = Duration::from_secs(30);
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // list_and_lock_head
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"processedRequests":[],"unprocessedRequests":[]}}"#.to_vec(),
+        ), // batch_add_requests (requests/batch POST)
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // list_requests
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // unlock_requests
+        MockOutcome::Status(200, br#"{"data":{"requestId":"r1"}}"#.to_vec()), // update_request
+        MockOutcome::Status(200, br#"{"data":{}}"#.to_vec()), // prolong_request_lock
+    ]);
+    let client = client_with(backend.clone(), 0);
+    let rq = client.request_queue("q1");
+
+    rq.list_and_lock_head(60, None)
+        .await
+        .expect("list_and_lock_head");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(thirty_secs),
+        "list_and_lock_head()"
+    );
+
+    rq.batch_add_requests(&[rq_request("medium-timeout-batch")], false)
+        .await
+        .expect("batch_add_requests");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(thirty_secs),
+        "batch_add_requests() chunk POST"
+    );
+
+    rq.list_requests(Default::default())
+        .await
+        .expect("list_requests");
+    assert_eq!(backend.last_timeout(), Some(thirty_secs), "list_requests()");
+
+    rq.unlock_requests().await.expect("unlock_requests");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(thirty_secs),
+        "unlock_requests()"
+    );
+
+    let mut with_id = rq_request("medium-timeout-update");
+    with_id.id = Some("r1".to_string());
+    rq.update_request(&with_id, false)
+        .await
+        .expect("update_request");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(thirty_secs),
+        "update_request()"
+    );
+
+    rq.prolong_request_lock("r1", 60, false)
+        .await
+        .expect("prolong_request_lock");
+    assert_eq!(
+        backend.last_timeout(),
+        Some(thirty_secs),
+        "prolong_request_lock()"
     );
 }
