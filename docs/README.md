@@ -83,7 +83,7 @@ root, so you can import them directly from `apify_client` — you never need the
 `apify_client::clients::<module>::<Type>` path. The complete set of re-exported option/parameter
 types is:
 
-- Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Actors: `ActorStartOptions`, `ActorCallOptions`, `ActorBuildOptions`, `ActorListOptions`
 - Tasks: `TaskStartOptions`, `TaskCallOptions`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`

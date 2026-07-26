@@ -67,7 +67,7 @@ lifecycle (create, build, run, fetch the run log, delete).
 | `update(fields)` | `&impl Serialize` | `Actor` | Updates the Actor. |
 | `delete()` | — | `()` | Deletes the Actor. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. |
+| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorCallOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. See [`ActorCallOptions`](#actorcalloptions) below. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
@@ -81,8 +81,8 @@ lifecycle (create, build, run, fetch the run log, delete).
 
 ### `ActorStartOptions`
 
-All fields are optional. Used by both `start` and `call` here (for `call`, `wait_for_finish` is
-server-side; the `wait_secs` argument controls client-side polling). The task equivalents,
+All fields are optional. Used by `start` (`call` takes the narrower
+[`ActorCallOptions`](#actorcalloptions) instead). The task equivalents,
 [`TaskStartOptions`/`TaskCallOptions`](tasks.md#taskstartoptions-and-taskcalloptions), are
 narrowed versions of this type — see that page for the differences.
 
@@ -98,6 +98,16 @@ narrowed versions of this type — see that page for the differences.
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
 | `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
+
+### `ActorCallOptions`
+
+Same fields as [`ActorStartOptions`](#actorstartoptions) except `wait_for_finish`, matching the
+JS reference client's `ActorCallOptions` (`Omit<ActorStartOptions, 'waitForFinish'>`).
+`wait_for_finish` is the server-side wait, which would otherwise let a caller silently block
+server-side (up to 60s) before `call`'s own client-side polling (via `wait_secs`) even begins —
+dropping the field removes that footgun. Use `From<ActorCallOptions> for ActorStartOptions` (or
+just construct an `ActorStartOptions` directly) if you need to pass an equivalent options value to
+`start` instead.
 
 The `wait_secs` argument of `call` (and of `wait_for_finish` on runs/builds) controls the
 client-side polling budget:

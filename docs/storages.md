@@ -185,12 +185,17 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 
 `RequestQueueClient::with_client_key(client_key: impl Into<String>) -> RequestQueueClient`
 consumes `self` and returns a new client that sends the given `clientKey` as a query parameter on
-every request. `client_key` should be a stable, unique identifier for *this* consumer (e.g. one
-value per crawler process), reused across calls so the API can attribute locks to their owner.
-It has no effect on unlocked operations (`get`, `add_request`, `list_requests`, …) beyond being
-sent along; it matters specifically for the locking methods below, whose lock ownership and
-`unlock_requests`'s scope are both keyed on it. See [locking requests](#locking-requests) below
-for a worked example.
+every request-level operation (`list_head`, `add_request`, `get_request`, `update_request`,
+`delete_request`, `list_and_lock_head`, the batch add/delete calls, `list_requests`,
+`prolong_request_lock`, `delete_request_lock`, `unlock_requests`). It is *not* sent on the
+queue-level metadata methods `get`, `update`, and `delete`, matching the JS reference client's
+omission of `clientKey` from `_get()` and friends there. `client_key` should be a stable, unique
+identifier for *this* consumer (e.g. one value per crawler process), reused across calls so the
+API can attribute locks to their owner. It has no effect on unlocked request-level operations
+(`add_request`, `list_requests`, …) beyond being sent along; it matters specifically for the
+locking methods
+below, whose lock ownership and `unlock_requests`'s scope are both keyed on it. See
+[locking requests](#locking-requests) below for a worked example.
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
@@ -361,19 +366,22 @@ let items = locked["items"].as_array().cloned().unwrap_or_default();
 println!("locked {} request(s)", items.len());
 
 for item in &items {
-    let id = item["id"].as_str().unwrap_or_default();
+    // Skip anything without a usable ID rather than issuing a request against an empty path.
+    let Some(id) = item["id"].as_str() else {
+        continue;
+    };
 
     // ... process the request here ...
+
+    // If processing takes longer than expected, extend the lock instead of losing it:
+    // queue_client.prolong_request_lock(id, 60, false).await?;
+
+    // Or, to give up on a request without deleting it, release just its lock:
+    // queue_client.delete_request_lock(id, false).await?;
 
     // Done: delete it. A missing/already-deleted request errors (see error handling).
     queue_client.delete_request(id).await?;
 }
-
-// If processing takes longer than expected, extend the lock instead of losing it:
-// queue_client.prolong_request_lock(id, 60, false).await?;
-
-// Or, to give up on a request without deleting it, release just its lock:
-// queue_client.delete_request_lock(id, false).await?;
 
 // Release every lock still held by this client (e.g. on shutdown):
 queue_client.unlock_requests().await?;

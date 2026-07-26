@@ -62,7 +62,7 @@ pub use http_client::RequestCompression;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
 // Re-export the most commonly used option/parameter types for ergonomic access.
-pub use clients::actor::{ActorBuildOptions, ActorStartOptions};
+pub use clients::actor::{ActorBuildOptions, ActorCallOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};

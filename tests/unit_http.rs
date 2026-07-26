@@ -10,8 +10,8 @@ use std::time::Duration;
 use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, HttpResponse};
 use apify_client::models::RequestQueueRequest;
 use apify_client::{
-    ApifyClient, ApifyClientError, BatchAddRequestsOptions, LastRunOptions, RequestCompression,
-    RunChargeOptions,
+    ActorCallOptions, ApifyClient, ApifyClientError, BatchAddRequestsOptions, LastRunOptions,
+    RequestCompression, RunChargeOptions, TaskStartOptions,
 };
 use async_trait::async_trait;
 
@@ -1338,5 +1338,101 @@ async fn request_queue_medium_timeout_methods_use_30s() {
         backend.last_timeout(),
         Some(thirty_secs),
         "prolong_request_lock()"
+    );
+}
+
+/// `TaskStartOptions::apply` hand-copies each field into query parameters (it cannot delegate to
+/// `ActorStartOptions::apply` since the two types diverge). This asserts every field lands under
+/// the expected spec query-parameter name, and that the fields `TaskStartOptions` deliberately
+/// omits relative to `ActorStartOptions` (`content_type` has no query parameter to begin with;
+/// `force_permission_level`'s `forcePermissionLevel` is the one that matters here) are absent —
+/// the task-run endpoint does not accept `forcePermissionLevel`, so sending it would previously
+/// have gone to the API unconditionally when this options type didn't exist yet.
+#[tokio::test]
+async fn task_start_sends_expected_query_params_and_omits_force_permission_level() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let options = TaskStartOptions {
+        build: Some("latest".to_owned()),
+        memory_mbytes: Some(1024),
+        timeout_secs: Some(60),
+        wait_for_finish: Some(30),
+        max_items: Some(100),
+        max_total_charge_usd: Some(5.5),
+        restart_on_error: Some(true),
+        webhooks: Some(vec![
+            serde_json::json!({"eventTypes": ["ACTOR.RUN.SUCCEEDED"]}),
+        ]),
+    };
+
+    client
+        .task("me~some-task")
+        .start(None::<&serde_json::Value>, options)
+        .await
+        .expect("task.start ok");
+
+    let url = backend.last_url().expect("a request was sent");
+    for expected in [
+        "build=latest",
+        "memory=1024",
+        "timeout=60",
+        "waitForFinish=30",
+        "maxItems=100",
+        "maxTotalChargeUsd=5.5",
+        "restartOnError=1",
+        "webhooks=",
+    ] {
+        assert!(
+            url.contains(expected),
+            "expected {expected:?} in task.start's query string, got {url}"
+        );
+    }
+    assert!(
+        !url.contains("forcePermissionLevel"),
+        "TaskStartOptions has no force_permission_level field; task.start must not send \
+         forcePermissionLevel, got {url}"
+    );
+}
+
+/// Companion to the `TaskCallOptions` narrowing: `ActorCallOptions` (like `TaskCallOptions`)
+/// omits `wait_for_finish` so a caller can't accidentally block server-side (up to 60s) before
+/// `call`'s own client-side `wait_secs` polling begins. This asserts the `runs` POST that
+/// `ActorClient::call` issues under the hood never carries a `waitForFinish` query parameter —
+/// there is simply no field on `ActorCallOptions` to set it from.
+#[tokio::test]
+async fn actor_call_does_not_send_wait_for_finish_on_start() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1","status":"SUCCEEDED"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    client
+        .actor("me~some-actor")
+        .call(
+            None::<&serde_json::Value>,
+            ActorCallOptions {
+                build: Some("latest".to_owned()),
+                ..Default::default()
+            },
+            Some(0),
+        )
+        .await
+        .expect("actor.call ok");
+
+    let urls = backend.urls();
+    let start_url = &urls[0];
+    assert!(
+        start_url.contains("/runs?build=latest"),
+        "expected the first request to be the `runs` start POST with build=latest, got {start_url}"
+    );
+    assert!(
+        !start_url.contains("waitForFinish"),
+        "ActorCallOptions has no wait_for_finish field; the start request must not send \
+         waitForFinish, got {start_url}"
     );
 }

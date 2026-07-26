@@ -63,6 +63,52 @@ impl ActorStartOptions {
     }
 }
 
+/// Options for [`ActorClient::call`].
+///
+/// Like [`ActorStartOptions`], but without `wait_for_finish` (the server-side wait): `call`'s
+/// separate `wait_secs` argument controls the client-side wait instead, so the two should not be
+/// set together. This mirrors the JS reference client's `ActorCallOptions`, typed as
+/// `Omit<ActorStartOptions, 'waitForFinish'>`.
+#[derive(Debug, Default, Clone)]
+pub struct ActorCallOptions {
+    /// Tag or number of the build to run (e.g. `latest`, `0.1.2`).
+    pub build: Option<String>,
+    /// Memory in megabytes allocated for the run.
+    pub memory_mbytes: Option<i64>,
+    /// Timeout for the run in seconds (`0` means no timeout).
+    pub timeout_secs: Option<i64>,
+    /// Maximum number of dataset items to charge (pay-per-result Actors).
+    pub max_items: Option<i64>,
+    /// Maximum total charge in USD (pay-per-event Actors).
+    pub max_total_charge_usd: Option<f64>,
+    /// Content type of the input body. Defaults to `application/json`.
+    pub content_type: Option<String>,
+    /// Whether to restart the run if it fails.
+    pub restart_on_error: Option<bool>,
+    /// Override the Actor's permission level for this run.
+    pub force_permission_level: Option<String>,
+    /// Ad-hoc webhooks to attach to this run. Serialized to base64-encoded JSON as the
+    /// `webhooks` query parameter, matching the reference clients.
+    pub webhooks: Option<Vec<serde_json::Value>>,
+}
+
+impl From<ActorCallOptions> for ActorStartOptions {
+    fn from(options: ActorCallOptions) -> Self {
+        ActorStartOptions {
+            build: options.build,
+            memory_mbytes: options.memory_mbytes,
+            timeout_secs: options.timeout_secs,
+            wait_for_finish: None,
+            max_items: options.max_items,
+            max_total_charge_usd: options.max_total_charge_usd,
+            content_type: options.content_type,
+            restart_on_error: options.restart_on_error,
+            force_permission_level: options.force_permission_level,
+            webhooks: options.webhooks,
+        }
+    }
+}
+
 /// Encodes a `webhooks` array as base64-encoded JSON, as required by the API. Shared by
 /// [`ActorStartOptions`] and the task equivalents
 /// ([`TaskStartOptions`](crate::clients::task::TaskStartOptions)), which carry the same
@@ -152,13 +198,17 @@ impl ActorClient {
     /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    ///
+    /// `options` is [`ActorCallOptions`], which (matching the JS reference client) excludes
+    /// `wait_for_finish` (the server-side wait) since the client-side `wait_secs` argument is how
+    /// callers control call's wait behavior.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
+        options: ActorCallOptions,
         wait_secs: Option<i64>,
     ) -> ApifyClientResult<ActorRun> {
-        let run = self.start(input, options).await?;
+        let run = self.start(input, options.into()).await?;
         // Use the root client's run client so polling targets the canonical run route.
         self.root.run(run.id).wait_for_finish(wait_secs).await
     }

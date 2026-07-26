@@ -34,6 +34,15 @@ to [Semantic Versioning](https://semver.org/).
   `content_type`. Callers passing `ActorStartOptions { .. }` literals to `task.start`/`task.call`
   need to switch to `TaskStartOptions`/`TaskCallOptions` (a strict subset of the same field
   names; `Default::default()` call sites are unaffected).
+- **Behavior/API change:** `ActorClient::call` now takes the new `ActorCallOptions`
+  (re-exported at the crate root) instead of `ActorStartOptions`, matching the JS reference
+  client's `ActorCallOptions = Omit<ActorStartOptions, 'waitForFinish'>` and bringing it to
+  parity with the `TaskClient::call`/`TaskCallOptions` narrowing above. Previously, a caller
+  could set `wait_for_finish` on the options passed to `call` and have the run block
+  server-side (up to 60s) before `call`'s own client-side `wait_secs` polling even began.
+  Callers passing `ActorStartOptions { .. }` literals to `actor.call` need to switch to
+  `ActorCallOptions` (a strict subset of the same field names; `Default::default()` call sites
+  are unaffected).
 
 ### Fixed
 - `RequestQueueClient` timeouts now match the JS reference client (`SMALL_TIMEOUT_MILLIS`/5s or
@@ -71,6 +80,13 @@ to [Semantic Versioning](https://semver.org/).
 - Filled in `ActorListOptions.sort_by`'s accepted values, `LastRunOptions`'s field types, the
   `WebhookDispatchClient::get()` return type, and `docs/schedules.md`'s undocumented `name`/
   `isExclusive` create fields.
+- Corrected `docs/storages.md`'s `with_client_key` description: `clientKey` is sent on the
+  request-level/locking methods only, not on every request — `RequestQueueClient::get`/`update`/
+  `delete` never send it, matching the JS reference client.
+- Fixed the request-lock example in `docs/storages.md`: the commented-out
+  `prolong_request_lock`/`delete_request_lock` lines now sit inside the loop (where `id` is in
+  scope) instead of after it, so uncommenting them compiles; and the example now skips items
+  with a missing/non-string `id` instead of calling `delete_request("")`.
 
 ### Internal
 - Extracted shared helpers to remove near-duplicate code: `ActorClient`/`TaskClient`
@@ -86,6 +102,11 @@ to [Semantic Versioning](https://semver.org/).
 - Added a live integration assertion for the standalone `ApifyClient::log(id)` accessor
   (`tests/actor_run.rs`), reusing the run already created by `run_actor_and_read_outputs`; it
   previously had only hermetic mock coverage.
+- Added hermetic `tests/unit_http.rs` coverage for the previously-untested
+  `TaskStartOptions::apply`/`From<TaskCallOptions>` mappings: a `task.start` call now has an
+  assertion that its query string carries every expected `TaskStartOptions` field and omits
+  `forcePermissionLevel`. Added matching coverage that `actor.call`'s underlying start request
+  never sends `waitForFinish`, now that it takes `ActorCallOptions`.
 - Corrected a doc comment on `run_update_set_status_message_and_delete` that misattributed the
   `runs().list()` CRUD-flow coverage to `run_actor_and_read_outputs` (it is actually covered by
   the separate `list_runs` test).
