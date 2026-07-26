@@ -183,7 +183,14 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 `iterate(options: StorageListOptions)` (lazy `ListIterator<RequestQueue>` auto-pagination),
 `get_or_create(name: Option<&str>)`.
 
-`RequestQueueClient` (chainable `with_client_key(key)` for lock coordination):
+`RequestQueueClient::with_client_key(client_key: impl Into<String>) -> RequestQueueClient`
+consumes `self` and returns a new client that sends the given `clientKey` as a query parameter on
+every request. `client_key` should be a stable, unique identifier for *this* consumer (e.g. one
+value per crawler process), reused across calls so the API can attribute locks to their owner.
+It has no effect on unlocked operations (`get`, `add_request`, `list_requests`, …) beyond being
+sent along; it matters specifically for the locking methods below, whose lock ownership and
+`unlock_requests`'s scope are both keyed on it. See [locking requests](#locking-requests) below
+for a worked example.
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
@@ -329,6 +336,50 @@ open-ended and most callers do not consume them structurally. Their shapes (read
 - `list_requests` → an object with `items` (the page of requests), `count`, `limit`, and
   `exclusiveStartId` for cursor continuation.
 - `unlock_requests` → an object reporting how many locks were released (`unlockedCount`).
+
+### Locking requests
+
+`list_and_lock_head`, `prolong_request_lock`, `delete_request_lock`, and `unlock_requests` let
+several consumers share one queue without processing the same request twice: a consumer locks a
+batch of requests off the head, processes them, and either deletes them (done) or releases the
+lock (so another consumer can pick them up). Give each consumer its own `RequestQueueClient` via
+`with_client_key` so the API can tell locks apart by owner — reuse the *same* client (and key)
+for the whole lock/prolong/unlock lifecycle of that consumer:
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let queue = client.request_queues().get_or_create(None).await?;
+// One client per consumer; `client_key` should be stable and unique per consumer process.
+let queue_client = client
+    .request_queue(&queue.id)
+    .with_client_key("worker-1");
+
+// Lock up to 10 requests from the head for 60 seconds.
+let locked = queue_client.list_and_lock_head(60, Some(10)).await?;
+let items = locked["items"].as_array().cloned().unwrap_or_default();
+println!("locked {} request(s)", items.len());
+
+for item in &items {
+    let id = item["id"].as_str().unwrap_or_default();
+
+    // ... process the request here ...
+
+    // Done: delete it. A missing/already-deleted request errors (see error handling).
+    queue_client.delete_request(id).await?;
+}
+
+// If processing takes longer than expected, extend the lock instead of losing it:
+// queue_client.prolong_request_lock(id, 60, false).await?;
+
+// Or, to give up on a request without deleting it, release just its lock:
+// queue_client.delete_request_lock(id, false).await?;
+
+// Release every lock still held by this client (e.g. on shutdown):
+queue_client.unlock_requests().await?;
+# Ok(())
+# }
+```
 
 ### `RequestQueueRequest` and request-queue return types
 

@@ -84,10 +84,11 @@ root, so you can import them directly from `apify_client` — you never need the
 types is:
 
 - Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Tasks: `TaskStartOptions`, `TaskCallOptions`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordOptions`
-- Request queues: `ListRequestsOptions`
+- Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
@@ -107,10 +108,10 @@ use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItem
 (The `apify_client::clients::<module>::<Type>` paths shown by `cargo doc`'s module tree also work,
 but the short crate-root path above is the supported, stable way to import these option types.)
 
-API resource/response **models** (`Actor`, `ActorRun`, `Build`, `Dataset`, `KeyValueStore`,
-`KeyValueStoreKey`, `KeyValueStoreKeysPage`, `KeyValueStoreRecord`, `RequestQueue`,
-`RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`, `Task`, `Schedule`,
-`Webhook`, `WebhookDispatch`, `ActorStoreListItem`, `User`, …) all live in the
+API resource/response **models** (`Actor`, `ActorVersion`, `ActorEnvVar`, `ActorRun`, `Build`,
+`Dataset`, `KeyValueStore`, `KeyValueStoreKey`, `KeyValueStoreKeysPage`, `KeyValueStoreRecord`,
+`RequestQueue`, `RequestQueueRequest`, `RequestQueueHead`, `RequestQueueOperationInfo`, `Task`,
+`Schedule`, `Webhook`, `WebhookDispatch`, `ActorStoreListItem`, `User`, …) all live in the
 `apify_client::models` module and are imported from there:
 
 ```rust,no_run
@@ -260,21 +261,33 @@ Every fallible method returns `Result<T, ApifyClientError>`. The variants are:
 - `Serde(..)` — (de)serialization failure.
 - `InvalidResponse(..)` / `InvalidArgument(..)` — unexpected response or bad argument.
 
-`get`/`delete` map a missing resource to `Ok(None)` / a no-op.
+`get`/`delete` on a **whole resource** (Actor, run, build, task, dataset, key-value store,
+request queue, schedule, webhook, …) map a missing resource (`404 record-not-found`) to
+`Ok(None)` / a successful no-op, rather than an `Err`. This does **not** extend to every
+sub-resource delete: `KeyValueStoreClient::delete_record`, `RequestQueueClient::delete_request`,
+and `RequestQueueClient::delete_request_lock` deliberately propagate a `404` as `Err` instead,
+matching the JS reference client — see [storages](storages.md) for details on those three.
 
 To inspect the API-level details of an error without matching every variant, use
 `ApifyClientError::as_api_error`, which returns `Some(&ApiError)` for the `Api` variant and
-`None` for any other (transport, timeout, serde, …):
+`None` for any other (transport, timeout, serde, …). The example below calls
+`delete_request` on a request id that does not exist, which errors (unlike the whole-resource
+`get`/`delete` shown above):
 
 ```rust,no_run
 # use apify_client::ApifyClient;
-# async fn run() {
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 # let client = ApifyClient::new("t");
-if let Err(err) = client.actor("nonexistent~actor").get().await {
-    if let Some(api) = err.as_api_error() {
-        eprintln!("API error {}: {}", api.status_code, api.message);
+let queue = client.request_queues().get_or_create(None).await?;
+match client.request_queue(&queue.id).delete_request("nonexistent-request-id").await {
+    Ok(()) => println!("deleted"),
+    Err(err) => {
+        if let Some(api) = err.as_api_error() {
+            eprintln!("API error {}: {}", api.status_code, api.message);
+        }
     }
 }
+# Ok(())
 # }
 ```
 

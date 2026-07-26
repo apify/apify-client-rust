@@ -262,9 +262,9 @@ impl KeyValueStoreClient {
     /// Deletes the record with the given key.
     ///
     /// Unlike the store's own [`delete`](Self::delete), a missing record is **not** treated as a
-    /// no-op: this call propagates a `404` as an error. That matches the JS reference client,
-    /// whose `deleteRecord` calls the HTTP client directly (no not-found catch), while only its
-    /// base whole-resource `_delete()` maps 404 to success.
+    /// no-op: this call propagates a `404` as an error, matching the JS reference client's
+    /// `deleteRecord`. See `delete_item`'s doc comment (`clients::base`) for the full rationale
+    /// behind this whole-resource-vs-sub-resource split, shared by every `delete_item` caller.
     pub async fn delete_record(&self, key: &str) -> ApifyClientResult<()> {
         delete_item(
             &self.ctx,

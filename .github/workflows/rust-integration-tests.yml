@@ -9,6 +9,9 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'build.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/rust-integration-tests.yml'
@@ -69,7 +72,17 @@ jobs:
         # programs in `tests/examples.rs` (test names prefixed `example_`) are exercised by the
         # standalone `Test examples` step below, so they are skipped here to keep the two
         # concerns separate.
-        run: cargo test --lib --tests --verbose -- --skip example_ --test-threads=4
+        #
+        # Defense-in-depth beyond the `APIFY_TOKEN` guard above: `set -o pipefail` plus the
+        # trailing grep make the step fail if cargo reports zero executed tests (e.g. a filter
+        # typo silently matching nothing), not just if a test fails outright.
+        run: |
+          set -o pipefail
+          cargo test --lib --tests --verbose -- --skip example_ --test-threads=4 | tee test_output.log
+          if ! grep -qE '[1-9][0-9]* passed' test_output.log; then
+            echo "::error::No tests were reported as passed; expected at least one 'N passed' summary line."
+            exit 1
+          fi
 
       # Standalone CI step that verifies the documentation examples actually work. It runs the
       # example programs from `examples/` end-to-end against the live API (via the `example_*`

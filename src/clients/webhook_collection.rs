@@ -16,14 +16,11 @@ pub struct WebhookCollectionClient {
 }
 
 impl WebhookCollectionClient {
+    /// Creates a webhook collection client. `base_url` may be the API root (top-level
+    /// `client.webhooks()`) or a specific resource's URL (nested `actor.webhooks()` /
+    /// `task.webhooks()`) — both mount the collection at a `webhooks` sub-path, so one
+    /// constructor covers both call sites.
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
-        Self {
-            ctx: ResourceContext::collection(http, base_url, "webhooks"),
-        }
-    }
-
-    /// Creates a webhook collection client nested under another resource.
-    pub(crate) fn with_base(http: HttpClient, base_url: &str) -> Self {
         Self {
             ctx: ResourceContext::collection(http, base_url, "webhooks"),
         }

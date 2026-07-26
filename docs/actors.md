@@ -14,6 +14,51 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `iterate(options)` | `ActorListOptions` | `ListIterator<Actor>` | Lazily iterates all Actors across pages (auto-pagination). |
 | `create(actor)` | `&impl Serialize` | `Actor` | Creates an Actor from a definition. |
 
+`ActorListOptions.sort_by` is a string field naming the Actor field to sort by (no fixed enum);
+accepted values per the
+[Get list of Actors API](https://docs.apify.com/api/v2/acts-get) are `createdAt` (default) and
+`stats.lastRunStartedAt`.
+
+### Creating an Actor
+
+`create` takes the same shape as the
+[Create Actor API](https://docs.apify.com/api/v2/acts-post): at minimum a `name`, plus
+`isPublic` and a `versions` array (each version needs `versionNumber`, `sourceType`, and
+source-type-specific fields — `sourceFiles` for `SOURCE_FILES`, `gitRepoUrl` for `GIT_REPO`,
+`tarballUrl` for `TARBALL`, `gitHubGistUrl` for `GITHUB_GIST`). Additional versions can be
+added later via `versions().create(...)` (see [Actor versions and environment
+variables](#actor-versions-and-environment-variables) below).
+
+```rust,no_run
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let actor = client
+    .actors()
+    .create(&json!({
+        "name": "my-rust-actor",
+        "isPublic": false,
+        "versions": [{
+            "versionNumber": "0.0",
+            "sourceType": "SOURCE_FILES",
+            "buildTag": "latest",
+            "sourceFiles": [
+                { "name": "Dockerfile", "format": "TEXT",
+                  "content": "FROM apify/actor-node:20\nCOPY . ./\nCMD node main.js" },
+                { "name": "main.js", "format": "TEXT", "content": "console.log('hi');" }
+            ]
+        }]
+    }))
+    .await?;
+println!("created actor {}", actor.id);
+# Ok(())
+# }
+```
+
+See the [`create_build_run_actor`](../examples/create_build_run_actor.rs) example for the full
+lifecycle (create, build, run, fetch the run log, delete).
+
 ## `ActorClient`
 
 | Method | Arguments | Returns | Description |
@@ -28,7 +73,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
 | `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `serde_json::Value` | Validates input against a specific build's schema (`build` tag/number; `None` = default). |
 | `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
-| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
+| `last_run_with_options(options)` | `LastRunOptions { status: Option<String>, origin: Option<String> }` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |
 | `runs()` | — | `RunCollectionClient` | The Actor's run collection. |
 | `version(n)` / `versions()` | `&str` / — | `ActorVersionClient` / collection | Version management. |
@@ -36,9 +81,10 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 
 ### `ActorStartOptions`
 
-All fields are optional. Used by both `start` and `call` here, and by the identical `start` /
-`call` methods on [tasks](tasks.md) (for `call`, `wait_for_finish` is server-side; the
-`wait_secs` argument controls client-side polling).
+All fields are optional. Used by both `start` and `call` here (for `call`, `wait_for_finish` is
+server-side; the `wait_secs` argument controls client-side polling). The task equivalents,
+[`TaskStartOptions`/`TaskCallOptions`](tasks.md#taskstartoptions-and-taskcalloptions), are
+narrowed versions of this type — see that page for the differences.
 
 | Field | Type | Description |
 |---|---|---|
@@ -171,7 +217,113 @@ println!("build {} status {:?}", build.id, build.status);
 
 ## Actor versions and environment variables
 
-`ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.
-`ActorVersionCollectionClient`: `list(options)`, `iterate(options)`, `create(version)`.
-`ActorEnvVarClient`: `get`, `update`, `delete`.
-`ActorEnvVarCollectionClient`: `list()`, `iterate()`, `create(env_var)`.
+Obtained from an `ActorClient` via `version(number)` / `versions()` (the version collection), and
+from an `ActorVersionClient` via `env_var(name)` / `env_vars()` (that version's env-var
+collection).
+
+### `ActorVersionCollectionClient`
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `list(options)` | `ListOptions { offset, limit, desc }` | `PaginationList<ActorVersion>` | Lists the Actor's versions. |
+| `iterate(options)` | `ListOptions` | `ListIterator<ActorVersion>` | Lazily iterates all versions across pages (auto-pagination). |
+| `create(version)` | `&impl Serialize` | `ActorVersion` | Creates a new version. |
+
+### `ActorVersionClient`
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `get()` | — | `Option<ActorVersion>` | Fetches the version (`None` if missing). |
+| `update(fields)` | `&impl Serialize` | `ActorVersion` | Updates the version. |
+| `delete()` | — | `()` | Deletes the version. |
+| `env_var(name)` | `&str` | `ActorEnvVarClient` | Client for one of the version's environment variables. |
+| `env_vars()` | — | `ActorEnvVarCollectionClient` | Client for the version's environment-variable collection. |
+
+`create`/`update` take the same shape as the
+[Create Actor version API](https://docs.apify.com/api/v2/actors-actor-id-versions-post): at
+minimum `versionNumber` and `sourceType` (`SOURCE_FILES`, `GIT_REPO`, `TARBALL`, or
+`GITHUB_GIST`), plus the source-type-specific field (`sourceFiles`, `gitRepoUrl`, `tarballUrl`,
+or `gitHubGistUrl`) and optionally `buildTag`, `envVars`, `applyEnvVarsToBuild`.
+
+### `ActorEnvVarCollectionClient`
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `list()` | — | `PaginationList<ActorEnvVar>` | Lists the version's environment variables. |
+| `iterate()` | — | `ListIterator<ActorEnvVar>` | Iterates the environment variables (single page; see below). |
+| `create(env_var)` | `&ActorEnvVar` | `ActorEnvVar` | Creates a new environment variable. |
+
+`iterate()` is not offset-paginated — the API returns every variable in one page — so it fetches
+once and yields all of them; it exists for interface parity with the other collection clients.
+
+### `ActorEnvVarClient`
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `get()` | — | `Option<ActorEnvVar>` | Fetches the environment variable by name (`None` if missing). |
+| `update(env_var)` | `&ActorEnvVar` | `ActorEnvVar` | Updates the environment variable. |
+| `delete()` | — | `()` | Deletes the environment variable. |
+
+### `ActorVersion` fields
+
+`ActorVersion` (from `apify_client::models`) is returned by `get`, `create`, `update`, and the
+version `list`.
+
+| Field | Type | Description |
+|---|---|---|
+| `version_number` | `String` | The version number, e.g. `0.1` (always present). |
+| `source_type` | `Option<String>` | Source type: `SOURCE_FILES`, `GIT_REPO`, `TARBALL`, or `GITHUB_GIST`. |
+| `extra` | `Extra` | Everything else — `sourceFiles`/`gitRepoUrl`/`tarballUrl`/`gitHubGistUrl`, `buildTag`, `envVars`, `applyEnvVarsToBuild`, and any other fields returned by the API. |
+
+### `ActorEnvVar` fields
+
+`ActorEnvVar` (from `apify_client::models`) is the payload for `env_vars().create(...)` and
+`env_var(name).update(...)`, and the type returned by `get`/`create`/`update`/`list`.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | The environment variable name (always present). |
+| `value` | `Option<String>` | The value; may be omitted in responses for secret variables. |
+| `is_secret` | `Option<bool>` | Whether the variable is a secret. |
+| `extra` | `Extra` | Any other fields returned by the API. |
+
+Create a version and set an environment variable on it:
+
+```rust,no_run
+use apify_client::models::ActorEnvVar;
+use apify_client::ApifyClient;
+use serde_json::json;
+
+# async fn run(client: ApifyClient, actor_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let actor_client = client.actor(actor_id);
+
+// Create version 0.1 with inline source files.
+let version = actor_client
+    .versions()
+    .create(&json!({
+        "versionNumber": "0.1",
+        "sourceType": "SOURCE_FILES",
+        "sourceFiles": [
+            { "name": "Dockerfile", "format": "TEXT",
+              "content": "FROM apify/actor-node:20\nCOPY . ./\nCMD node main.js" },
+            { "name": "main.js", "format": "TEXT", "content": "console.log('v0.1');" }
+        ]
+    }))
+    .await?;
+println!("created version {}", version.version_number);
+
+// Set an environment variable on that version.
+let version_client = actor_client.version(&version.version_number);
+let env_var = version_client
+    .env_vars()
+    .create(&ActorEnvVar {
+        name: "MY_VAR".to_string(),
+        value: Some("hello".to_string()),
+        is_secret: Some(false),
+        extra: Default::default(),
+    })
+    .await?;
+println!("set env var {} = {:?}", env_var.name, env_var.value);
+# Ok(())
+# }
+```

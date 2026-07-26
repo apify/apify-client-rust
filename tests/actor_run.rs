@@ -49,6 +49,21 @@ async fn run_actor_and_read_outputs() {
     let log = client.run(&run.id).log().get().await.expect("get run log");
     assert!(log.is_some(), "finished run should have a log");
 
+    // The standalone `ApifyClient::log(id)` accessor (`GET /v2/logs/{buildOrRunId}`) hits a
+    // different URL than the nested `run().log()` above (`.../actor-runs/{runId}/log`); only
+    // the nested form had a live test until now (the standalone form only had hermetic
+    // coverage in `tests/unit_http.rs`). Reuse this run's id, already available here, to cover
+    // it live too — it should return the same log content.
+    let standalone_log = client.log(&run.id).get().await.expect("get standalone log");
+    assert!(
+        standalone_log.is_some(),
+        "standalone log() should find the finished run's log"
+    );
+    assert_eq!(
+        standalone_log, log,
+        "standalone log() and run().log() should return the same content for the same id"
+    );
+
     // Fetch the raw log via the `raw` query parameter (LogOptions). The endpoint must accept
     // it and still return the log content.
     let raw_log = client
@@ -86,8 +101,9 @@ async fn run_actor_and_read_outputs() {
 /// Complex flow: the Run resource's remaining CRUD operations not exercised elsewhere —
 /// `update()`, `ApifyClient::set_status_message` (which delegates to `update()` with a fixed
 /// body shape), `delete()`, and confirming `get()` returns `None` afterward. Together with
-/// `run_actor_and_read_outputs` (create/get/list via `runs().list()`), this covers all five
-/// CRUD-flow operations `test_requirements.md` asks for on a resource that supports them.
+/// `run_actor_and_read_outputs` (create/get) and `list_runs` (list, via `runs().list()`), this
+/// covers all five CRUD-flow operations `test_requirements.md` asks for on a resource that
+/// supports them.
 #[tokio::test(flavor = "multi_thread")]
 async fn run_update_set_status_message_and_delete() {
     let client = require_client!();

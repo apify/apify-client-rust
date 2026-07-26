@@ -101,13 +101,19 @@ pub struct ActorRun {
 pub(crate) const TERMINAL_STATUSES: &[&str] =
     &["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT", "TIMED_OUT"];
 
+/// Shared by [`ActorRun::is_terminal`] and [`Build::is_terminal`], which have identical bodies
+/// (both check an `Option<String>` status field against [`TERMINAL_STATUSES`]) (DRY).
+fn is_terminal_status(status: &Option<String>) -> bool {
+    status
+        .as_deref()
+        .map(|s| TERMINAL_STATUSES.contains(&s))
+        .unwrap_or(false)
+}
+
 impl ActorRun {
     /// Returns `true` if the run has reached a terminal state.
     pub fn is_terminal(&self) -> bool {
-        self.status
-            .as_deref()
-            .map(|s| TERMINAL_STATUSES.contains(&s))
-            .unwrap_or(false)
+        is_terminal_status(&self.status)
     }
 }
 
@@ -140,10 +146,7 @@ pub struct Build {
 impl Build {
     /// Returns `true` if the build has reached a terminal state.
     pub fn is_terminal(&self) -> bool {
-        self.status
-            .as_deref()
-            .map(|s| TERMINAL_STATUSES.contains(&s))
-            .unwrap_or(false)
+        is_terminal_status(&self.status)
     }
 }
 

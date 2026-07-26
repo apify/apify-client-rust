@@ -48,8 +48,7 @@ pub struct ActorStartOptions {
 }
 
 impl ActorStartOptions {
-    /// Serializes these options into run-start query parameters. Shared by the Actor and
-    /// task start methods (DRY).
+    /// Serializes these options into run-start query parameters.
     pub(crate) fn apply(&self, params: &mut QueryParams) {
         params
             .add_str("build", self.build.clone())
@@ -60,16 +59,19 @@ impl ActorStartOptions {
             .add_float("maxTotalChargeUsd", self.max_total_charge_usd)
             .add_bool("restartOnError", self.restart_on_error)
             .add_str("forcePermissionLevel", self.force_permission_level.clone())
-            .add_str("webhooks", self.encoded_webhooks());
+            .add_str("webhooks", encode_webhooks(&self.webhooks));
     }
+}
 
-    /// Encodes the `webhooks` array as base64-encoded JSON, as required by the API.
-    fn encoded_webhooks(&self) -> Option<String> {
-        use base64::Engine;
-        let webhooks = self.webhooks.as_ref()?;
-        let json = serde_json::to_vec(webhooks).ok()?;
-        Some(base64::engine::general_purpose::STANDARD.encode(json))
-    }
+/// Encodes a `webhooks` array as base64-encoded JSON, as required by the API. Shared by
+/// [`ActorStartOptions`] and the task equivalents
+/// ([`TaskStartOptions`](crate::clients::task::TaskStartOptions)), which carry the same
+/// `webhooks` field (DRY).
+pub(crate) fn encode_webhooks(webhooks: &Option<Vec<serde_json::Value>>) -> Option<String> {
+    use base64::Engine;
+    let webhooks = webhooks.as_ref()?;
+    let json = serde_json::to_vec(webhooks).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(json))
 }
 
 /// Options for building an Actor.
@@ -252,20 +254,7 @@ impl ActorClient {
     /// parameters on `GET /v2/actors/{actorId}/runs/last` and match the reference client's
     /// `lastRun({ status, origin })`; leave a field as `None` to omit it.
     pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
-        let mut client = RunClient::new(
-            self.root.clone(),
-            self.ctx.http.clone(),
-            &self.ctx.url(None),
-            "runs",
-            "last",
-        );
-        if let Some(status) = options.status.as_deref() {
-            client.set_base_param("status", status);
-        }
-        if let Some(origin) = options.origin.as_deref() {
-            client.set_base_param("origin", origin);
-        }
-        client
+        crate::clients::run::last_run_client(self.ctx.http.clone(), &self.ctx.url(None), &options)
     }
 
     /// Returns a client for this Actor's build collection.
@@ -290,7 +279,7 @@ impl ActorClient {
 
     /// Returns a client for this Actor's webhook collection.
     pub fn webhooks(&self) -> WebhookCollectionClient {
-        WebhookCollectionClient::with_base(self.ctx.http.clone(), &self.ctx.url(None))
+        WebhookCollectionClient::new(self.ctx.http.clone(), &self.ctx.url(None))
     }
 
     /// The Actor's ID (or `username~name`) as provided.

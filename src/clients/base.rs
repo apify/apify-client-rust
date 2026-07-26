@@ -504,7 +504,8 @@ pub(crate) async fn get_raw(
 /// A `GET` returning the raw response (headers + body, no `data` envelope) and propagating any
 /// error status, including `404`. Used by endpoints whose response is not resource-shaped and
 /// for which a missing resource should surface as an error rather than `None` (dataset items
-/// listing/export, dataset statistics).
+/// listing/export). Note: dataset *statistics* (`DatasetClient::get_statistics`) goes through
+/// [`get_resource`] instead (it is envelope-wrapped, unlike items listing/export).
 pub(crate) async fn get_raw_required(
     ctx: &ResourceContext,
     sub_path: Option<&str>,

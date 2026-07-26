@@ -25,6 +25,15 @@ to [Semantic Versioning](https://semver.org/).
   array instead (matching the JS reference client), alongside the new retry/parallelism
   behavior above. Callers that relied on `batch_add_requests(...).await?` surfacing a partial
   batch failure as an `Err` must now inspect the returned `unprocessedRequests` array instead.
+- **Behavior/API change:** `TaskClient::start`/`TaskClient::call` now take the new
+  `TaskStartOptions`/`TaskCallOptions` (re-exported at the crate root) instead of
+  `ActorStartOptions`, matching the JS reference client's `Omit<ActorStartOptions, 'contentType'
+  | 'forcePermissionLevel'>` (and `TaskCallOptions` additionally omitting `wait_for_finish`).
+  Previously, a task run unconditionally sent `forcePermissionLevel` as a query parameter (not
+  defined by the spec for the task-run endpoint) and silently dropped a caller-set
+  `content_type`. Callers passing `ActorStartOptions { .. }` literals to `task.start`/`task.call`
+  need to switch to `TaskStartOptions`/`TaskCallOptions` (a strict subset of the same field
+  names; `Default::default()` call sites are unaffected).
 
 ### Fixed
 - `RequestQueueClient` timeouts now match the JS reference client (`SMALL_TIMEOUT_MILLIS`/5s or
@@ -32,6 +41,9 @@ to [Semantic Versioning](https://semver.org/).
   `list_head`, `add_request`, `get_request`, `batch_delete_requests` now use 5s;
   `list_and_lock_head`, the `requests/batch` POST, `list_requests`, and `unlock_requests` now use
   30s.
+- `rust-integration-tests.yml`'s `pull_request.paths` filter now includes `README.md`,
+  `docs/**`, and `build.rs`: a PR touching only those (which `cargo test --doc` and the
+  `User-Agent` runtime-version build script depend on) previously would not trigger CI at all.
 
 ### Documentation
 - Documented `batch_add_requests_with_options`/`BatchAddRequestsOptions` in `docs/storages.md`,
@@ -41,6 +53,42 @@ to [Semantic Versioning](https://semver.org/).
 - Added `update(fields)` calls to `examples/storages.rs` for all three storage types.
 - Noted the rustdoc `# `-hidden-line convention in `docs/README.md`, for readers viewing the
   docs pages as plain Markdown.
+- Fixed a self-contradictory `docs/README.md` error-handling example (prose said a call resolves
+  a missing resource to `Ok(None)`, but the snippet demonstrated the `Err` branch on that same
+  call); the example now demonstrates `as_api_error()` on a call that genuinely errors
+  (`RequestQueueClient::delete_request` on a nonexistent id), and the prose now notes the
+  `delete_record`/`delete_request`/`delete_request_lock` 404-as-`Err` exception.
+- Added a "Creating an Actor" section to `docs/actors.md`.
+- Documented `ActorVersionClient`/`ActorVersionCollectionClient`/`ActorEnvVarClient`/
+  `ActorEnvVarCollectionClient` in full (method tables, payload shapes, model fields, a runnable
+  example) in `docs/actors.md`, and added `ActorVersion`/`ActorEnvVar` to the model list in
+  `docs/README.md`.
+- Documented `RequestQueueClient::with_client_key` and added a request-queue locking example
+  (`with_client_key` + `list_and_lock_head`/`prolong_request_lock`/`delete_request_lock`/
+  `unlock_requests`) to `docs/storages.md`.
+- Added `BatchAddRequestsOptions` to the Imports list and `TaskStartOptions`/`TaskCallOptions`
+  to a new Tasks entry in `docs/README.md`.
+- Filled in `ActorListOptions.sort_by`'s accepted values, `LastRunOptions`'s field types, the
+  `WebhookDispatchClient::get()` return type, and `docs/schedules.md`'s undocumented `name`/
+  `isExclusive` create fields.
+
+### Internal
+- Extracted shared helpers to remove near-duplicate code: `ActorClient`/`TaskClient`
+  `last_run_with_options` now both call a single `clients::run::last_run_client` helper;
+  `ActorRun::is_terminal`/`Build::is_terminal` now both call a single `is_terminal_status`
+  helper; `ActorStartOptions`/`TaskStartOptions`'s webhook-encoding now share one
+  `clients::actor::encode_webhooks` function; `WebhookCollectionClient::with_base` (byte-for-byte
+  identical to `new`) was removed in favor of `new`.
+- Removed the unused `_root: ApifyClient` parameter from `RunClient::new` (and the `.clone()` at
+  each of its three call sites, which existed only to satisfy it).
+
+### Tests
+- Added a live integration assertion for the standalone `ApifyClient::log(id)` accessor
+  (`tests/actor_run.rs`), reusing the run already created by `run_actor_and_read_outputs`; it
+  previously had only hermetic mock coverage.
+- Corrected a doc comment on `run_update_set_status_message_and_delete` that misattributed the
+  `runs().list()` CRUD-flow coverage to `run_actor_and_read_outputs` (it is actually covered by
+  the separate `list_runs` test).
 
 ## [0.6.1] - 2026-07-14
 

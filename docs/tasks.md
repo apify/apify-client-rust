@@ -20,13 +20,38 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `get()` | — | `Option<Task>` | Fetches the task. |
 | `update(fields)` | `&impl Serialize` | `Task` | Updates the task. |
 | `delete()` | — | `()` | Deletes the task. |
-| `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. See [`ActorStartOptions`](actors.md#actorstartoptions) for the full field list. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. Same [`ActorStartOptions`](actors.md#actorstartoptions) as `start`. |
+| `start(input, options)` | `Option<&impl Serialize>`, `TaskStartOptions` | `ActorRun` | Starts a run. See [`TaskStartOptions`](#taskstartoptions-and-taskcalloptions) below. |
+| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `TaskCallOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. See [`TaskCallOptions`](#taskstartoptions-and-taskcalloptions) below. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Option<Value>` / `Value` | The task's saved input. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
-| `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
+| `last_run_with_options(options)` | `LastRunOptions { status: Option<String>, origin: Option<String> }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
 | `runs()` | — | `RunCollectionClient` | The task's runs. |
 | `webhooks()` | — | `WebhookCollectionClient` | The task's webhooks. |
+
+### `TaskStartOptions` and `TaskCallOptions`
+
+Both are narrowed versions of [`ActorStartOptions`](actors.md#actorstartoptions), matching the
+JS reference client's `TaskStartOptions`/`TaskCallOptions`. A task's input content type is fixed
+and a task run does not accept a permission-level override, so neither type has a `content_type`
+or `force_permission_level` field (present on `ActorStartOptions` for Actor `start`/`call`).
+`TaskCallOptions` additionally drops `wait_for_finish` (the server-side wait): `call`'s separate
+`wait_secs` argument is how you control call's wait behavior, so the two should not be set
+together.
+
+`TaskStartOptions` fields (all optional):
+
+| Field | Type | Description |
+|---|---|---|
+| `build` | `Option<String>` | Tag or number of the build to run (e.g. `latest`, `0.1.2`). |
+| `memory_mbytes` | `Option<i64>` | Memory in megabytes allocated for the run. |
+| `timeout_secs` | `Option<i64>` | Timeout for the run in seconds (`0` means no timeout). |
+| `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
+| `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
+| `max_total_charge_usd` | `Option<f64>` | Maximum total charge in USD (pay-per-event Actors). |
+| `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
+| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. |
+
+`TaskCallOptions` has the same fields except `wait_for_finish`.
 
 ### Creating a task
 

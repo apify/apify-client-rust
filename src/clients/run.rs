@@ -36,6 +36,27 @@ pub struct LastRunOptions {
     pub origin: Option<String>,
 }
 
+/// Builds a `RunClient` for a resource's `runs/last` sub-path, applying `status`/`origin` as
+/// base query parameters from `options`. Shared by
+/// [`ActorClient::last_run_with_options`](crate::clients::actor::ActorClient::last_run_with_options)
+/// and
+/// [`TaskClient::last_run_with_options`](crate::clients::task::TaskClient::last_run_with_options),
+/// which are otherwise near-identical (DRY).
+pub(crate) fn last_run_client(
+    http: HttpClient,
+    base_url: &str,
+    options: &LastRunOptions,
+) -> RunClient {
+    let mut client = RunClient::new(http, base_url, "runs", "last");
+    if let Some(status) = options.status.as_deref() {
+        client.set_base_param("status", status);
+    }
+    if let Some(origin) = options.origin.as_deref() {
+        client.set_base_param("origin", origin);
+    }
+    client
+}
+
 /// Options for resurrecting a finished run.
 #[derive(Debug, Default, Clone)]
 pub struct RunResurrectOptions {
@@ -88,13 +109,7 @@ pub struct RunClient {
 }
 
 impl RunClient {
-    pub(crate) fn new(
-        _root: crate::client::ApifyClient,
-        http: HttpClient,
-        base_url: &str,
-        resource_path: &str,
-        id: &str,
-    ) -> Self {
+    pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
         Self {
             ctx: ResourceContext::single(http, base_url, resource_path, id),
             id: id.to_string(),
@@ -125,9 +140,9 @@ impl RunClient {
     }
 
     /// Aborts the run. `gracefully` is optional, matching the reference client's optional
-    /// `gracefully` option and the Go sibling's `Option<bool>`: `Some(true)` lets the run
-    /// perform cleanup first, `Some(false)` aborts immediately, and `None` omits the parameter
-    /// entirely so the server applies its default (immediate abort).
+    /// `gracefully` option: `Some(true)` lets the run perform cleanup first, `Some(false)`
+    /// aborts immediately, and `None` omits the parameter entirely so the server applies its
+    /// default (immediate abort).
     pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params.add_bool("gracefully", gracefully);
@@ -182,6 +197,15 @@ impl RunClient {
     ///
     /// The charge endpoint returns an empty body on success, so this issues the request
     /// directly and treats any 2xx response as success (errors still surface normally).
+    ///
+    /// Note: like every other request issued through this `ctx`, the URL still carries this
+    /// client's base params (e.g. `status`/`origin` when this `RunClient` came from
+    /// `actor.last_run()`/`task.last_run()`) even though the explicit `params` passed here are
+    /// empty — `post_raw_with_extra_header` merges `ctx`'s base params in unconditionally, the
+    /// same as every other request helper. This is an intentional parity choice (the JS reference
+    /// client's internal `_params()` always includes its instance's base params on every
+    /// request, charge included) rather than an oversight; charging a `last_run()`-derived client
+    /// is unusual, and the server ignores unrecognized query params on this endpoint regardless.
     pub async fn charge(&self, options: RunChargeOptions) -> ApifyClientResult<()> {
         let count = options.count.unwrap_or(1);
         let idempotency_key = options

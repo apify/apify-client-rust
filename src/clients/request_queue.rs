@@ -303,7 +303,8 @@ impl RequestQueueClient {
     ///
     /// Unlike [`delete`](Self::delete) (the whole queue), a missing request is **not** treated
     /// as a no-op: this call propagates a `404` as an error, matching the JS reference client's
-    /// `deleteRequest` (which calls the HTTP client directly, with no not-found catch).
+    /// `deleteRequest`. See `delete_item`'s doc comment (`clients::base`) for the full rationale
+    /// behind this whole-resource-vs-sub-resource split, shared by every `delete_item` caller.
     pub async fn delete_request(&self, id: &str) -> ApifyClientResult<()> {
         delete_item(
             &self.ctx,

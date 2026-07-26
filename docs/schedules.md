@@ -27,7 +27,9 @@ Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single
 `create` takes the same shape as the
 [Create schedule API](https://docs.apify.com/api/v2/schedules-post): `cronExpression` and
 `isEnabled` are required, plus an `actions` array of `{ type, actorId | actorTaskId, ... }` objects
-describing what the schedule runs (`type` is `"RUN_ACTOR"` or `"RUN_ACTOR_TASK"`).
+describing what the schedule runs (`type` is `"RUN_ACTOR"` or `"RUN_ACTOR_TASK"`). Optional
+fields include `name` (a technical name for the schedule) and `isExclusive` (prevent a new
+invocation from starting while a previous one triggered by this schedule is still running).
 
 ```rust,no_run
 use apify_client::ApifyClient;
