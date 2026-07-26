@@ -202,10 +202,12 @@ impl RunClient {
     /// client's base params (e.g. `status`/`origin` when this `RunClient` came from
     /// `actor.last_run()`/`task.last_run()`) even though the explicit `params` passed here are
     /// empty — `post_raw_with_extra_header` merges `ctx`'s base params in unconditionally, the
-    /// same as every other request helper. This is an intentional parity choice (the JS reference
-    /// client's internal `_params()` always includes its instance's base params on every
-    /// request, charge included) rather than an oversight; charging a `last_run()`-derived client
-    /// is unusual, and the server ignores unrecognized query params on this endpoint regardless.
+    /// same as every other request helper. This is actually a divergence from the JS reference
+    /// client: JS's `charge()` builds its `AxiosRequestConfig` manually with no `params` key at
+    /// all, so it is the one method that does not go through the instance's `_params()` and
+    /// therefore never sends base params. The Rust behavior is left as-is (rather than special-
+    /// cased to suppress base params) because charging a `last_run()`-derived client is unusual,
+    /// and the server ignores unrecognized query params on this endpoint regardless.
     pub async fn charge(&self, options: RunChargeOptions) -> ApifyClientResult<()> {
         let count = options.count.unwrap_or(1);
         let idempotency_key = options
@@ -288,8 +290,8 @@ impl RunClient {
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
-    /// [`LogOptions`] (e.g. [`LogOptions::raw`] to stream the unprocessed log, which is the
-    /// form the JS reference's log redirection consumes internally).
+    /// [`crate::LogOptions`] (e.g. [`crate::LogOptions::raw`] to stream the unprocessed log,
+    /// which is the form the JS reference's log redirection consumes internally).
     ///
     /// This is a Rust-specific convenience that simply forwards `LogOptions` to
     /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`

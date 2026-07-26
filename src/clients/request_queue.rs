@@ -51,13 +51,13 @@ pub struct BatchAddRequestsOptions {
     /// If `true`, adds all requests to the beginning of the queue. Default `false`.
     pub forefront: Option<bool>,
     /// Maximum number of retry attempts for a chunk's rate-limited (`unprocessedRequests`)
-    /// requests. Default [`DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES`] (3).
+    /// requests. Default `DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES` (3).
     pub max_unprocessed_requests_retries: Option<u32>,
     /// Maximum number of `requests/batch` API calls in flight at once. Default
-    /// [`DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS`] (5).
+    /// `DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS` (5).
     pub max_parallel: Option<usize>,
     /// Minimum delay before the first unprocessed-request retry; doubles (with jitter) on each
-    /// subsequent retry. Default [`DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES`] (500ms).
+    /// subsequent retry. Default `DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES` (500ms).
     pub min_delay_between_unprocessed_requests_retries: Option<Duration>,
 }
 
@@ -358,17 +358,17 @@ impl RequestQueueClient {
     /// Adds multiple requests to the queue, matching the reference client's `batchAddRequests`
     /// convenience behavior:
     ///
-    /// - Requests are chunked to at most [`MAX_REQUESTS_PER_BATCH_OPERATION`] (25) per API call,
-    ///   and each chunk is further sliced (via [`slice_by_byte_length`]) so its serialized JSON
-    ///   payload stays under the API's byte-size limit ([`MAX_PAYLOAD_SIZE_BYTES`], less a small
+    /// - Requests are chunked to at most `MAX_REQUESTS_PER_BATCH_OPERATION` (25) per API call,
+    ///   and each chunk is further sliced (via `slice_by_byte_length`) so its serialized JSON
+    ///   payload stays under the API's byte-size limit (`MAX_PAYLOAD_SIZE_BYTES`, less a small
     ///   safety buffer).
     /// - Up to `options.max_parallel` chunk calls are in flight at once (bounded concurrency,
-    ///   default [`DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS`]).
+    ///   default `DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS`).
     /// - Any `unprocessedRequests` in a chunk's response (typically caused by rate limiting) are
     ///   retried up to `options.max_unprocessed_requests_retries` additional times
-    ///   (default [`DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES`]), with exponential backoff seeded
+    ///   (default `DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES`), with exponential backoff seeded
     ///   by `options.min_delay_between_unprocessed_requests_retries`
-    ///   (default [`DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES`]).
+    ///   (default `DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES`).
     ///
     /// A chunk call that fails outright (network/API error, after the transport's own retries are
     /// exhausted) does not fail this call: its still-unsubmitted requests are instead folded into
