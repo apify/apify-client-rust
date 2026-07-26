@@ -326,3 +326,69 @@ async fn record_public_url_is_fetchable() {
 
     store_client.delete().await.expect("delete store");
 }
+
+/// Builds a keys-list public URL (the collection-level sibling of
+/// [`record_public_url_is_fetchable`]'s record URL) and confirms it is well-formed and
+/// fetchable without auth.
+///
+/// The URL points at the public keys endpoint; when the store exposes a URL-signing secret key
+/// the URL additionally carries an HMAC `signature`. We fetch it with a bare HTTP client (no
+/// Authorization header) and require success, then check the returned key listing includes the
+/// key we just wrote.
+#[tokio::test(flavor = "multi_thread")]
+async fn keys_public_url_is_fetchable() {
+    let client = require_client!();
+    let name = common::unique_name("kvs-keys-sig");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&cleanup_id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    store_client
+        .set_record_json("OUTPUT", &json!({ "signed": true }))
+        .await
+        .expect("set record");
+
+    let url = store_client
+        .create_keys_public_url(None)
+        .await
+        .expect("keys public url");
+    assert!(url.contains("/key-value-stores/"));
+    assert!(url.contains("/keys"));
+
+    // Fetch the URL with a bare HTTP client (no Authorization header).
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .expect("fetch public keys url");
+    assert!(
+        resp.status().is_success(),
+        "public keys URL should be fetchable, got {} for {url}",
+        resp.status()
+    );
+    let body: serde_json::Value = resp.json().await.expect("parse keys response as JSON");
+    // The public URL hits the same route as the authenticated `list_keys` call (just under the
+    // public origin with a `signature` instead of a bearer token), so the response is still
+    // wrapped in the standard `data` envelope.
+    let keys = body
+        .get("data")
+        .and_then(|d| d.get("items"))
+        .and_then(|v| v.as_array())
+        .expect("keys response should have a `data.items` array");
+    assert!(
+        keys.iter()
+            .any(|k| k.get("key").and_then(|k| k.as_str()) == Some("OUTPUT")),
+        "keys listing should include the OUTPUT key we just wrote, got {body}"
+    );
+
+    store_client.delete().await.expect("delete store");
+}

@@ -289,8 +289,12 @@ impl HttpClient {
                 .insert(HEADER_AUTHORIZATION.to_string(), format!("Bearer {token}"));
         }
 
-        // Compress the request body once (not per attempt) when it is large enough, mirroring the
-        // reference client. The API accepts both brotli- and gzip-encoded request bodies.
+        // Compress the request body once (not per attempt) when it is large enough. The bytes
+        // sent on the wire for a given (non-streamed) body end up the same as the reference
+        // client's, which re-runs a compressing interceptor on every retry against the original
+        // uncompressed config; compressing once up front here and reusing the result is not the
+        // same mechanism, just an equivalent outcome. The API accepts both brotli- and
+        // gzip-encoded request bodies.
         maybe_compress_request(&mut request, self.compression);
 
         let method_str = request.method.as_str().to_string();
@@ -365,8 +369,12 @@ impl HttpClient {
 /// Compresses `request.body` in place when it is present, at least [`MIN_COMPRESS_BYTES`] long,
 /// and no `Content-Encoding` is already set, adding the matching `Content-Encoding` header.
 ///
-/// The algorithm is chosen by `compression` (defaulting to brotli). The size threshold and the
-/// "compress once, before retries" behaviour mirror the reference client.
+/// The algorithm is chosen by `compression` (defaulting to brotli). The size threshold mirrors
+/// the reference client. Unlike the reference client (whose axios interceptor re-runs on every
+/// retry against the original uncompressed config), this compresses the body once up front and
+/// reuses the encoded bytes across attempts; for a non-streamed body this produces the same
+/// bytes on the wire, but is a different mechanism, not a literal mirror of "compress once,
+/// before retries."
 fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompression) {
     let Some(body) = request.body.as_ref() else {
         return;

@@ -280,9 +280,13 @@ impl RunClient {
 
     /// Opens a live stream of the run's log for redirection.
     ///
-    /// Convenience equivalent to `run.log().stream()` (mirrors the reference client's
-    /// `getStreamedLog`): yields log chunks as they arrive, so callers can forward them to
-    /// their own logger/stdout while the run is in progress.
+    /// Convenience equivalent to `run.log().stream()`: yields raw log chunks as they arrive, so
+    /// callers can forward them to their own logger/stdout while the run is in progress. This is
+    /// a Rust-specific raw-chunk convenience, not a mirror of the JS reference client's
+    /// `getStreamedLog`, which resolves the Actor/run name and returns a `StreamedLog` object
+    /// wrapping a prefixed, parsed `Log` — see
+    /// [`get_streamed_log_with_options`](Self::get_streamed_log_with_options) for the fuller
+    /// disclaimer.
     pub async fn get_streamed_log(
         &self,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {

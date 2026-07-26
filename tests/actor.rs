@@ -417,3 +417,67 @@ async fn actor_env_var_crud_flow() {
         "env var should be gone after delete"
     );
 }
+
+/// `ActorClient::webhooks()` (the Actor-scoped webhook sub-collection, distinct from both the
+/// top-level `client.webhooks()` and the task-scoped `task.webhooks()`, both tested elsewhere)
+/// and `ActorClient::default_build()`, neither of which is exercised by `actor_crud_flow`.
+#[tokio::test(flavor = "multi_thread")]
+async fn actor_webhooks_and_default_build() {
+    let client = require_client!();
+    let name = actor_name("actor-webhooks");
+
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
+    let actor_client = client.actor(&actor.id);
+
+    // Simple GET: the Actor's webhook collection (likely empty, but the endpoint must respond
+    // and must hit the Actor-scoped URL, not the top-level or task-scoped one).
+    let webhooks = actor_client
+        .webhooks()
+        .list(Default::default())
+        .await
+        .expect("list actor webhooks");
+    assert!(webhooks.total >= 0);
+
+    // Build the `0.0` version tagged `latest` and wait for it to finish, so the Actor has a
+    // resolvable default build.
+    let build = actor_client
+        .build(
+            "0.0",
+            apify_client::ActorBuildOptions {
+                tag: Some("latest".to_string()),
+                wait_for_finish: Some(300),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("start build");
+    client
+        .build(&build.id)
+        .wait_for_finish(Some(300))
+        .await
+        .expect("wait for build");
+
+    // `default_build()` resolves the Actor's default build (the one tagged `latest`) and returns
+    // a client for it; the build it resolves to must be the one just built.
+    let default_build_client = actor_client
+        .default_build(Some(300))
+        .await
+        .expect("default_build");
+    let fetched = default_build_client
+        .get()
+        .await
+        .expect("get default build")
+        .expect("default build should exist");
+    assert_eq!(fetched.id, build.id);
+}

@@ -12,9 +12,10 @@
 | `list(options)` | `StoreListOptions` | `PaginationList<ActorStoreListItem>` | One page of Store Actors. |
 | `iterate(options)` | `StoreListOptions` | `StoreActorIterator` | Lazy, page-fetching iterator. |
 
-`StoreListOptions`: `offset`, `limit`, `search`, `sort_by`, `category`, `username`,
-`pricing_model`. `limit` means a single page's size for `list`, but a cap on the *total* number of
-items yielded for `iterate` (see below).
+`StoreListOptions`: `offset: Option<i64>`, `limit: Option<i64>`, `search: Option<String>`,
+`sort_by: Option<String>`, `category: Option<String>`, `username: Option<String>`,
+`pricing_model: Option<String>`. `limit` means a single page's size for `list`, but a cap on the
+*total* number of items yielded for `iterate` (see below).
 
 `StoreActorIterator` is a type alias for `ListIterator<ActorStoreListItem>` (the shared iterator
 returned by every collection's `iterate`), re-exported at the crate root alongside `ListIterator`

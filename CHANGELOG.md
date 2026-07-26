@@ -57,6 +57,13 @@ to [Semantic Versioning](https://semver.org/).
 - `rust-integration-tests.yml`'s `pull_request.paths` filter now includes `README.md`,
   `docs/**`, and `build.rs`: a PR touching only those (which `cargo test --doc` and the
   `User-Agent` runtime-version build script depend on) previously would not trigger CI at all.
+- `tests/config.rs::make_client_honors_apify_api_url_env` no longer mutates the real
+  `APIFY_TOKEN`/`APIFY_API_URL` process environment variables, which every other test reads via
+  `require_client!`/`make_client`; since `#[tokio::test]`s in the suite run concurrently within
+  one process, that mutation could previously race any test that called `make_client` during the
+  window. It now calls a new env-free `common::make_client_from(token, api_url)` (the core
+  `make_client` delegates to) directly, exercising the identical resolution logic with no
+  process-global state and no race.
 
 ### Documentation
 - Documented `batch_add_requests_with_options`/`BatchAddRequestsOptions` in `docs/storages.md`,
@@ -91,6 +98,25 @@ to [Semantic Versioning](https://semver.org/).
   `prolong_request_lock`/`delete_request_lock` lines now sit inside the loop (where `id` is in
   scope) instead of after it, so uncommenting them compiles; and the example now skips items
   with a missing/non-string `id` instead of calling `delete_request("")`.
+- Corrected three doc comments that overstated JS reference-client parity (code was already
+  correct; only the wording was wrong): `KeyValueStoreKeysIterator`'s doc
+  (`src/clients/key_value_store.rs`) no longer claims its `isTruncated`-based termination
+  "yields the same result as" JS's `listKeys()`, which actually loops on
+  `nextExclusiveStartKey !== null` and never consults `isTruncated` — it's now described as an
+  intentional, arguably more robust, divergence. `RunClient::get_streamed_log`'s doc
+  (`src/clients/run.rs`) no longer claims it "mirrors ... `getStreamedLog`", which in JS returns a
+  `StreamedLog` object (resolved actor/run name, prefixed `Log`, parsed lines) rather than a raw
+  chunk stream; it now matches its own `get_streamed_log_with_options` sibling's existing, more
+  accurate disclaimer. `HttpClient::call`/`maybe_compress_request`'s doc comments
+  (`src/http_client.rs`) no longer claim the reference client "compresses once, before retries" —
+  it actually recompresses via a per-attempt axios interceptor; the comments now describe the
+  bytes-on-wire equivalence without misattributing the mechanism.
+- Added per-field types to the `StoreListOptions` (`docs/misc.md`) and `ListKeysOptions`
+  (`docs/storages.md`) field lists, and stated the `ListOptions` argument type inline for
+  `WebhookDispatchCollectionClient::list`/`iterate` (`docs/webhooks.md`), matching the sibling
+  `WebhookCollectionClient` table's level of detail.
+- `src/lib.rs`'s crate-level rustdoc no longer says the client mirrors "the official JavaScript
+  and Python clients" — the reference is JS-only.
 
 ### Internal
 - Extracted shared helpers to remove near-duplicate code: `ActorClient`/`TaskClient`
@@ -114,6 +140,18 @@ to [Semantic Versioning](https://semver.org/).
 - Corrected a doc comment on `run_update_set_status_message_and_delete` that misattributed the
   `runs().list()` CRUD-flow coverage to `run_actor_and_read_outputs` (it is actually covered by
   the separate `list_runs` test).
+- Added `tests/actor.rs::actor_webhooks_and_default_build`, covering `ActorClient::webhooks()`
+  (a distinct endpoint from the top-level `client.webhooks()` and task-scoped `task.webhooks()`,
+  both already tested) and `ActorClient::default_build()`, neither of which previously had any
+  coverage.
+- Added `tests/key_value_store.rs::keys_public_url_is_fetchable`, covering
+  `KeyValueStoreClient::create_keys_public_url()`, previously untested unlike its sibling
+  convenience methods `get_record_public_url`/`Dataset::create_items_public_url`.
+- Documented, in the `run_update_set_status_message_and_delete` test's `ACTOR_RUN_ID` env-var
+  comment (`tests/actor_run.rs`), why that mutation is safe despite running in a suite of
+  concurrent `#[tokio::test]`s: `ACTOR_RUN_ID` has exactly one reader in the crate
+  (`ApifyClient::set_status_message`) and exactly one caller of that method in the whole test
+  suite (this test), so no other test can observe or clobber it.
 
 ## [0.6.1] - 2026-07-14
 

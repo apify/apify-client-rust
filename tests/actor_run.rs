@@ -130,8 +130,14 @@ async fn run_update_set_status_message_and_delete() {
     );
 
     // `ApifyClient::set_status_message` reads `ACTOR_RUN_ID` from the environment and delegates
-    // to `run(id).update(...)`. Env vars are process-global, so this test owns the variable for
-    // its duration and restores it afterward.
+    // to `run(id).update(...)`. Env vars are process-global and `#[tokio::test]`s in this binary
+    // run concurrently, so mutating one is only safe if nothing else in the suite reads it
+    // during the window. That holds here: `ACTOR_RUN_ID` has exactly one reader in the whole
+    // crate (`ApifyClient::set_status_message`, src/client.rs) and exactly one caller of that
+    // method in the whole test suite (this test) — so there is no other test that could observe
+    // this test's temporary value, or whose own read this test could clobber. This test still
+    // owns the variable for its duration and restores it afterward (including on the pre-existing
+    // value, if any) to leave the environment as it found it.
     let prev_run_id = std::env::var("ACTOR_RUN_ID").ok();
     std::env::set_var("ACTOR_RUN_ID", &run.id);
     let via_set_status_message = client

@@ -17,7 +17,9 @@ const DEFAULT_API_URL: &str = "https://api.apify.com/v2";
 
 /// Builds an [`ApifyClient`] configured from the environment.
 ///
-/// Returns `None` (so the caller can skip) if `APIFY_TOKEN` is not set.
+/// Returns `None` (so the caller can skip) if `APIFY_TOKEN` is not set. Reads the environment
+/// once and delegates to [`make_client_from`], which takes no process state — see that function
+/// for why this split exists.
 pub fn make_client() -> Option<ApifyClient> {
     let token = std::env::var("APIFY_TOKEN")
         .ok()
@@ -25,6 +27,23 @@ pub fn make_client() -> Option<ApifyClient> {
     let api_url = std::env::var("APIFY_API_URL")
         .ok()
         .filter(|u| !u.is_empty());
+    make_client_from(Some(token), api_url)
+}
+
+/// Builds an [`ApifyClient`] from an explicit token/API-URL pair, with no process-environment
+/// reads at all.
+///
+/// This is the env-free core of [`make_client`], split out so tests that want to exercise the
+/// `APIFY_API_URL` -> `base_url` resolution path don't have to mutate the real
+/// `APIFY_TOKEN`/`APIFY_API_URL` process environment variables to do it. Those are read by
+/// every other test in the suite via `require_client!`/`make_client`, and `#[tokio::test]`s run
+/// concurrently within one process, so mutating them process-wide would race every other test
+/// that happens to call `make_client` during the mutation window. Passing values in directly
+/// sidesteps that race entirely rather than merely narrowing it.
+///
+/// Returns `None` if `token` is `None` or empty, mirroring `make_client`'s skip behavior.
+pub fn make_client_from(token: Option<String>, api_url: Option<String>) -> Option<ApifyClient> {
+    let token = token.filter(|t| !t.is_empty())?;
     let base_url = resolve_base_url(api_url.as_deref());
     Some(
         ApifyClient::builder()

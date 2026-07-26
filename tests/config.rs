@@ -23,29 +23,22 @@ fn base_url_strips_v2_suffix() {
     );
 }
 
-/// `make_client` honors the `APIFY_API_URL` environment variable end-to-end: the resolved
-/// client's `api_base_url()` reflects the env value (with the harness `/v2` round-trip).
+/// `make_client` honors the `APIFY_API_URL` -> `base_url` resolution end-to-end: the resolved
+/// client's `api_base_url()` reflects the given value (with the harness `/v2` round-trip).
 ///
-/// Exercises the actual env-var read path in `make_client`, not just the pure helper. Env
-/// vars are process-global, so this test owns `APIFY_TOKEN`/`APIFY_API_URL` for its duration
-/// and restores them afterwards.
+/// Exercises the full `make_client_from` path (the env-free core `make_client` delegates to),
+/// not just the pure `resolve_base_url` helper. This deliberately does NOT mutate the real
+/// `APIFY_TOKEN`/`APIFY_API_URL` process environment variables: those are read by every other
+/// test in the suite via `require_client!`, and since `#[tokio::test]`s run concurrently within
+/// one process, doing so would race any test that calls `make_client` during the mutation
+/// window. Passing values straight to `make_client_from` exercises the identical resolution
+/// logic with no process-global state and no race.
 #[test]
 fn make_client_honors_apify_api_url_env() {
-    let prev_token = std::env::var("APIFY_TOKEN").ok();
-    let prev_url = std::env::var("APIFY_API_URL").ok();
-
-    std::env::set_var("APIFY_TOKEN", "dummy-token-for-config-test");
-    std::env::set_var("APIFY_API_URL", "https://api.example.test/v2");
-
-    let client = common::make_client().expect("make_client with a token set");
+    let client = common::make_client_from(
+        Some("dummy-token-for-config-test".to_string()),
+        Some("https://api.example.test/v2".to_string()),
+    )
+    .expect("make_client_from with a token set");
     assert_eq!(client.api_base_url(), "https://api.example.test/v2");
-
-    match prev_token {
-        Some(v) => std::env::set_var("APIFY_TOKEN", v),
-        None => std::env::remove_var("APIFY_TOKEN"),
-    }
-    match prev_url {
-        Some(v) => std::env::set_var("APIFY_API_URL", v),
-        None => std::env::remove_var("APIFY_API_URL"),
-    }
 }

@@ -27,8 +27,8 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 
 ## Webhook dispatches
 
-`WebhookDispatchCollectionClient`: `list(options)`, `iterate(options)` (lazy
-`ListIterator<WebhookDispatch>` auto-pagination).
+`WebhookDispatchCollectionClient`: `list(options: ListOptions)`, `iterate(options: ListOptions)`
+(lazy `ListIterator<WebhookDispatch>` auto-pagination).
 `WebhookDispatchClient::get() -> Option<WebhookDispatch>`: fetches the dispatch (`None` if
 missing), mirroring `WebhookClient::get()`'s `Option<Webhook>` shape.
 

@@ -138,7 +138,8 @@ println!("exported {} bytes of CSV", csv.len());
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
 | `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
 
-`ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`. Like
+`ListKeysOptions`: `limit: Option<i64>`, `exclusive_start_key: Option<String>`,
+`prefix: Option<String>`, `collection: Option<String>`, `signature: Option<String>`. Like
 `StoreListOptions.limit`, the meaning of `limit` depends on the method: for `list_keys` it is a
 single page's size (max keys returned by one call, capped at 1000 by the API); for `iterate_keys`
 it is a cap on the *total* number of keys yielded across all pages (unset iterates the whole
