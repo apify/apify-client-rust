@@ -60,6 +60,9 @@ pub(crate) const CONTENT_TYPE_JSON: &str = "application/json";
 /// `application/json` with an explicit UTF-8 charset, used by endpoints that store or forward
 /// the body as text (dataset items, key-value-store JSON records).
 pub(crate) const CONTENT_TYPE_JSON_UTF8: &str = "application/json; charset=utf-8";
+/// Header declaring the compression algorithm applied to a request body. Set by
+/// [`maybe_compress_request`] and checked (case-insensitively) to detect a caller-supplied value.
+const HEADER_CONTENT_ENCODING: &str = "Content-Encoding";
 
 /// Algorithm used to compress large request bodies before they are sent.
 ///
@@ -384,7 +387,7 @@ fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompres
     let already_encoded = request
         .headers
         .keys()
-        .any(|k| k.eq_ignore_ascii_case("Content-Encoding"));
+        .any(|k| k.eq_ignore_ascii_case(HEADER_CONTENT_ENCODING));
     if already_encoded {
         return;
     }
@@ -395,7 +398,7 @@ fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompres
     };
     request
         .headers
-        .insert("Content-Encoding".to_string(), encoding.to_string());
+        .insert(HEADER_CONTENT_ENCODING.to_string(), encoding.to_string());
     request.body = Some(compressed);
 }
 
@@ -507,7 +510,11 @@ fn randomized_delay(delay: Duration) -> Duration {
 /// uncorrelated across concurrent retries (otherwise many clients retry in lockstep). A
 /// shared atomically-advanced SplitMix64 generator, seeded once from the clock, gives each
 /// caller a distinct value without pulling in a heavyweight RNG dependency.
-fn next_jitter() -> u64 {
+///
+/// `pub(crate)` so other backoff-jitter call sites (e.g.
+/// [`crate::clients::request_queue`]'s batch-add retry backoff) can reuse this one shared
+/// generator instead of rolling their own weaker source.
+pub(crate) fn next_jitter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static STATE: AtomicU64 = AtomicU64::new(0);
 

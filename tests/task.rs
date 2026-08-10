@@ -13,7 +13,13 @@ async fn list_tasks() {
         .list(Default::default())
         .await
         .expect("listing tasks should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
 fn task_definition(name: &str) -> serde_json::Value {
@@ -129,13 +135,16 @@ async fn task_crud_flow() {
         .expect("update task");
     assert_eq!(updated.name.as_deref(), Some(renamed.as_str()));
 
-    // List its runs (likely empty, but the endpoint should respond).
+    // List its runs. This task has never been started (`call`/`start` weren't invoked on it),
+    // so the collection must be genuinely empty — a load-bearing assertion, unlike a
+    // tautological `total >= 0`.
     let runs = task_client
         .runs()
         .list(Default::default(), Default::default())
         .await
         .expect("list task runs");
-    assert!(runs.total >= 0);
+    assert_eq!(runs.total, 0, "a never-started task should have no runs");
+    assert_eq!(runs.total as usize, runs.items.len());
 
     // Delete.
     task_client.delete().await.expect("delete task");
@@ -163,13 +172,19 @@ async fn task_webhooks_and_last_run() {
 
     let task_client = client.task(&task.id);
 
-    // Simple GET: the task's webhook collection (likely empty, but the endpoint must respond).
+    // Simple GET: the task's webhook collection. This task was just created and no webhook has
+    // ever targeted it, so the collection must be genuinely empty — a load-bearing assertion,
+    // unlike a tautological `total >= 0`.
     let webhooks = task_client
         .webhooks()
         .list(Default::default())
         .await
         .expect("list task webhooks");
-    assert!(webhooks.total >= 0);
+    assert_eq!(
+        webhooks.total, 0,
+        "a freshly created task should have no webhooks"
+    );
+    assert_eq!(webhooks.total as usize, webhooks.items.len());
 
     // Run the task and wait for it to finish, then access it through the `runs/last` alias.
     let run = task_client

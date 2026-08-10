@@ -24,6 +24,10 @@ use crate::models::{
 /// `REQUEST_QUEUE_MAX_REQUESTS_PER_BATCH_OPERATION`).
 const MAX_REQUESTS_PER_BATCH_OPERATION: usize = 25;
 
+/// Byte length of the empty JSON array literal `[]`, used as the starting accumulator when
+/// summing serialized item sizes to reconstruct the byte length of the array they'll be sent in.
+const EMPTY_JSON_ARRAY_BYTES: usize = 2;
+
 /// Maximum accepted request-body size (bytes) for a single `requests/batch` call, matching the
 /// reference client's `@apify/consts` `MAX_PAYLOAD_SIZE_BYTES` (9 MiB). A chunk that would
 /// serialize larger than this (even after the [`MAX_REQUESTS_PER_BATCH_OPERATION`] count cap) is
@@ -110,7 +114,7 @@ fn slice_by_byte_length(
     }
 
     let mut sliced = Vec::new();
-    let mut byte_length = 2usize; // 2 bytes for the empty array `[]`.
+    let mut byte_length = EMPTY_JSON_ARRAY_BYTES;
     for (i, item) in requests.iter().enumerate() {
         let item_byte_length = serde_json::to_vec(item)?.len();
         if item_byte_length > max_byte_length {
@@ -147,20 +151,23 @@ fn unprocessed_retry_backoff(min_delay: Duration, attempt: u32) -> Duration {
     Duration::from_millis(base_millis.saturating_add(extra_millis))
 }
 
-/// Modulus applied to the current sub-second nanoseconds to derive [`random_fraction`]'s
-/// numerator; also its denominator, so the result lands in `[0, 1)`. `1_000_000` (one
-/// microsecond's worth of nanoseconds) is an arbitrary but sufficiently fine-grained choice for
-/// jitter — not a value with external meaning to name after anything more specific.
-const RANDOM_FRACTION_MODULUS: u32 = 1_000_000;
+/// Modulus applied to [`crate::http_client::next_jitter`]'s output to derive
+/// [`random_fraction`]'s numerator; also its denominator, so the result lands in `[0, 1)`.
+/// `1_000_000` is an arbitrary but sufficiently fine-grained choice for jitter — not a value with
+/// external meaning to name after anything more specific.
+const RANDOM_FRACTION_MODULUS: u64 = 1_000_000;
 
 /// A cheap, non-crypto random fraction in `[0, 1)` for backoff jitter (mirrors JS `Math.random()`
 /// in spirit, not in distribution quality — this is jitter, not a security-sensitive value).
+///
+/// Reuses the crate's shared [`crate::http_client::next_jitter`] SplitMix64 generator (the same
+/// source `HttpClient::call`'s transport-retry backoff draws from) rather than a second,
+/// independent source seeded from wall-clock nanoseconds: one well-distributed generator is
+/// simpler to reason about than two, and avoids the (harmless here, but needless) weaker
+/// distribution of raw `SystemTime` sub-millisecond jitter under concurrent callers.
 fn random_fraction() -> f64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    f64::from(nanos % RANDOM_FRACTION_MODULUS) / f64::from(RANDOM_FRACTION_MODULUS)
+    let jitter = crate::http_client::next_jitter() % RANDOM_FRACTION_MODULUS;
+    jitter as f64 / RANDOM_FRACTION_MODULUS as f64
 }
 
 /// Options for [`RequestQueueClient::list_requests`].
@@ -487,11 +494,23 @@ impl RequestQueueClient {
                         .iter()
                         .filter(|r| !done.contains(&request_unique_key(r)))
                         .map(|r| {
-                            serde_json::json!({
-                                "method": r.method,
-                                "uniqueKey": request_unique_key(r),
-                                "url": r.url,
-                            })
+                            // Build the object manually (rather than via `json!`) so a `None`
+                            // `method` omits the key entirely, matching the JS reference client
+                            // (which never emits `"method": null` here) instead of serializing
+                            // `Option<String>`'s default `null`.
+                            let mut obj = serde_json::Map::new();
+                            if let Some(method) = &r.method {
+                                obj.insert(
+                                    "method".to_string(),
+                                    serde_json::Value::String(method.clone()),
+                                );
+                            }
+                            obj.insert(
+                                "uniqueKey".to_string(),
+                                serde_json::Value::String(request_unique_key(r)),
+                            );
+                            obj.insert("url".to_string(), serde_json::Value::String(r.url.clone()));
+                            serde_json::Value::Object(obj)
                         })
                         .collect();
                     break;
@@ -607,12 +626,16 @@ impl RequestQueueClient {
         .await
     }
 
-    /// Lazily paginates over all requests in the queue, fetching pages on demand.
+    /// Lazily paginates over all requests in the queue **from the head**, fetching pages on
+    /// demand.
     ///
     /// Returns a [`RequestQueueRequestsIterator`]; call its `next()` to get one request at a
-    /// time. Pagination uses the API's opaque `nextCursor` token: the first page may be
-    /// anchored with `exclusiveStartId`, but every subsequent page is fetched with `cursor`
-    /// (matching the JS reference). `cursor` and `exclusiveStartId` are mutually exclusive.
+    /// time. Pagination uses the API's opaque `cursor` token: the first page is fetched with
+    /// neither `cursor` nor `exclusiveStartId` (i.e. from the head), and every subsequent page
+    /// is fetched with the `cursor` returned by the previous one. This method does not expose
+    /// `exclusiveStartId` — use [`RequestQueueClient::list_requests`] directly (with
+    /// `ListRequestsOptions.exclusive_start_id`) if you need to anchor a one-off page fetch
+    /// somewhere other than the head.
     pub fn paginate_requests(&self, page_limit: Option<i64>) -> RequestQueueRequestsIterator {
         RequestQueueRequestsIterator {
             client: self.clone(),

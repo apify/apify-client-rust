@@ -85,9 +85,10 @@ types is:
 
 - Actors: `ActorStartOptions`, `ActorCallOptions`, `ActorBuildOptions`, `ActorListOptions`
 - Tasks: `TaskStartOptions`, `TaskCallOptions`
-- Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
-- Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
-- Key-value stores: `ListKeysOptions`, `GetRecordOptions`
+- Runs: `RunListOptions`, `RunGetOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
+- Builds: `BuildGetOptions`
+- Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`, `DatasetGetOrCreateOptions`
+- Key-value stores: `ListKeysOptions`, `GetRecordOptions`, `KeyValueStoreGetOrCreateOptions`
 - Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`

@@ -17,7 +17,8 @@ collections are available via `actor.runs()` and `task.runs()`.
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
-| `get()` | — | `Option<ActorRun>` | Fetches the run. |
+| `get()` | — | `Option<ActorRun>` | Fetches the run. Returns immediately (no server-side wait); see `get_with_options`. |
+| `get_with_options(options)` | `RunGetOptions { wait_for_finish: Option<i64> }` | `Option<ActorRun>` | Fetches the run, optionally waiting server-side (max 60s) for it to reach a terminal state before responding. Also reachable via `actor.last_run()`/`task.last_run()`, which share `RunClient`. |
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
@@ -37,6 +38,13 @@ exist). Polling the returned stream with `.next()` requires the
 `Cargo.toml`) in scope; the [`raw_log`](../examples/raw_log.rs) example drives
 `get_streamed_log_with_options` exactly this way. See
 [Logs](misc.md#logs--clientlogbuild_or_run_id) for a full streaming snippet.
+
+`RunGetOptions` (the argument to `get_with_options`): `wait_for_finish: Option<i64>` — maximum
+time, in seconds (capped at 60 by the API), to wait server-side for the run to reach a terminal
+state before returning; `None` (the default, and what plain `get()` uses) returns immediately
+without waiting. This is a single bounded server-side wait, distinct from
+[`RunClient::wait_for_finish`](#runclient), which polls repeatedly (using this same parameter
+internally) until the run finishes or a client-side budget is exhausted.
 
 `RunResurrectOptions` (all optional): `build: Option<String>`, `memory_mbytes: Option<i64>`,
 `timeout_secs: Option<i64>`, `max_items: Option<i64>`, `max_total_charge_usd: Option<f64>`,

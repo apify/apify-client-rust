@@ -270,8 +270,15 @@ impl ActorClient {
         /// The endpoint's bare (non-`data`-enveloped) response shape: `{ "valid": bool }`. Kept
         /// private since the reference client (`response.data.valid`) surfaces only the bare
         /// `bool`, not the wrapping object.
+        ///
+        /// `valid` defaults to `false` when absent rather than erroring: the spec does not
+        /// guarantee the field is present, and the JS reference client reads it as
+        /// `response.data.valid`, which is `undefined` (falsy) rather than a thrown error when
+        /// missing. Defaulting matches that behavior instead of surfacing a spec-violating
+        /// response as a deserialization `Err`.
         #[derive(serde::Deserialize)]
         struct ValidateInputResponse {
+            #[serde(default)]
             valid: bool,
         }
 

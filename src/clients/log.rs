@@ -7,7 +7,7 @@
 use futures_util::Stream;
 
 use crate::clients::base::{get_raw, ResourceContext};
-use crate::common::QueryParams;
+use crate::common::{QueryParams, NOT_FOUND_STATUS_CODE};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{HttpClient, HEADER_AUTHORIZATION, HEADER_USER_AGENT};
 
@@ -127,7 +127,13 @@ impl LogClient {
 
         let response = builder.send().await.map_err(ApifyClientError::from)?;
         let status = response.status();
-        if status.as_u16() == 404 {
+        // Unlike `catch_not_found` (used by the buffered `HttpBackend` path), this does not also
+        // check the parsed `error.type` against `record-not-found`/`record-or-token-not-found`:
+        // a log's `404` is always `record-not-found` in practice (the endpoint has no other
+        // reason to 404), and this raw-`reqwest` streaming path deliberately avoids depending on
+        // the response body being present/parseable JSON before the stream even starts. Mapping
+        // every `404` to `None` here is a reasoned simplification, not an oversight.
+        if status.as_u16() == NOT_FOUND_STATUS_CODE {
             return Ok(None);
         }
         if !status.is_success() {

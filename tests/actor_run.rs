@@ -14,7 +14,13 @@ async fn list_runs() {
         .list(Default::default(), Default::default())
         .await
         .expect("listing runs should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
 /// Complex flow: call the hello-world Actor, wait for it to finish, fetch its log and
@@ -276,6 +282,75 @@ async fn run_scoped_storage_metadata_reads() {
         .await
         .expect("list run request queue head");
     assert!(head.items.len() as i64 <= 10);
+}
+
+/// Complex flow: run-scoped storage PUT/DELETE. `RunClient::dataset()/key_value_store()/
+/// request_queue()` return the same `DatasetClient`/`KeyValueStoreClient`/`RequestQueueClient`
+/// types used for top-level storages, but `run_scoped_storage_metadata_reads` above only
+/// exercises their GET side (`get`/`get_statistics`/`list_keys`/`list_head`). This covers
+/// `.update()` (`PUT /v2/actor-runs/{runId}/dataset|key-value-store|request-queue`) and
+/// `.delete()` on all three, confirming each is genuinely gone via `get()` afterward.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_scoped_storage_update_and_delete() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+    let run_client = client.run(&run.id);
+
+    // Dataset: rename via `update()` (PUT), then `delete()` and confirm it is gone.
+    let dataset = run_client.dataset();
+    let new_name = common::unique_name("run-dataset-update");
+    let updated = dataset
+        .update(&serde_json::json!({ "name": new_name }))
+        .await
+        .expect("update run dataset");
+    assert_eq!(updated.name.as_deref(), Some(new_name.as_str()));
+    dataset.delete().await.expect("delete run dataset");
+    assert!(
+        dataset
+            .get()
+            .await
+            .expect("get run dataset after delete")
+            .is_none(),
+        "run dataset should not exist after delete()"
+    );
+
+    // Key-value store: same update/delete flow.
+    let kvs = run_client.key_value_store();
+    let new_name = common::unique_name("run-kvs-update");
+    let updated = kvs
+        .update(&serde_json::json!({ "name": new_name }))
+        .await
+        .expect("update run key-value store");
+    assert_eq!(updated.name.as_deref(), Some(new_name.as_str()));
+    kvs.delete().await.expect("delete run key-value store");
+    assert!(
+        kvs.get()
+            .await
+            .expect("get run key-value store after delete")
+            .is_none(),
+        "run key-value store should not exist after delete()"
+    );
+
+    // Request queue: same update/delete flow.
+    let rq = run_client.request_queue();
+    let new_name = common::unique_name("run-rq-update");
+    let updated = rq
+        .update(&serde_json::json!({ "name": new_name }))
+        .await
+        .expect("update run request queue");
+    assert_eq!(updated.name.as_deref(), Some(new_name.as_str()));
+    rq.delete().await.expect("delete run request queue");
+    assert!(
+        rq.get()
+            .await
+            .expect("get run request queue after delete")
+            .is_none(),
+        "run request queue should not exist after delete()"
+    );
 }
 
 /// Builds and returns a fresh private Actor whose container sleeps for ~60s before exiting.

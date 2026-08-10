@@ -13,7 +13,13 @@ async fn list_webhooks() {
         .list(Default::default())
         .await
         .expect("listing webhooks should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
 /// Simple GET: listing webhook dispatches.
@@ -25,15 +31,30 @@ async fn list_webhook_dispatches() {
         .list(Default::default())
         .await
         .expect("listing webhook dispatches should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
-fn webhook_definition() -> serde_json::Value {
-    // A webhook that fires when any run of the public hello-world Actor succeeds.
+/// A webhook that fires when any run of the public hello-world Actor succeeds.
+///
+/// `tag` is embedded in `requestUrl` (as a query parameter, so it stays a structurally valid
+/// URL) to make each test's webhook unique, matching the suite's UUID-isolation convention used
+/// by every other resource (`unique_name`/`short_unique_name`). Without it, every one of this
+/// function's 5 callers created byte-for-byte identical webhooks, which is harmless for the API
+/// (webhooks have no uniqueness constraint) but means a bug that leaked one test's webhook into
+/// another's assertions (e.g. via a stale/undeleted resource from a prior failed run) could not
+/// be told apart from the current test's own webhook.
+fn webhook_definition(tag: &str) -> serde_json::Value {
+    let unique = common::unique_name(tag);
     json!({
         "eventTypes": ["ACTOR.RUN.SUCCEEDED"],
         "condition": { "actorId": "moJRLRc85AitArpNN" },
-        "requestUrl": "https://example.com/webhook",
+        "requestUrl": format!("https://example.com/webhook?test={unique}"),
         "isAdHoc": false
     })
 }
@@ -44,7 +65,7 @@ async fn get_webhook() {
     let client = require_client!();
     let webhook = client
         .webhooks()
-        .create(&webhook_definition())
+        .create(&webhook_definition("get-webhook"))
         .await
         .expect("create webhook");
 
@@ -72,7 +93,7 @@ async fn get_webhook_dispatch() {
     let client = require_client!();
     let webhook = client
         .webhooks()
-        .create(&webhook_definition())
+        .create(&webhook_definition("get-webhook-dispatch"))
         .await
         .expect("create webhook");
 
@@ -105,7 +126,7 @@ async fn iterate_webhooks() {
     let client = require_client!();
     let webhook = client
         .webhooks()
-        .create(&webhook_definition())
+        .create(&webhook_definition("iterate-webhooks"))
         .await
         .expect("create webhook");
 
@@ -140,7 +161,7 @@ async fn iterate_webhook_dispatches() {
     let client = require_client!();
     let webhook = client
         .webhooks()
-        .create(&webhook_definition())
+        .create(&webhook_definition("iterate-webhook-dispatches"))
         .await
         .expect("create webhook");
 
@@ -185,7 +206,7 @@ async fn webhook_crud_flow() {
 
     let webhook = client
         .webhooks()
-        .create(&webhook_definition())
+        .create(&webhook_definition("webhook-crud-flow"))
         .await
         .expect("create webhook");
 
@@ -210,13 +231,19 @@ async fn webhook_crud_flow() {
         Some("https://example.com/updated")
     );
 
-    // List this webhook's dispatches (should respond, likely empty).
+    // List this webhook's dispatches. No dispatch has fired yet (the test dispatch below is
+    // triggered after this), so the collection must be genuinely empty — a load-bearing
+    // assertion, unlike a tautological `total >= 0`.
     let dispatches = webhook_client
         .dispatches()
         .list(Default::default())
         .await
         .expect("list webhook dispatches");
-    assert!(dispatches.total >= 0);
+    assert_eq!(
+        dispatches.total, 0,
+        "a webhook with no triggered dispatch should have none listed"
+    );
+    assert_eq!(dispatches.total as usize, dispatches.items.len());
 
     // Trigger a test dispatch.
     let dispatch = webhook_client

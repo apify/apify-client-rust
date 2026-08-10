@@ -13,7 +13,6 @@ on:
       - 'docs/**'
       - 'build.rs'
       - 'Cargo.toml'
-      - 'Cargo.lock'
       - '.github/workflows/rust-integration-tests.yml'
   workflow_dispatch:
 
@@ -87,10 +86,11 @@ jobs:
       # Standalone CI step that verifies the documentation examples actually work. It runs the
       # example programs from `examples/` end-to-end against the live API (via the `example_*`
       # smoke tests in `tests/examples.rs`, each of which executes `cargo run --example <name>`)
-      # and runs the in-documentation code snippets as doctests (`cargo test --doc`, which
-      # compiles every fenced `rust` block in the README and the `docs/` pages and runs the
-      # runnable ones). Both are required by the documentation requirements: each documentation
-      # example has a CI test that actually runs the code.
+      # — this is the real runtime guard for the 7 documented examples. `cargo test --doc`
+      # compiles every fenced `rust`/`rust,no_run` block in the README and the `docs/` pages;
+      # almost all are `no_run`, so this is primarily a compile-check (it also executes the one
+      # genuinely runnable snippet, `README.md`'s Versioning example). Both are required by the
+      # documentation requirements: each documentation example has a CI test that exercises it.
       - name: Test examples
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}

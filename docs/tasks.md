@@ -20,8 +20,8 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `get()` | — | `Option<Task>` | Fetches the task. |
 | `update(fields)` | `&impl Serialize` | `Task` | Updates the task. |
 | `delete()` | — | `()` | Deletes the task. |
-| `start(input, options)` | `Option<&impl Serialize>`, `TaskStartOptions` | `ActorRun` | Starts a run. See [`TaskStartOptions`](#taskstartoptions-and-taskcalloptions) below. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `TaskCallOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. See [`TaskCallOptions`](#taskstartoptions-and-taskcalloptions) below. |
+| `start::<T: Serialize>(input, options)` | `Option<&T>`, `TaskStartOptions` | `ActorRun` | Starts a run. `T` is a generic type parameter (not argument-position `impl Trait`), so it can be turbofished, e.g. `start::<serde_json::Value>(...)`. See [`TaskStartOptions`](#taskstartoptions-and-taskcalloptions) below. |
+| `call::<T: Serialize>(input, options, wait_secs)` | `Option<&T>`, `TaskCallOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. See [`TaskCallOptions`](#taskstartoptions-and-taskcalloptions) below. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Option<Value>` / `Value` | The task's saved input. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
 | `last_run_with_options(options)` | `LastRunOptions { status: Option<String>, origin: Option<String> }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |

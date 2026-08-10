@@ -13,7 +13,13 @@ async fn list_schedules() {
         .list(Default::default())
         .await
         .expect("listing schedules should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
 fn schedule_definition(name: &str) -> serde_json::Value {

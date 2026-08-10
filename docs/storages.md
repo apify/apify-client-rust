@@ -37,12 +37,21 @@ let dataset_client = client.dataset(&dataset.id);
 
 `DatasetCollectionClient`: `list(options: StorageListOptions)`,
 `iterate(options: StorageListOptions)` (lazy `ListIterator<Dataset>` auto-pagination),
-`get_or_create(name: Option<&str>)`.
+`get_or_create(name: Option<&str>)`, `get_or_create_with_options(name, options: DatasetGetOrCreateOptions)`.
 `StorageListOptions`: `offset`, `limit`, `desc`, `unnamed`, `ownership`.
 
 `get_or_create` takes `Option<&str>`: pass `Some("my-name")` to get-or-create a **named**
 storage (reused across runs), or `None` for an unnamed one. The same signature applies to the
 key-value-store and request-queue collections.
+
+`get_or_create_with_options(name, options)` additionally accepts `DatasetGetOrCreateOptions {
+schema: Option<serde_json::Value> }`: `schema` is a JS-reference-only convenience (not
+documented by the OpenAPI spec, which declares only the `name` query parameter on
+`POST /v2/datasets`), sent as the request's `{ "schema": ... }` JSON body and applied only when
+the dataset is actually created (a no-op when an existing named dataset is returned). Plain
+`get_or_create(name)` delegates to this with `DatasetGetOrCreateOptions::default()` (no schema).
+`KeyValueStoreCollectionClient::get_or_create_with_options`/`KeyValueStoreGetOrCreateOptions`
+below work identically for key-value stores.
 
 ```rust,no_run
 # use apify_client::ApifyClient;
@@ -131,7 +140,10 @@ println!("exported {} bytes of CSV", csv.len());
 
 `KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`,
 `iterate(options: StorageListOptions)` (lazy `ListIterator<KeyValueStore>` auto-pagination),
-`get_or_create(name: Option<&str>)`.
+`get_or_create(name: Option<&str>)`, `get_or_create_with_options(name, options: KeyValueStoreGetOrCreateOptions { schema: Option<serde_json::Value> })`
+(same semantics as the Datasets section's `DatasetGetOrCreateOptions` above: `schema` is a
+JS-reference-only convenience sent as the request body, applied only when the store is actually
+created).
 
 `KeyValueStoreClient`:
 

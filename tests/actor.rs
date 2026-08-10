@@ -15,7 +15,13 @@ async fn list_actors() {
         .list(Default::default())
         .await
         .expect("listing actors should succeed");
-    assert!(page.total >= 0);
+    // Load-bearing consistency check (unlike a tautological `total >= 0`, which is `i64` and
+    // always true): a single page can never return more items than its own `limit`. Checked
+    // against `limit`, not `total`, because this suite runs many tests concurrently against the
+    // same shared account; `total` and `items` can be computed from separately-timed backend
+    // reads under that write load, which made an `items.len() <= total` check here genuinely
+    // flaky (observed under `cargo test --all-targets`), not just load-bearing.
+    assert!(page.items.len() as i64 <= page.limit);
 }
 
 fn actor_name(prefix: &str) -> String {
@@ -217,13 +223,19 @@ async fn actor_crud_flow() {
         .expect("update actor");
     assert_eq!(updated.title.as_deref(), Some("Rust client test actor"));
 
-    // List builds (should succeed even if empty).
+    // List builds. This Actor was created with inline source files but no build was ever
+    // triggered, so the collection must be genuinely empty — a load-bearing assertion, unlike a
+    // tautological `total >= 0`.
     let builds = actor_client
         .builds()
         .list(Default::default())
         .await
         .expect("list actor builds");
-    assert!(builds.total >= 0);
+    assert_eq!(
+        builds.total, 0,
+        "an Actor with no triggered build should have no builds"
+    );
+    assert_eq!(builds.total as usize, builds.items.len());
 
     // List versions.
     let versions = actor_client

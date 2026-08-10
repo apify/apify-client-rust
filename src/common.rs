@@ -8,9 +8,20 @@ use crate::error::ApifyClientResult;
 use crate::version::CLIENT_VERSION;
 
 /// Status code returned when a resource is not found.
-const NOT_FOUND_STATUS_CODE: u16 = 404;
+pub(crate) const NOT_FOUND_STATUS_CODE: u16 = 404;
 const RECORD_NOT_FOUND_TYPE: &str = "record-not-found";
 const RECORD_OR_TOKEN_NOT_FOUND_TYPE: &str = "record-or-token-not-found";
+
+/// Reports whether `error_type` is one of the API's "not found" error-type strings
+/// (`record-not-found` / `record-or-token-not-found`). Shared by [`catch_not_found`] and any
+/// caller that must classify a `404` outside the normal `ApiError` path (e.g. a raw streaming
+/// response), so the set of recognized not-found types stays in one place.
+pub(crate) fn is_not_found_error_type(error_type: Option<&str>) -> bool {
+    matches!(
+        error_type,
+        Some(RECORD_NOT_FOUND_TYPE) | Some(RECORD_OR_TOKEN_NOT_FOUND_TYPE)
+    )
+}
 
 /// Most Apify endpoints wrap their payload in a top-level `data` property.
 /// This envelope unwraps `{ "data": ... }` into the inner type.
@@ -35,10 +46,8 @@ pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientRes
         Err(err) => {
             if let Some(api_error) = err.as_api_error() {
                 let is_not_found_status = api_error.status_code == NOT_FOUND_STATUS_CODE;
-                let is_not_found_type = matches!(
-                    api_error.error_type.as_deref(),
-                    Some(RECORD_NOT_FOUND_TYPE) | Some(RECORD_OR_TOKEN_NOT_FOUND_TYPE)
-                ) || api_error.http_method.as_deref() == Some("HEAD");
+                let is_not_found_type = is_not_found_error_type(api_error.error_type.as_deref())
+                    || api_error.http_method.as_deref() == Some("HEAD");
                 if is_not_found_status && is_not_found_type {
                     return Ok(None);
                 }
