@@ -129,15 +129,11 @@ async fn run_update_set_status_message_and_delete() {
         Some("updated via RunClient::update")
     );
 
-    // `ApifyClient::set_status_message` reads `ACTOR_RUN_ID` from the environment and delegates
-    // to `run(id).update(...)`. Env vars are process-global and `#[tokio::test]`s in this binary
-    // run concurrently, so mutating one is only safe if nothing else in the suite reads it
-    // during the window. That holds here: `ACTOR_RUN_ID` has exactly one reader in the whole
-    // crate (`ApifyClient::set_status_message`, src/client.rs) and exactly one caller of that
-    // method in the whole test suite (this test) — so there is no other test that could observe
-    // this test's temporary value, or whose own read this test could clobber. This test still
-    // owns the variable for its duration and restores it afterward (including on the pre-existing
-    // value, if any) to leave the environment as it found it.
+    // `ApifyClient::set_status_message` reads the process-global `ACTOR_RUN_ID` env var. Mutating
+    // it here is race-free because it has exactly one reader in the crate (`set_status_message`,
+    // src/client.rs) and exactly one caller in the suite (this test) — verified via `grep -rn
+    // "ACTOR_RUN_ID\|set_status_message" tests/ src/` — so no concurrent test can observe or
+    // clobber it. Restore the pre-existing value (if any) afterward regardless.
     let prev_run_id = std::env::var("ACTOR_RUN_ID").ok();
     std::env::set_var("ACTOR_RUN_ID", &run.id);
     let via_set_status_message = client
@@ -289,8 +285,7 @@ async fn run_scoped_storage_metadata_reads() {
 /// seconds, which is too fast to hit mid-run reliably. `name_prefix` should be unique per test so
 /// concurrent runs of this suite (or of the same suite in another language) don't collide.
 async fn create_slow_actor(client: &apify_client::ApifyClient, name_prefix: &str) -> ActorFixture {
-    let name = common::unique_name(name_prefix).replace('-', "");
-    let name = format!("a{}", &name[..name.len().min(20)]);
+    let name = common::short_unique_name('a', name_prefix, 21);
 
     let definition = serde_json::json!({
         "name": name,

@@ -8,8 +8,8 @@
 //!
 //! [`HttpClient`] wraps a backend and adds the cross-cutting concerns shared by every
 //! endpoint: authentication, the `User-Agent` header, query-parameter serialization,
-//! timeouts and retries with exponential backoff (mirroring the JavaScript and Python
-//! reference clients).
+//! timeouts and retries with exponential backoff (mirroring the JavaScript reference
+//! client).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -289,12 +289,9 @@ impl HttpClient {
                 .insert(HEADER_AUTHORIZATION.to_string(), format!("Bearer {token}"));
         }
 
-        // Compress the request body once (not per attempt) when it is large enough. The bytes
-        // sent on the wire for a given (non-streamed) body end up the same as the reference
-        // client's, which re-runs a compressing interceptor on every retry against the original
-        // uncompressed config; compressing once up front here and reusing the result is not the
-        // same mechanism, just an equivalent outcome. The API accepts both brotli- and
-        // gzip-encoded request bodies.
+        // Compress the request body once (not per attempt) when it is large enough; see
+        // `maybe_compress_request`'s doc for why this differs from the reference client's
+        // mechanism while producing the same bytes on the wire.
         maybe_compress_request(&mut request, self.compression);
 
         let method_str = request.method.as_str().to_string();
@@ -515,6 +512,15 @@ fn next_jitter() -> u64 {
     static STATE: AtomicU64 = AtomicU64::new(0);
 
     const GOLDEN_GAMMA: u64 = 0x9E3779B97F4A7C15;
+    // The two SplitMix64 output-mixing multipliers and their paired right-shift amounts, per
+    // the algorithm's reference (Steele, Lea & Flood, "Fast Splittable Pseudorandom Number
+    // Generators"). Named so they read as the algorithm's fixed constants, not arbitrary magic
+    // numbers, matching the already-named `GOLDEN_GAMMA`.
+    const MIX_1_SHIFT: u32 = 30;
+    const MIX_1_MUL: u64 = 0xBF58476D1CE4E5B9;
+    const MIX_2_SHIFT: u32 = 27;
+    const MIX_2_MUL: u64 = 0x94D049BB133111EB;
+    const FINAL_SHIFT: u32 = 31;
 
     // Lazily seed from the clock on first use. A racing double-seed is harmless: both
     // candidate seeds are valid SplitMix64 stream starting points.
@@ -533,9 +539,9 @@ fn next_jitter() -> u64 {
     let mut z = STATE
         .fetch_add(GOLDEN_GAMMA, Ordering::Relaxed)
         .wrapping_add(GOLDEN_GAMMA);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-    z ^ (z >> 31)
+    z = (z ^ (z >> MIX_1_SHIFT)).wrapping_mul(MIX_1_MUL);
+    z = (z ^ (z >> MIX_2_SHIFT)).wrapping_mul(MIX_2_MUL);
+    z ^ (z >> FINAL_SHIFT)
 }
 
 /// Sleeps for the given duration (public crate-internal helper for poll loops).

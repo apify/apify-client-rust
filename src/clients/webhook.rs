@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::clients::base::{
-    delete_resource, get_resource, post_action, update_resource, ResourceContext,
+    delete_resource, get_resource, post_action_optional, update_resource, ResourceContext,
 };
 use crate::clients::webhook_dispatch_collection::WebhookDispatchCollectionClient;
 use crate::common::QueryParams;
@@ -39,9 +39,12 @@ impl WebhookClient {
         delete_resource(&self.ctx, None).await
     }
 
-    /// Tests the webhook by dispatching it immediately, returning the dispatch.
-    pub async fn test(&self) -> ApifyClientResult<WebhookDispatch> {
-        post_action(&self.ctx, Some("test"), &QueryParams::new(), None, None).await
+    /// Tests the webhook by dispatching it immediately, returning the dispatch, or `None` if the
+    /// webhook no longer exists (e.g. it was deleted concurrently). The spec lists `404` as a
+    /// valid response for `POST /v2/webhooks/{webhookId}/test`, and the reference client wraps
+    /// the call in `catchNotFoundOrThrow`.
+    pub async fn test(&self) -> ApifyClientResult<Option<WebhookDispatch>> {
+        post_action_optional(&self.ctx, Some("test"), &QueryParams::new(), None, None).await
     }
 
     /// Returns a client for this webhook's dispatch collection.

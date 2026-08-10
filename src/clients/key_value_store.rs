@@ -293,10 +293,11 @@ pub const KEY_LIST_MAX_LIMIT: i64 = 1000;
 /// `nextExclusiveStartKey`. The walk stops once the page reports `isTruncated == false` (the
 /// authoritative end-of-data signal), a page comes back empty, the API stops returning a next
 /// cursor, or the caller's `limit` is exhausted. This is an intentional divergence from the JS
-/// reference client's `listKeys()` async-iterable, which loops purely on
-/// `nextExclusiveStartKey !== null` and never consults `isTruncated`: leading with `isTruncated`
-/// here additionally avoids a wasted empty fetch when a final page still carries a cursor, which
-/// is arguably more robust than mirroring the JS termination check exactly.
+/// reference client's `listKeys()` async-iterable, whose continuation condition is a three-part
+/// AND (`items.length > 0 && nextExclusiveStartKey !== null && limit not exceeded`) that never
+/// consults `isTruncated` at all: leading with `isTruncated` here additionally avoids a wasted
+/// empty fetch when a final page still carries a cursor, which is arguably more robust than
+/// mirroring the JS termination check exactly.
 pub struct KeyValueStoreKeysIterator {
     client: KeyValueStoreClient,
     /// Base listing options. The `prefix`/`collection`/`signature` filters are carried into every

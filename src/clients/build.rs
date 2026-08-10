@@ -9,6 +9,20 @@ use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Build;
 
+/// Options for fetching a build via [`BuildClient::get_with_options`].
+///
+/// Covers the spec's optional `waitForFinish` query parameter on `GET /v2/actor-builds/{buildId}`,
+/// matching the reference client's `BuildClientGetOptions`.
+#[derive(Debug, Default, Clone)]
+pub struct BuildGetOptions {
+    /// Maximum time, in seconds (capped at 60 by the API), to wait server-side for the build to
+    /// reach a terminal state before returning. `None` (the default) returns immediately without
+    /// waiting. This is a single bounded server-side wait, distinct from
+    /// [`BuildClient::wait_for_finish`], which polls repeatedly (using this same parameter
+    /// internally) until the build finishes or a client-side budget is exhausted.
+    pub wait_for_finish: Option<i64>,
+}
+
 /// Client for a specific Actor build.
 #[derive(Debug, Clone)]
 pub struct BuildClient {
@@ -23,8 +37,23 @@ impl BuildClient {
     }
 
     /// Fetches the build object, or `None` if it does not exist.
+    ///
+    /// Returns immediately without waiting for the build to finish. To have the API wait
+    /// server-side before responding, use [`BuildClient::get_with_options`].
     pub async fn get(&self) -> ApifyClientResult<Option<Build>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        self.get_with_options(BuildGetOptions::default()).await
+    }
+
+    /// Fetches the build object, or `None` if it does not exist, applying the given
+    /// [`BuildGetOptions`] (e.g. [`BuildGetOptions::wait_for_finish`] to have the API wait,
+    /// server-side, for the build to finish before responding).
+    pub async fn get_with_options(
+        &self,
+        options: BuildGetOptions,
+    ) -> ApifyClientResult<Option<Build>> {
+        let mut params = QueryParams::new();
+        params.add_int("waitForFinish", options.wait_for_finish);
+        get_resource(&self.ctx, None, &params).await
     }
 
     /// Aborts the build.

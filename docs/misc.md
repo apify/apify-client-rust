@@ -14,8 +14,10 @@
 
 `StoreListOptions`: `offset: Option<i64>`, `limit: Option<i64>`, `search: Option<String>`,
 `sort_by: Option<String>`, `category: Option<String>`, `username: Option<String>`,
-`pricing_model: Option<String>`. `limit` means a single page's size for `list`, but a cap on the
-*total* number of items yielded for `iterate` (see below).
+`pricing_model: Option<String>`, `include_unrunnable_actors: Option<bool>`,
+`allows_agentic_users: Option<bool>`, `response_format: Option<String>`. `limit` means a single
+page's size for `list`, but a cap on the *total* number of items yielded for `iterate` (see
+below).
 
 `StoreActorIterator` is a type alias for `ListIterator<ActorStoreListItem>` (the shared iterator
 returned by every collection's `iterate`), re-exported at the crate root alongside `ListIterator`
@@ -74,9 +76,9 @@ and falls back to `name` (e.g. `actor.title.or(actor.name)`).
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<User>` | Account details (private for `me`, public otherwise). |
-| `monthly_usage()` | — | `Value` | Current account's monthly usage for the current billing cycle (`me` only). |
-| `monthly_usage_for_date(date)` | `Option<&str>` | `Value` | Monthly usage for the billing cycle containing the `YYYY-MM-DD` `date`; `None` == current month (`me` only). |
-| `limits()` | — | `Value` | Current account's limits (`me` only). |
+| `monthly_usage()` | — | `Option<Value>` | Current account's monthly usage for the current billing cycle (`me` only). |
+| `monthly_usage_for_date(date)` | `Option<&str>` | `Option<Value>` | Monthly usage for the billing cycle containing the `YYYY-MM-DD` `date`; `None` == current month (`me` only). |
+| `limits()` | — | `Option<Value>` | Current account's limits (`me` only). |
 | `update_limits(limits)` | `&impl Serialize` | `()` | Updates the account's limits (`me` only). |
 
 The methods marked **(`me` only)** operate on the authenticated account and are only valid on the
@@ -106,9 +108,11 @@ if let Some(user) = client.me().get().await? {
 `monthly_usage()` is shorthand for `monthly_usage_for_date(None)` (current cycle). The client
 unwraps the API's `{ data: ... }` envelope, so the returned `serde_json::Value` has the shape
 `{ usageCycle: { startAt, endAt }, monthlyServiceUsage, dailyServiceUsages, ... }`. Billing
-cycles are not calendar-month aligned — pass any day within a cycle to fetch that cycle.
+cycles are not calendar-month aligned — pass any day within a cycle to fetch that cycle. The
+return is wrapped in `Option` (`None` if unavailable) purely for JS-reference parity — the spec
+declares no `404` for this endpoint, so in practice it is always `Some` for a valid `me` client.
 
-The return value is an untyped `serde_json::Value`; access its fields with the non-panicking
+The inner value is an untyped `serde_json::Value`; access its fields with the non-panicking
 `Value::get` (the same idiom as `examples/get_account.rs`) so a missing field yields `None`
 instead of panicking:
 
@@ -125,7 +129,7 @@ let usage = client.me().monthly_usage().await?;
 // hard-coding a date so the lookup always lands on a real cycle.
 let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
 let dated = client.me().monthly_usage_for_date(Some(&day)).await?;
-if let Some(cycle) = dated.get("usageCycle") {
+if let Some(cycle) = dated.as_ref().and_then(|u| u.get("usageCycle")) {
     let start = cycle.get("startAt").and_then(|v| v.as_str()).unwrap_or("?");
     let end = cycle.get("endAt").and_then(|v| v.as_str()).unwrap_or("?");
     println!("cycle {start} .. {end}");
@@ -144,8 +148,8 @@ Also reachable via `run.log()` and `build.log()`.
 |---|---|---|---|
 | `get()` | — | `Option<String>` | The entire log as text. |
 | `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
-| `stream()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Streams log chunks live (log redirection). |
-| `stream_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
+| `stream()` | — | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | Streams log chunks live (log redirection), or `None` if the log does not exist. |
+| `stream_with_options(options)` | `LogOptions` | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
 
 `LogOptions` has a single field, `raw: Option<bool>`. When `Some(true)`, the API returns the
 raw log content without server-side processing (e.g. without the per-line timestamps it adds by
@@ -185,7 +189,12 @@ use apify_client::ApifyClient;
 use futures_util::StreamExt;
 
 # async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-let mut stream = client.run(run_id).log().stream().await?;
+let mut stream = client
+    .run(run_id)
+    .log()
+    .stream()
+    .await?
+    .expect("run's log exists");
 while let Some(chunk) = stream.next().await {
     let chunk = chunk?;
     print!("{}", String::from_utf8_lossy(&chunk));

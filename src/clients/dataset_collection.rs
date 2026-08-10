@@ -1,11 +1,24 @@
 //! Client for the dataset collection (`/v2/datasets`).
 
-use crate::clients::base::{get_or_create_named, list_resource, ResourceContext};
+use crate::clients::base::{get_or_create_named_with_schema, list_resource, ResourceContext};
 use crate::clients::pagination::{list_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams, StorageListOptions};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Dataset;
+
+/// Options for getting-or-creating a dataset via
+/// [`DatasetCollectionClient::get_or_create_with_options`].
+///
+/// `schema` is a JS-reference-only convenience (not documented by the OpenAPI spec, which only
+/// declares the `name` query parameter on `POST /v2/datasets`); it is sent as the request's
+/// `{ "schema": ... }` JSON body, matching the reference client's
+/// `DatasetCollectionClientGetOrCreateOptions`.
+#[derive(Debug, Default, Clone)]
+pub struct DatasetGetOrCreateOptions {
+    /// JSON schema to associate with the dataset.
+    pub schema: Option<serde_json::Value>,
+}
 
 /// Client for listing datasets and getting-or-creating a dataset by name.
 #[derive(Debug, Clone)]
@@ -44,6 +57,18 @@ impl DatasetCollectionClient {
     ///
     /// Passing `None` for `name` creates an unnamed dataset.
     pub async fn get_or_create(&self, name: Option<&str>) -> ApifyClientResult<Dataset> {
-        get_or_create_named(&self.ctx, name).await
+        self.get_or_create_with_options(name, DatasetGetOrCreateOptions::default())
+            .await
+    }
+
+    /// Gets the dataset with the given `name`, creating it if it does not exist, applying the
+    /// given [`DatasetGetOrCreateOptions`] (e.g. [`DatasetGetOrCreateOptions::schema`], applied
+    /// only when the dataset is created).
+    pub async fn get_or_create_with_options(
+        &self,
+        name: Option<&str>,
+        options: DatasetGetOrCreateOptions,
+    ) -> ApifyClientResult<Dataset> {
+        get_or_create_named_with_schema(&self.ctx, name, options.schema.as_ref()).await
     }
 }

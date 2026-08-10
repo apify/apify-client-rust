@@ -230,6 +230,28 @@ async fn not_found_maps_to_none() {
     assert_eq!(backend.call_count(), 1, "404 is not retried");
 }
 
+/// `WebhookClient::test()` maps a `404` (webhook deleted concurrently) to `Ok(None)`, matching
+/// the JS reference client's `catchNotFoundOrThrow` wrapping. Regression guard for the
+/// independent-review finding that this previously propagated as an `Err`.
+#[tokio::test]
+async fn webhook_test_maps_not_found_to_none() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        404,
+        br#"{"error":{"type":"record-not-found","message":"missing"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 3);
+    let dispatch = client
+        .webhook("nope")
+        .test()
+        .await
+        .expect("404 should map to Ok(None), not Err");
+    assert!(
+        dispatch.is_none(),
+        "test() on a missing webhook should be Ok(None)"
+    );
+    assert_eq!(backend.call_count(), 1, "404 is not retried");
+}
+
 /// The error body is parsed into the structured `ApiError` fields.
 #[tokio::test]
 async fn error_body_is_parsed() {
@@ -261,6 +283,10 @@ async fn zero_retries_single_attempt() {
 /// routed through `parse_data_envelope` (which would fail with `missing field 'data'`). This is
 /// token-free, so a future refactor that re-introduces envelope unwrapping is caught even in a
 /// run without `APIFY_TOKEN`.
+///
+/// Also guards JS/spec-contract parity: the spec's response shape is `{ "valid": bool }` and the
+/// JS reference's `validateInput` returns `response.data.valid` as a plain `bool`, so this
+/// asserts the plain `bool` rather than the raw envelope object.
 #[tokio::test]
 async fn validate_input_does_not_unwrap_data_envelope() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -273,10 +299,9 @@ async fn validate_input_does_not_unwrap_data_envelope() {
         .validate_input(&serde_json::json!({}))
         .await
         .expect("validate_input should parse a bare {valid} body");
-    assert_eq!(
-        result.get("valid").and_then(|v| v.as_bool()),
-        Some(true),
-        "the bare body must be returned verbatim, not unwrapped from a `data` envelope"
+    assert!(
+        result,
+        "the bare body's `valid` field must be surfaced verbatim as a plain bool"
     );
     assert_eq!(backend.call_count(), 1);
 }
@@ -1209,10 +1234,10 @@ async fn standalone_log_hits_top_level_logs_endpoint() {
     );
 }
 
-/// Regression guard for the round-3 review finding: every `RequestQueueClient` method whose JS
-/// reference (`request_queue.ts`) uses `SMALL_TIMEOUT_MILLIS` (5s) must send that timeout, not
-/// the 360s default. `max_retries(0)` means a single attempt, so the timeout the mock backend
-/// observes is exactly the endpoint's configured base (no retry-driven growth).
+/// Regression guard: every `RequestQueueClient` method whose JS reference (`request_queue.ts`)
+/// uses `SMALL_TIMEOUT_MILLIS` (5s) must send that timeout, not the 360s default.
+/// `max_retries(0)` means a single attempt, so the timeout the mock backend observes is exactly
+/// the endpoint's configured base (no retry-driven growth).
 #[tokio::test]
 async fn request_queue_small_timeout_methods_use_5s() {
     let five_secs = Duration::from_secs(5);
@@ -1271,12 +1296,12 @@ async fn request_queue_small_timeout_methods_use_5s() {
     );
 }
 
-/// Regression guard for the round-6 review finding: `RequestQueueClient::get_request` is the one
-/// request-level method that must NOT send `clientKey`, matching the JS reference client's
-/// `getRequest` (which builds its params from bare `_params()`, unlike every sibling request-level
-/// method that merges in `clientKey: this.clientKey`). `list_head` is exercised alongside it as a
-/// sibling method that DOES send `clientKey`, so this also guards against the fix being
-/// over-applied to the rest of the client.
+/// Regression guard: `RequestQueueClient::get_request` is the one request-level method that must
+/// NOT send `clientKey`, matching the JS reference client's `getRequest` (which builds its
+/// params from bare `_params()`, unlike every sibling request-level method that merges in
+/// `clientKey: this.clientKey`). `list_head` is exercised alongside it as a sibling method that
+/// DOES send `clientKey`, so this also guards against the fix being over-applied to the rest of
+/// the client.
 #[tokio::test]
 async fn get_request_omits_client_key_but_sibling_methods_send_it() {
     let backend = MockBackend::new(vec![
@@ -1301,8 +1326,8 @@ async fn get_request_omits_client_key_but_sibling_methods_send_it() {
     );
 }
 
-/// Regression guard for the round-3 review finding: every `RequestQueueClient` method whose JS
-/// reference uses `MEDIUM_TIMEOUT_MILLIS` (30s) must send that timeout.
+/// Regression guard: every `RequestQueueClient` method whose JS reference uses
+/// `MEDIUM_TIMEOUT_MILLIS` (30s) must send that timeout.
 #[tokio::test]
 async fn request_queue_medium_timeout_methods_use_30s() {
     let thirty_secs = Duration::from_secs(30);
@@ -1465,4 +1490,78 @@ async fn actor_call_does_not_send_wait_for_finish_on_start() {
         "ActorCallOptions has no wait_for_finish field; the start request must not send \
          waitForFinish, got {start_url}"
     );
+}
+
+/// Minimal single-request HTTP/1.1 server used to test [`apify_client::LogClient::stream`]'s
+/// `404` handling. Streaming bypasses the mock [`HttpBackend`] on purpose (it goes straight
+/// through `reqwest`, since retries don't apply to an open connection), so it needs a real
+/// socket to test against instead. Returns the `http://host:port` base URL to point a client at.
+async fn spawn_single_response_server(status_line: &'static str, body: &'static [u8]) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            // Drain (and discard) the request so the client's write doesn't block on a full
+            // socket buffer; the response format below doesn't depend on what was sent.
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+
+            let response = format!(
+                "{status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.write_all(body).await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    format!("http://{addr}")
+}
+
+/// `LogClient::stream()` maps a `404` to `Ok(None)`, matching the JS reference client's
+/// `catchNotFoundOrThrow` wrapping around its `stream()`. Regression guard for the
+/// independent-review finding that this previously propagated as an `Err` for every non-2xx
+/// status, including `404`.
+#[tokio::test(flavor = "multi_thread")]
+async fn log_stream_maps_not_found_to_none() {
+    let base_url = spawn_single_response_server("HTTP/1.1 404 Not Found", b"not found").await;
+    let client = ApifyClient::builder()
+        .token("test-token")
+        .base_url(base_url)
+        .build();
+
+    let stream = client
+        .run("some-run-id")
+        .log()
+        .stream()
+        .await
+        .expect("404 should map to Ok(None), not Err");
+    assert!(
+        stream.is_none(),
+        "stream() on a missing log should be Ok(None)"
+    );
+}
+
+/// `LogClient::stream()` still surfaces a non-2xx, non-404 status as an `Err` (only `404` is
+/// mapped to `None`).
+#[tokio::test(flavor = "multi_thread")]
+async fn log_stream_propagates_other_error_statuses() {
+    let base_url =
+        spawn_single_response_server("HTTP/1.1 500 Internal Server Error", b"boom").await;
+    let client = ApifyClient::builder()
+        .token("test-token")
+        .base_url(base_url)
+        .build();
+
+    let result = client.run("some-run-id").log().stream().await;
+    match result {
+        Err(err) => assert!(matches!(err, ApifyClientError::InvalidResponse(_))),
+        Ok(_) => panic!("a 500 must surface as Err, not Ok(_)"),
+    }
 }

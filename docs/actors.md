@@ -69,9 +69,9 @@ lifecycle (create, build, run, fetch the run log, delete).
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorCallOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. See [`ActorCallOptions`](#actorcalloptions) below. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
-| `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
-| `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
-| `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `serde_json::Value` | Validates input against a specific build's schema (`build` tag/number; `None` = default). |
+| `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build. `wait_for_finish` (max 60) is a *server-side* wait — like `RunClient`/`BuildClient`'s `get_with_options`, not client-side polling — for the build to reach a terminal state before the server responds; `None` returns immediately with whatever build is currently the default. Returns a `BuildClient` (rather than a `Build`) so you can chain further calls (`.get()`, `.log()`, `.wait_for_finish()`) on the resolved build without a second lookup. |
+| `validate_input(input)` | `&impl Serialize` | `bool` | Validates input against the default build's schema; returns whether it is valid. |
+| `validate_input_for_build(input, build)` | `&impl Serialize`, `Option<&str>` | `bool` | Validates input against a specific build's schema (`build` tag/number; `None` = default); returns whether it is valid. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | Client for the last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
 | `last_run_with_options(options)` | `LastRunOptions { status: Option<String>, origin: Option<String> }` | `RunClient` | Client for the last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |
 | `builds()` | — | `BuildCollectionClient` | The Actor's build collection. |
@@ -125,23 +125,24 @@ client-side polling budget:
 
 ### `ActorBuildOptions`
 
-All optional:
+All fields optional:
 
-- `tag` — build tag to assign to the resulting build (e.g. `latest`).
-- `use_cache` — reuse cached Docker layers from previous builds to speed the build up.
-- `beta_packages` — build against the beta versions of the Apify SDK/CLI packages instead of the
-  stable ones.
-- `wait_for_finish` — maximum number of seconds the server waits for the build to finish before
-  responding (a server-side wait, not client-side polling).
+| Field | Type | Description |
+|---|---|---|
+| `tag` | `Option<String>` | Build tag to assign to the resulting build (e.g. `latest`). |
+| `use_cache` | `Option<bool>` | Reuse cached Docker layers from previous builds to speed the build up (default `true`). |
+| `beta_packages` | `Option<bool>` | If `true`, build against the beta versions of the Apify SDK/CLI packages instead of the stable ones. |
+| `wait_for_finish` | `Option<i64>` | Maximum number of seconds the server waits for the build to finish before responding (a server-side wait, not client-side polling; max 60). |
 
 ### Input validation
 
 `validate_input` / `validate_input_for_build` check an input value against the Actor's input
-schema and return the API's JSON response as `serde_json::Value`. Unlike most endpoints this one
-is **not** wrapped in a `{ "data": ... }` envelope — the returned `Value` is the top-level body
-`{ "valid": <bool> }`, where `valid` reports whether the input satisfies the schema. A failed
-*request* (e.g. unknown `build` tag, missing auth, malformed body) is not reported via `valid`;
-it surfaces as an `Err(ApifyClientError)` from the call instead.
+schema and return whether the input is valid, as a plain `bool` — matching the reference client's
+`validateInput`, which returns `response.data.valid`. Under the hood the API's response is
+**not** wrapped in a `{ "data": ... }` envelope like most endpoints — the top-level body is
+`{ "valid": <bool> }` — but that shape is an implementation detail the client unwraps for you. A
+failed *request* (e.g. unknown `build` tag, missing auth, malformed body) is not reported via the
+returned `bool`; it surfaces as an `Err(ApifyClientError)` from the call instead.
 
 ```rust,no_run
 use apify_client::ApifyClient;
@@ -152,15 +153,14 @@ let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
 let actor = client.actor("apify~hello-world");
 
 // Validate against the default build's input schema.
-let result = actor.validate_input(&json!({ "message": "hi" })).await?;
-let is_valid = result.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+let is_valid = actor.validate_input(&json!({ "message": "hi" })).await?;
 println!("input valid: {is_valid}");
 
 // Validate against a specific build (by tag or version number). `None` == default build.
-let result = actor
+let is_valid = actor
     .validate_input_for_build(&json!({ "message": "hi" }), Some("latest"))
     .await?;
-println!("validated against latest build: {result}");
+println!("validated against latest build: {is_valid}");
 # Ok(())
 # }
 ```
@@ -235,8 +235,8 @@ collection).
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
-| `list(options)` | `ListOptions { offset, limit, desc }` | `PaginationList<ActorVersion>` | Lists the Actor's versions. |
-| `iterate(options)` | `ListOptions` | `ListIterator<ActorVersion>` | Lazily iterates all versions across pages (auto-pagination). |
+| `list(options)` | `ListOptions { offset, limit, desc }` | `PaginationList<ActorVersion>` | Lists the Actor's versions. `options` is accepted for interface stability but ignored: `GET /v2/actors/{actorId}/versions` takes no query parameters and always returns every version in one response, matching the reference client. |
+| `iterate(options)` | `ListOptions` | `ListIterator<ActorVersion>` | Lazily iterates all versions (in practice a single unpaginated fetch, for the same reason as `list`). |
 | `create(version)` | `&impl Serialize` | `ActorVersion` | Creates a new version. |
 
 ### `ActorVersionClient`

@@ -86,7 +86,8 @@ async fn get_webhook_dispatch() {
         .webhook(&webhook.id)
         .test()
         .await
-        .expect("test webhook");
+        .expect("test webhook")
+        .expect("webhook was just created, so it must still exist");
     assert!(!dispatch.id.is_empty());
 
     let fetched = client
@@ -154,7 +155,8 @@ async fn iterate_webhook_dispatches() {
         .webhook(&webhook.id)
         .test()
         .await
-        .expect("test webhook");
+        .expect("test webhook")
+        .expect("webhook was just created, so it must still exist");
     assert!(!dispatch.id.is_empty());
 
     let target = dispatch.id.clone();
@@ -217,7 +219,11 @@ async fn webhook_crud_flow() {
     assert!(dispatches.total >= 0);
 
     // Trigger a test dispatch.
-    let dispatch = webhook_client.test().await.expect("test webhook");
+    let dispatch = webhook_client
+        .test()
+        .await
+        .expect("test webhook")
+        .expect("webhook was just created, so it must still exist");
     assert!(!dispatch.id.is_empty(), "test dispatch should have an id");
 
     // Delete.

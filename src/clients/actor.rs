@@ -1,7 +1,6 @@
 //! Client for a single Actor (`/v2/actors/{actorId}`).
 
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::client::ApifyClient;
 use crate::clients::actor_version::ActorVersionClient;
@@ -250,36 +249,46 @@ impl ActorClient {
 
     /// Validates the given input against the Actor's input schema.
     ///
-    /// Uses the Actor's default build for the input schema. To validate against a specific
-    /// build, use [`ActorClient::validate_input_for_build`].
-    pub async fn validate_input<T: Serialize>(&self, input: &T) -> ApifyClientResult<Value> {
+    /// Returns whether the input is valid. Uses the Actor's default build for the input schema.
+    /// To validate against a specific build, use [`ActorClient::validate_input_for_build`].
+    pub async fn validate_input<T: Serialize>(&self, input: &T) -> ApifyClientResult<bool> {
         self.validate_input_for_build(input, None).await
     }
 
     /// Validates the given input against the input schema of a specific Actor build.
     ///
-    /// `build` is the optional tag or number of the Actor build whose input schema is used for
-    /// validation (e.g. `"latest"` or `"1.2.34"`); passing `None` uses the default build, which
-    /// is equivalent to [`ActorClient::validate_input`]. This maps to the spec's optional `build`
-    /// query parameter on `POST /v2/actors/{actorId}/validate-input`.
+    /// Returns whether the input is valid. `build` is the optional tag or number of the Actor
+    /// build whose input schema is used for validation (e.g. `"latest"` or `"1.2.34"`); passing
+    /// `None` uses the default build, which is equivalent to [`ActorClient::validate_input`].
+    /// This maps to the spec's optional `build` query parameter on
+    /// `POST /v2/actors/{actorId}/validate-input`.
     pub async fn validate_input_for_build<T: Serialize>(
         &self,
         input: &T,
         build: Option<&str>,
-    ) -> ApifyClientResult<Value> {
+    ) -> ApifyClientResult<bool> {
+        /// The endpoint's bare (non-`data`-enveloped) response shape: `{ "valid": bool }`. Kept
+        /// private since the reference client (`response.data.valid`) surfaces only the bare
+        /// `bool`, not the wrapping object.
+        #[derive(serde::Deserialize)]
+        struct ValidateInputResponse {
+            valid: bool,
+        }
+
         let body = serde_json::to_vec(input)?;
         let mut params = QueryParams::new();
         params.add_str("build", build);
         // `validate-input` returns a bare `{ "valid": ... }` object, *not* the usual
         // `{ "data": ... }` envelope, so it must skip `parse_data_envelope`.
-        crate::clients::base::post_action_raw(
+        let response: ValidateInputResponse = crate::clients::base::post_action_raw(
             &self.ctx,
             Some("validate-input"),
             &params,
             Some(body),
             Some(CONTENT_TYPE_JSON),
         )
-        .await
+        .await?;
+        Ok(response.valid)
     }
 
     /// Returns a client for the last run of this Actor, optionally filtered by run status.

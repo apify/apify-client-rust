@@ -22,7 +22,7 @@ webhook collections are available via `actor.webhooks()` and `task.webhooks()`.
 | `get()` | — | `Option<Webhook>` | Fetches the webhook. |
 | `update(fields)` | `&impl Serialize` | `Webhook` | Updates the webhook. |
 | `delete()` | — | `()` | Deletes the webhook. |
-| `test()` | — | `WebhookDispatch` | Triggers a test dispatch. |
+| `test()` | — | `Option<WebhookDispatch>` | Triggers a test dispatch, or `None` if the webhook no longer exists. |
 | `dispatches()` | — | `WebhookDispatchCollectionClient` | This webhook's dispatches. |
 
 ## Webhook dispatches

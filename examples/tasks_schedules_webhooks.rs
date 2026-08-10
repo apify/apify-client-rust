@@ -60,7 +60,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let webhook_client = client.webhook(&webhook.id);
 
     // Trigger a test dispatch (does not require a real run) and list this webhook's dispatches.
-    let dispatch = webhook_client.test().await?;
+    let dispatch = webhook_client
+        .test()
+        .await?
+        .expect("webhook was just created, so it must still exist");
     println!("Test dispatch {}", dispatch.id);
     let dispatches = webhook_client.dispatches().list(Default::default()).await?;
     println!("Webhook has {} dispatch(es)", dispatches.total);

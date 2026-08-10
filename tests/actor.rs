@@ -19,8 +19,9 @@ async fn list_actors() {
 }
 
 fn actor_name(prefix: &str) -> String {
-    let name = common::unique_name(prefix).replace('-', ""); // actor names are stricter
-    format!("a{}", &name[..name.len().min(20)])
+    // actor names are stricter (no hyphens, capped length); see `short_unique_name`'s doc for
+    // why plain truncation of `unique_name`'s output isn't used here.
+    common::short_unique_name('a', prefix, 21)
 }
 
 /// Minimal Actor definition with one inline source-files version.
@@ -447,7 +448,14 @@ async fn actor_webhooks_and_default_build() {
         .list(Default::default())
         .await
         .expect("list actor webhooks");
-    assert!(webhooks.total >= 0);
+    // This Actor was just created and no webhook has ever targeted it, so the Actor-scoped
+    // collection must be genuinely empty — a load-bearing assertion, unlike a tautological
+    // `total >= 0` (`total` is unsigned in practice and that check passes unconditionally).
+    assert_eq!(
+        webhooks.total, 0,
+        "a freshly created Actor should have no webhooks"
+    );
+    assert_eq!(webhooks.total as usize, webhooks.items.len());
 
     // Build the `0.0` version tagged `latest` and wait for it to finish, so the Actor has a
     // resolvable default build.

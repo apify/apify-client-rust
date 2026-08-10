@@ -64,15 +64,18 @@ pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 // Re-export the most commonly used option/parameter types for ergonomic access.
 pub use clients::actor::{ActorBuildOptions, ActorCallOptions, ActorStartOptions};
 pub use clients::actor_collection::ActorListOptions;
+pub use clients::build::BuildGetOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
+pub use clients::dataset_collection::DatasetGetOrCreateOptions;
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
+pub use clients::key_value_store_collection::KeyValueStoreGetOrCreateOptions;
 pub use clients::log::LogOptions;
 pub use clients::pagination::ListIterator;
 pub use clients::request_queue::{
     BatchAddRequestsOptions, ListRequestsOptions, RequestQueueRequestsIterator,
 };
 pub use clients::run::{
-    LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
+    LastRunOptions, RunChargeOptions, RunGetOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
 pub use clients::store_collection::{StoreActorIterator, StoreListOptions};

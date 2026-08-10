@@ -6,8 +6,7 @@
 
 An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 It provides a resource-oriented, async interface that mirrors the official
-[JavaScript](https://github.com/apify/apify-client-js) and
-[Python](https://github.com/apify/apify-client-python) clients.
+[JavaScript client](https://github.com/apify/apify-client-js).
 
 - Async (Tokio-friendly), built on `reqwest`.
 - Transparent authentication, retries with exponential backoff, and timeouts.

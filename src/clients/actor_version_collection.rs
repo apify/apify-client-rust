@@ -23,16 +23,16 @@ impl ActorVersionCollectionClient {
     }
 
     /// Lists the Actor's versions.
+    ///
+    /// `GET /v2/actors/{actorId}/versions` defines no query parameters in the spec, so `options`
+    /// is accepted for interface stability but otherwise ignored (no `offset`/`limit`/`desc` are
+    /// sent) — matching the reference client's `list(_options)`, whose parameter is documented
+    /// `@deprecated No options are used in the current API implementation`.
     pub async fn list(
         &self,
-        options: ListOptions,
+        _options: ListOptions,
     ) -> ApifyClientResult<PaginationList<ActorVersion>> {
-        let mut params = QueryParams::new();
-        params
-            .add_int("offset", options.offset)
-            .add_int("limit", options.limit)
-            .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &QueryParams::new()).await
     }
 
     /// Lazily iterates over all versions matching `options`, fetching pages on demand.

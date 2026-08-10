@@ -68,33 +68,46 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
 | `get_statistics()` | — | `Option<Value>` | Field statistics. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
-| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
+| `create_items_public_url(options, expires_in_secs)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
 
 `DatasetListItemsOptions` (all optional):
 
-- `offset` / `limit` / `desc` — pagination window and reverse (newest-first) ordering.
-- `fields` — comma-separated allow-list of top-level fields to keep in each item.
-- `output_fields` — positionally renames the fields selected by `fields` in the output; requires
-  `fields`, and the two lists must have equal length (the i-th `output_fields` name becomes the
-  output name of the i-th `fields` entry).
-- `omit` — comma-separated fields to drop from each item.
-- `skip_empty` — omit items that are empty after field filtering.
-- `skip_hidden` — omit hidden fields (those whose names start with `#`).
-- `clean` — shorthand for `skip_hidden` + `skip_empty` (only non-empty, non-hidden items).
-- `unwind` — comma-separated fields whose array values are expanded into separate items.
-- `flatten` — comma-separated fields whose nested objects are flattened into dotted keys.
-- `view` — name of a dataset view to apply.
-- `simplified` — return the simplified form of the items.
-- `skip_failed_pages` — skip pages that failed to be scraped (crawler datasets).
+| Field | Type | Description |
+|---|---|---|
+| `offset` | `Option<i64>` | Number of items to skip. |
+| `limit` | `Option<i64>` | Maximum number of items to return. |
+| `desc` | `Option<bool>` | Reverse (newest-first) ordering. |
+| `fields` | `Option<Vec<String>>` | Allow-list of top-level fields to keep in each item. |
+| `output_fields` | `Option<Vec<String>>` | Positionally renames the fields selected by `fields` in the output; requires `fields`, and the two lists must have equal length (the i-th `output_fields` name becomes the output name of the i-th `fields` entry). |
+| `omit` | `Option<Vec<String>>` | Fields to drop from each item. |
+| `skip_empty` | `Option<bool>` | Omit items that are empty after field filtering. |
+| `skip_hidden` | `Option<bool>` | Omit hidden fields (those whose names start with `#`). |
+| `clean` | `Option<bool>` | Shorthand for `skip_hidden` + `skip_empty` (only non-empty, non-hidden items). |
+| `unwind` | `Option<Vec<String>>` | Fields whose array values are expanded into separate items. |
+| `flatten` | `Option<Vec<String>>` | Fields whose nested objects are flattened into dotted keys. |
+| `view` | `Option<String>` | Name of a dataset view to apply. |
+| `simplified` | `Option<bool>` | Return the simplified form of the items. |
+| `skip_failed_pages` | `Option<bool>` | Skip items that come from failed pages (crawler datasets). |
+| `signature` | `Option<String>` | Pre-shared URL signature granting access to a private dataset without an API token. |
 
-`DatasetDownloadOptions` adds format-specific export controls (all optional):
+`DatasetDownloadOptions` adds format-specific export controls (all optional except `items`,
+which embeds a `DatasetListItemsOptions` for the same filtering/projection as `list_items`):
 
-- `attachment` — set the `Content-Disposition: attachment` header so browsers download the file.
-- `bom` — prepend a UTF-8 byte-order mark (useful for CSV opened in Excel).
-- `delimiter` — CSV field delimiter (default `,`).
-- `skip_header_row` — omit the CSV header row.
-- `xml_root` / `xml_row` — element names for the XML root and per-item rows.
-- `feed_title` / `feed_description` — title and description for RSS output.
+| Field | Type | Description |
+|---|---|---|
+| `items` | `DatasetListItemsOptions` | Shared item filtering/projection options (see above). |
+| `attachment` | `Option<bool>` | Set the `Content-Disposition: attachment` header so browsers download the file. |
+| `bom` | `Option<bool>` | Prepend a UTF-8 byte-order mark (useful for CSV opened in Excel). |
+| `delimiter` | `Option<String>` | CSV field delimiter (default `,`). |
+| `skip_header_row` | `Option<bool>` | Omit the CSV header row. |
+| `xml_root` / `xml_row` | `Option<String>` / `Option<String>` | Element names for the XML root and per-item rows. |
+| `feed_title` / `feed_description` | `Option<String>` / `Option<String>` | Title and description for RSS output. |
+
+`create_items_public_url`'s `expires_in_secs` bounds how long the URL's HMAC-SHA256 `signature`
+stays valid, as a **relative** number of seconds from the moment the URL is created (not a Unix
+timestamp) — `None` produces a signature that never expires. It has no effect when the dataset
+does not expose a URL-signing secret key (i.e. it isn't configured for signed access), in which
+case the URL is returned unsigned regardless.
 
 `DownloadItemsFormat` (re-exported at the crate root) selects the export format for
 `download_items`. Variants: `Json`, `Jsonl`, `Csv`, `Xlsx`, `Xml`, `Rss`, `Html`. The method
@@ -134,9 +147,14 @@ println!("exported {} bytes of CSV", csv.len());
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
 | `set_record_json(key, value)` | `&str`, `&impl Serialize` | `()` | Stores a JSON record. |
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
-| `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
+| `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment: Option<bool>, signature: Option<String> }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
-| `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
+| `create_keys_public_url(expires_in_secs)` | `Option<i64>` | `String` | Shareable keys-list URL. |
+
+`create_keys_public_url`'s `expires_in_secs` has the same semantics as
+`create_items_public_url`'s (see above): a relative number of seconds from creation time
+bounding the signature's validity, with `None` meaning it never expires, and no effect when the
+store isn't configured for signed access.
 
 `ListKeysOptions`: `limit: Option<i64>`, `exclusive_start_key: Option<String>`,
 `prefix: Option<String>`, `collection: Option<String>`, `signature: Option<String>`. Like
@@ -213,7 +231,7 @@ are both keyed on it. See
 | `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add with reference-matching defaults (see below). |
 | `batch_add_requests_with_options(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `Value` | Batch add with explicit retry/parallelism control (see below). |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
-| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
+| `list_requests(options)` | `ListRequestsOptions { limit: Option<i64>, exclusive_start_id: Option<String>, cursor: Option<String>, filter: Option<Vec<String>> }` | `Value` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |

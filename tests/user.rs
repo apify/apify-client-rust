@@ -23,7 +23,8 @@ async fn get_monthly_usage() {
         .me()
         .monthly_usage()
         .await
-        .expect("get monthly usage");
+        .expect("get monthly usage")
+        .expect("monthly usage should exist for the current account");
     assert!(usage.is_object(), "monthly usage should be a JSON object");
 }
 
@@ -46,7 +47,8 @@ async fn get_monthly_usage_for_date() {
         .me()
         .monthly_usage_for_date(Some(requested_day))
         .await
-        .expect("get monthly usage for date");
+        .expect("get monthly usage for date")
+        .expect("monthly usage should exist for the current account");
 
     let cycle = usage
         .get("usageCycle")
@@ -84,7 +86,12 @@ async fn get_monthly_usage_for_date() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_limits() {
     let client = require_client!();
-    let limits = client.me().limits().await.expect("get limits");
+    let limits = client
+        .me()
+        .limits()
+        .await
+        .expect("get limits")
+        .expect("limits should exist for the current account");
     assert!(limits.is_object(), "limits should be a JSON object");
 }
 

@@ -7,6 +7,15 @@ to [Semantic Versioning](https://semver.org/).
 ## [0.7.0] - 2026-07-25
 
 ### Added
+- `RunClient::get_with_options`/`RunGetOptions` and `BuildClient::get_with_options`/
+  `BuildGetOptions`, exposing the spec's `waitForFinish` query parameter (a bounded, max-60s
+  server-side wait) on `GET /v2/actor-runs/{runId}` and `GET /v2/actor-builds/{buildId}`. This
+  also becomes available on `actor.last_run()`/`task.last_run()`, which share `RunClient`.
+  Distinct from the client-side-polling `wait_for_finish()` on both clients.
+- `DatasetCollectionClient::get_or_create_with_options`/`DatasetGetOrCreateOptions` and
+  `KeyValueStoreCollectionClient::get_or_create_with_options`/`KeyValueStoreGetOrCreateOptions`,
+  exposing the JS-reference-only `schema` convenience (not documented by the OpenAPI spec, which
+  declares only the `name` query parameter) as an optional request body field.
 - `RequestQueueClient::batch_add_requests_with_options` and `BatchAddRequestsOptions`, bringing
   `batch_add_requests` to parity with the JS reference client: chunks are additionally sliced by
   serialized byte size, up to `max_parallel` chunk calls run concurrently, and a chunk's
@@ -43,6 +52,27 @@ to [Semantic Versioning](https://semver.org/).
   Callers passing `ActorStartOptions { .. }` literals to `actor.call` need to switch to
   `ActorCallOptions` (a strict subset of the same field names; `Default::default()` call sites
   are unaffected).
+- **Behavior/API change:** `ActorClient::validate_input`/`validate_input_for_build` now return
+  `bool` instead of the raw `serde_json::Value` response envelope, matching the JS reference
+  client's `validateInput`, which returns `response.data.valid`. Callers previously reading
+  `result.get("valid")` should use the returned `bool` directly.
+- **Behavior/API change:** `WebhookClient::test` now returns `Option<WebhookDispatch>` (`None`
+  if the webhook no longer exists) instead of `WebhookDispatch`, matching the JS reference
+  client's `catchNotFoundOrThrow` wrapping; the spec lists `404` as a valid response for
+  `POST /v2/webhooks/{webhookId}/test`.
+- **Behavior/API change:** `LogClient::stream`/`stream_with_options` and
+  `RunClient::get_streamed_log`/`get_streamed_log_with_options` now return
+  `Option<impl Stream<..>>` (`None` if the log does not exist) instead of the stream directly,
+  matching the reference client's `catchNotFoundOrThrow` wrapping and `LogClient::get`'s existing
+  `404`-to-`None` mapping.
+- **Behavior/API change:** `UserClient::monthly_usage`/`monthly_usage_for_date`/`limits` now
+  return `Option<serde_json::Value>` instead of `serde_json::Value`, matching the JS reference
+  client's `catchNotFoundOrThrow` wrapping (the spec declares no `404` for either endpoint, so
+  this is JS-reference parity rather than a real reachable case).
+- `ActorVersionCollectionClient::list` no longer sends `offset`/`limit`/`desc` query parameters:
+  `GET /v2/actors/{actorId}/versions` defines none in the spec, and the JS reference client's
+  equivalent option is unused/deprecated. The method still accepts a `ListOptions` argument for
+  interface stability, but ignores it.
 
 ### Fixed
 - `RequestQueueClient` timeouts now match the JS reference client (`SMALL_TIMEOUT_MILLIS`/5s or
@@ -54,6 +84,14 @@ to [Semantic Versioning](https://semver.org/).
   `getRequest` is the one request-level method that builds its params from bare `_params()`
   instead of merging in `clientKey: this.clientKey` like every sibling method does; `get_request`
   previously sent it regardless of `with_client_key`.
+- Test helper `unique_name(prefix).replace('-', "")[..max_len]` (used to build strict, hyphen-free
+  Actor/build names in `tests/actor.rs`/`tests/actor_run.rs`/`tests/build.rs`) truncated from the
+  *end*, which could cut off the random suffix entirely for long prefixes, yielding a constant
+  name that collided across concurrent suite runs. New `common::short_unique_name` truncates the
+  prefix first so the random component always survives.
+- `rust-integration-tests.yml`'s `Test examples` step now fails if `cargo test --test examples` or
+  `cargo test --doc` reports zero executed tests, matching the guard already on the main
+  integration-test step.
 - `rust-integration-tests.yml`'s `pull_request.paths` filter now includes `README.md`,
   `docs/**`, and `build.rs`: a PR touching only those (which `cargo test --doc` and the
   `User-Agent` runtime-version build script depend on) previously would not trigger CI at all.
@@ -115,8 +153,29 @@ to [Semantic Versioning](https://semver.org/).
   (`docs/storages.md`) field lists, and stated the `ListOptions` argument type inline for
   `WebhookDispatchCollectionClient::list`/`iterate` (`docs/webhooks.md`), matching the sibling
   `WebhookCollectionClient` table's level of detail.
-- `src/lib.rs`'s crate-level rustdoc no longer says the client mirrors "the official JavaScript
-  and Python clients" — the reference is JS-only.
+- `src/lib.rs`'s crate-level rustdoc no longer claims parity with a non-JS reference client; JS
+  is the sole reference.
+- `src/http_client.rs`'s module doc and `README.md`'s intro no longer say the client mirrors "the
+  JavaScript and Python" reference clients; the reference is JS-only.
+- Added a `default_build`/`ActorBuildOptions`/`RunResurrectOptions`/`RunMetamorphOptions`/
+  `RunChargeOptions`/`StoreListOptions`/`GetRecordOptions`/`ListRequestsOptions`/
+  `DatasetListItemsOptions`/`DatasetDownloadOptions` field-type pass across `docs/actors.md`,
+  `docs/runs.md`, `docs/misc.md`, and `docs/storages.md`: filled in missing per-field types
+  (including previously-undocumented `StoreListOptions` fields
+  `include_unrunnable_actors`/`allows_agentic_users`/`response_format`), clarified
+  `default_build`'s server-side-wait semantics and why it returns a `BuildClient`, and clarified
+  the `expires_in_secs` unit/semantics (a relative seconds-from-now signature validity window,
+  not a Unix timestamp) on `create_items_public_url`/`create_keys_public_url`.
+- Reworded the `KeyValueStoreKeysIterator` doc's description of the JS reference's `listKeys()`
+  continuation check: it is a three-part `&&` (non-empty page, a next cursor, and the limit not
+  exceeded), not a bare `nextExclusiveStartKey !== null` check.
+- Consolidated the duplicated compress-once-vs-JS-reference rationale in `src/http_client.rs`
+  (previously repeated near-verbatim on both `HttpClient::call` and `maybe_compress_request`)
+  into one full explanation on `maybe_compress_request`, with a one-line pointer from `call`.
+- Tightened the `ACTOR_RUN_ID` env-var justification comment on
+  `tests/actor_run.rs::run_update_set_status_message_and_delete`.
+- Dropped review-round provenance ("round-3"/"round-6") from three regression-test doc comments
+  in `tests/unit_http.rs`; the substantive guarantees they document are unchanged.
 
 ### Internal
 - Extracted shared helpers to remove near-duplicate code: `ActorClient`/`TaskClient`
@@ -127,6 +186,8 @@ to [Semantic Versioning](https://semver.org/).
   identical to `new`) was removed in favor of `new`.
 - Removed the unused `_root: ApifyClient` parameter from `RunClient::new` (and the `.clone()` at
   each of its three call sites, which existed only to satisfy it).
+- Extracted the SplitMix64 output-mixing multipliers/shifts in `http_client.rs::next_jitter` into
+  named constants, matching the already-named `GOLDEN_GAMMA`.
 
 ### Tests
 - Added a live integration assertion for the standalone `ApifyClient::log(id)` accessor
@@ -152,6 +213,15 @@ to [Semantic Versioning](https://semver.org/).
   concurrent `#[tokio::test]`s: `ACTOR_RUN_ID` has exactly one reader in the crate
   (`ApifyClient::set_status_message`) and exactly one caller of that method in the whole test
   suite (this test), so no other test can observe or clobber it.
+- Added hermetic `tests/unit_http.rs` coverage: `validate_input`'s bare-body `bool` unwrap;
+  `WebhookClient::test`'s `404`-to-`None` mapping (`webhook_test_maps_not_found_to_none`); and
+  `LogClient::stream`'s `404`-to-`None` mapping plus its propagation of other error statuses
+  (`log_stream_maps_not_found_to_none`, `log_stream_propagates_other_error_statuses`), the latter
+  two against a minimal real TCP server since streaming intentionally bypasses the mock
+  `HttpBackend`.
+- Replaced the tautological `assert!(webhooks.total >= 0)` in
+  `tests/actor.rs::actor_webhooks_and_default_build` with a load-bearing assertion that a freshly
+  created Actor's webhook collection is genuinely empty (`total == 0`, `items.len() == total`).
 
 ## [0.6.1] - 2026-07-14
 

@@ -83,7 +83,8 @@ impl LogClient {
         Ok(response.map(|r| String::from_utf8_lossy(&r.body).into_owned()))
     }
 
-    /// Opens a streaming connection to the log, yielding chunks of bytes as they arrive.
+    /// Opens a streaming connection to the log, yielding chunks of bytes as they arrive, or
+    /// `None` if the log does not exist (e.g. the run/build was deleted).
     ///
     /// This powers real-time log redirection: callers can forward each chunk to their own
     /// logger/stdout while a run is still in progress. The stream completes when the log
@@ -93,20 +94,21 @@ impl LogClient {
     /// [`LogClient::stream_with_options`].
     pub async fn stream(
         &self,
-    ) -> ApifyClientResult<impl Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ) -> ApifyClientResult<Option<impl Stream<Item = ApifyClientResult<Vec<u8>>>>> {
         self.stream_with_options(LogOptions::default()).await
     }
 
     /// Opens a streaming connection to the log applying the given [`LogOptions`], yielding
-    /// chunks of bytes as they arrive.
+    /// chunks of bytes as they arrive, or `None` if the log does not exist.
     ///
     /// Like [`LogClient::stream`], but lets the caller request the raw log via
     /// [`LogOptions::raw`] (as the reference client's log redirection does, which streams
-    /// `{ raw: true }`).
+    /// `{ raw: true }`). Mirrors [`LogClient::get`]'s `404`-to-`None` mapping: the reference
+    /// client's `stream()` also wraps its request in `catchNotFoundOrThrow`.
     pub async fn stream_with_options(
         &self,
         options: LogOptions,
-    ) -> ApifyClientResult<impl Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ) -> ApifyClientResult<Option<impl Stream<Item = ApifyClientResult<Vec<u8>>>>> {
         // Streaming needs a live connection, so we go through reqwest directly rather than
         // the buffered backend path. The retry policy does not apply to an open stream.
         let client = reqwest::Client::new();
@@ -124,16 +126,20 @@ impl LogClient {
         }
 
         let response = builder.send().await.map_err(ApifyClientError::from)?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        if !status.is_success() {
             return Err(ApifyClientError::InvalidResponse(format!(
                 "log stream returned status {}",
-                response.status().as_u16()
+                status.as_u16()
             )));
         }
 
         let byte_stream = response.bytes_stream();
-        Ok(futures_util::StreamExt::map(byte_stream, |chunk| {
+        Ok(Some(futures_util::StreamExt::map(byte_stream, |chunk| {
             chunk.map(|b| b.to_vec()).map_err(ApifyClientError::from)
-        }))
+        })))
     }
 }

@@ -38,7 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = client
         .run(&run.id)
         .get_streamed_log_with_options(LogOptions { raw: Some(true) })
-        .await?;
+        .await?
+        .expect("run just finished, so its log must exist");
     let mut streamed_bytes = 0usize;
     while let Some(chunk) = stream.next().await {
         streamed_bytes += chunk?.len();

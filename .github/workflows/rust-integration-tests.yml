@@ -96,6 +96,20 @@ jobs:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         # Match the integration-test thread cap so the example programs and any doctests that hit
         # the live API stay gentle on the shared account.
+        #
+        # Same defense-in-depth as the "Run integration tests" step above: `set -o pipefail` plus
+        # a trailing grep make the step fail if either command reports zero executed tests (e.g.
+        # a filter typo, or every example/doctest silently being skipped), not just on an outright
+        # test failure.
         run: |
-          cargo test --test examples --verbose -- --test-threads=4
-          cargo test --doc --verbose -- --test-threads=4
+          set -o pipefail
+          cargo test --test examples --verbose -- --test-threads=4 | tee examples_output.log
+          if ! grep -qE '[1-9][0-9]* passed' examples_output.log; then
+            echo "::error::No example tests were reported as passed; expected at least one 'N passed' summary line."
+            exit 1
+          fi
+          cargo test --doc --verbose -- --test-threads=4 | tee doctest_output.log
+          if ! grep -qE '[1-9][0-9]* passed' doctest_output.log; then
+            echo "::error::No doctests were reported as passed; expected at least one 'N passed' summary line."
+            exit 1
+          fi

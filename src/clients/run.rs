@@ -74,6 +74,20 @@ pub struct RunResurrectOptions {
     pub restart_on_error: Option<bool>,
 }
 
+/// Options for fetching a run via [`RunClient::get_with_options`].
+///
+/// Covers the spec's optional `waitForFinish` query parameter on `GET /v2/actor-runs/{runId}`,
+/// matching the reference client's `RunGetOptions`.
+#[derive(Debug, Default, Clone)]
+pub struct RunGetOptions {
+    /// Maximum time, in seconds (capped at 60 by the API), to wait server-side for the run to
+    /// reach a terminal state before returning. `None` (the default) returns immediately without
+    /// waiting. This is a single bounded server-side wait, distinct from
+    /// [`RunClient::wait_for_finish`], which polls repeatedly (using this same parameter
+    /// internally) until the run finishes or a client-side budget is exhausted.
+    pub wait_for_finish: Option<i64>,
+}
+
 /// Options for transforming a run into another Actor's run (metamorph).
 #[derive(Debug, Default, Clone)]
 pub struct RunMetamorphOptions {
@@ -125,8 +139,23 @@ impl RunClient {
     }
 
     /// Fetches the run object, or `None` if it does not exist.
+    ///
+    /// Returns immediately without waiting for the run to finish. To have the API wait
+    /// server-side before responding, use [`RunClient::get_with_options`].
     pub async fn get(&self) -> ApifyClientResult<Option<ActorRun>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        self.get_with_options(RunGetOptions::default()).await
+    }
+
+    /// Fetches the run object, or `None` if it does not exist, applying the given
+    /// [`RunGetOptions`] (e.g. [`RunGetOptions::wait_for_finish`] to have the API wait,
+    /// server-side, for the run to finish before responding).
+    pub async fn get_with_options(
+        &self,
+        options: RunGetOptions,
+    ) -> ApifyClientResult<Option<ActorRun>> {
+        let mut params = QueryParams::new();
+        params.add_int("waitForFinish", options.wait_for_finish);
+        get_resource(&self.ctx, None, &params).await
     }
 
     /// Updates the run (e.g. its status message) and returns the updated object.
@@ -278,24 +307,27 @@ impl RunClient {
         LogClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "log")
     }
 
-    /// Opens a live stream of the run's log for redirection.
+    /// Opens a live stream of the run's log for redirection, or `None` if the log does not
+    /// exist.
     ///
     /// Convenience equivalent to `run.log().stream()`: yields raw log chunks as they arrive, so
     /// callers can forward them to their own logger/stdout while the run is in progress. This is
     /// a Rust-specific raw-chunk convenience, not a mirror of the JS reference client's
-    /// `getStreamedLog`, which resolves the Actor/run name and returns a `StreamedLog` object
-    /// wrapping a prefixed, parsed `Log` — see
-    /// [`get_streamed_log_with_options`](Self::get_streamed_log_with_options) for the fuller
-    /// disclaimer.
+    /// `getStreamedLog`, which returns a `StreamedLog` object: it wraps a destination `Log`, but
+    /// the timestamp-prefixed-line parsing and forwarding is done by `StreamedLog` itself, not by
+    /// `Log` — see [`get_streamed_log_with_options`](Self::get_streamed_log_with_options) for the
+    /// fuller disclaimer.
     pub async fn get_streamed_log(
         &self,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
+    {
         self.log().stream().await
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
     /// [`crate::LogOptions`] (e.g. [`crate::LogOptions::raw`] to stream the unprocessed log,
-    /// which is the form the JS reference's log redirection consumes internally).
+    /// which is the form the JS reference's log redirection consumes internally), or `None` if
+    /// the log does not exist.
     ///
     /// This is a Rust-specific convenience that simply forwards `LogOptions` to
     /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
@@ -303,7 +335,8 @@ impl RunClient {
     pub async fn get_streamed_log_with_options(
         &self,
         options: crate::clients::log::LogOptions,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
+    {
         self.log().stream_with_options(options).await
     }
 }

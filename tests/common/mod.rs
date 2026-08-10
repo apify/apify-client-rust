@@ -213,3 +213,27 @@ pub fn unique_name(prefix: &str) -> String {
     let uuid = uuid::Uuid::new_v4().simple().to_string();
     format!("rust-test-{prefix}-{}", &uuid[..12])
 }
+
+/// Number of trailing random hex characters kept by [`short_unique_name`]. Fixed so the random
+/// component's collision-resistance doesn't shrink as callers pass longer prefixes.
+const SHORT_NAME_RANDOM_LEN: usize = 10;
+
+/// Generates a short, collision-resistant resource name for APIs with strict naming limits
+/// (e.g. Actor/build names, which reject hyphens and cap length).
+///
+/// Naively taking `unique_name(prefix).replace('-', "")[..max_len]` truncates from the *end*,
+/// which can cut off the random suffix entirely for long prefixes, leaving a constant name that
+/// collides across concurrent test runs (see the `actor_webhooks_and_default_build`
+/// regression this guards against). This instead truncates the (hyphen-stripped) `prefix`
+/// *first*, so the trailing random fragment always survives.
+///
+/// `leading` is prepended as-is (used to satisfy naming rules that require a letter first);
+/// `max_len` bounds the total length of `leading` + prefix + random suffix.
+pub fn short_unique_name(leading: char, prefix: &str, max_len: usize) -> String {
+    let uuid = uuid::Uuid::new_v4().simple().to_string();
+    let random_suffix = &uuid[..SHORT_NAME_RANDOM_LEN];
+    let clean_prefix: String = prefix.chars().filter(|c| c.is_alphanumeric()).collect();
+    let prefix_budget = max_len.saturating_sub(1 + SHORT_NAME_RANDOM_LEN);
+    let prefix_trunc = &clean_prefix[..clean_prefix.len().min(prefix_budget)];
+    format!("{leading}{prefix_trunc}{random_suffix}")
+}

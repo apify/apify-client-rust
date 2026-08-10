@@ -23,8 +23,7 @@ async fn list_builds() {
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_builds() {
     let client = require_client!();
-    let name = common::unique_name("build-iter").replace('-', "");
-    let name = format!("b{}", &name[..name.len().min(20)]);
+    let name = common::short_unique_name('b', "build-iter", 21);
 
     let definition = json!({
         "name": name,
@@ -86,8 +85,7 @@ async fn iterate_builds() {
 #[tokio::test(flavor = "multi_thread")]
 async fn build_actor_flow() {
     let client = require_client!();
-    let name = common::unique_name("build").replace('-', "");
-    let name = format!("b{}", &name[..name.len().min(20)]);
+    let name = common::short_unique_name('b', "build", 21);
 
     let definition = json!({
         "name": name,
@@ -156,17 +154,17 @@ async fn build_actor_flow() {
 
     // Validate input against the just-built `latest` build, exercising the spec's optional
     // `build` query parameter on POST /v2/actors/{actorId}/validate-input. A real `latest`
-    // build now exists (built above), so `build=latest` resolves to a concrete artifact.
-    // The success response is an object with a `valid` boolean; asserting that field is present
-    // (rather than merely `is_object()`) proves the call hit the endpoint with the param accepted
-    // and did not return an error envelope.
-    let validation = actor_client
+    // build now exists (built above), so `build=latest` resolves to a concrete artifact. An
+    // empty object is a valid input for an Actor with no required schema fields, so asserting
+    // `true` proves the call hit the endpoint with the param accepted and did not return an
+    // error envelope.
+    let is_valid = actor_client
         .validate_input_for_build(&json!({}), Some("latest"))
         .await
         .expect("validate input for latest build");
     assert!(
-        validation.get("valid").and_then(|v| v.as_bool()).is_some(),
-        "validate-input response should contain a `valid` boolean, got: {validation}"
+        is_valid,
+        "validate-input should report the empty-object input as valid"
     );
 
     // Clean up.
@@ -179,8 +177,7 @@ async fn build_actor_flow() {
 #[tokio::test(flavor = "multi_thread")]
 async fn build_abort_and_delete() {
     let client = require_client!();
-    let name = common::unique_name("build-abort").replace('-', "");
-    let name = format!("b{}", &name[..name.len().min(20)]);
+    let name = common::short_unique_name('b', "build-abort", 21);
 
     let definition = json!({
         "name": name,

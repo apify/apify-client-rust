@@ -27,21 +27,26 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
-| `get_streamed_log()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Convenience for `log().stream()` — streams the run's log chunks live (log redirection). |
-| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
+| `get_streamed_log()` | — | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | Convenience for `log().stream()` — streams the run's log chunks live (log redirection), or `None` if the log does not exist. |
+| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
 
 `get_streamed_log()` / `get_streamed_log_with_options()` are `async` and yield the stream inside a
-`Result`, so `.await?` them to obtain it. Polling the returned stream with `.next()` requires the
+`Result<Option<_>>`, so `.await?` them, then handle the `Option` (`None` means the log does not
+exist). Polling the returned stream with `.next()` requires the
 `futures_util::StreamExt` trait (from the `futures-util` crate — add `futures-util = "0.3"` to your
 `Cargo.toml`) in scope; the [`raw_log`](../examples/raw_log.rs) example drives
 `get_streamed_log_with_options` exactly this way. See
 [Logs](misc.md#logs--clientlogbuild_or_run_id) for a full streaming snippet.
 
-`RunResurrectOptions`: `build`, `memory_mbytes`, `timeout_secs`, `max_items`, `max_total_charge_usd`, `restart_on_error` (all optional).
+`RunResurrectOptions` (all optional): `build: Option<String>`, `memory_mbytes: Option<i64>`,
+`timeout_secs: Option<i64>`, `max_items: Option<i64>`, `max_total_charge_usd: Option<f64>`,
+`restart_on_error: Option<bool>`.
 
-`RunMetamorphOptions`: `build`, `content_type` (both optional; `content_type` defaults to `application/json`).
+`RunMetamorphOptions` (both optional): `build: Option<String>`, `content_type: Option<String>`
+(defaults to `application/json`).
 
-`RunChargeOptions`: `event_name` (required), `count` (defaults to `1`), `idempotency_key` (auto-generated when omitted).
+`RunChargeOptions`: `event_name: String` (required), `count: Option<i64>` (defaults to `1`),
+`idempotency_key: Option<String>` (auto-generated when omitted).
 
 `ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and

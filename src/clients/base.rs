@@ -307,19 +307,56 @@ pub(crate) async fn get_or_create_named<T: DeserializeOwned>(
     ctx: &ResourceContext,
     name: Option<&str>,
 ) -> ApifyClientResult<T> {
+    get_or_create_named_with_schema(ctx, name, None).await
+}
+
+/// A `POST` that gets-or-creates a named resource (`POST {collection}?name=...`), optionally
+/// sending a `{ "schema": ... }` JSON body, and unwrapping the `data` envelope.
+///
+/// The OpenAPI spec for `POST /v2/datasets` and `POST /v2/key-value-stores` documents only the
+/// `name` query parameter; `schema` is a JS-reference-only convenience (`getOrCreate(name,
+/// { schema })`, sent as the POST body via `this._getOrCreate(name, options)`). Passing `None`
+/// sends no body at all, matching the JS client's behavior when `options` is omitted (identical
+/// to [`get_or_create_named`]'s request shape).
+pub(crate) async fn get_or_create_named_with_schema<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    name: Option<&str>,
+    schema: Option<&serde_json::Value>,
+) -> ApifyClientResult<T> {
     let mut params = QueryParams::new();
     params.add_str("name", name.map(|s| s.to_string()));
+    let body = match schema {
+        Some(schema) => Some(serde_json::to_vec(
+            &serde_json::json!({ "schema": schema }),
+        )?),
+        None => None,
+    };
+    let content_type = body.as_ref().map(|_| CONTENT_TYPE_JSON);
     let response = send_with_body(
         ctx,
         HttpMethod::Post,
         None,
         &params,
-        None,
-        None,
+        body,
+        content_type,
         DEFAULT_REQUEST_TIMEOUT,
     )
     .await?;
     parse_data_envelope(&response.body)
+}
+
+/// A `POST` that unwraps the `data` envelope from the response and maps `404` to `None`. Used by
+/// endpoints whose reference-client counterpart wraps the call in `catchNotFoundOrThrow` (e.g.
+/// testing a webhook that no longer exists).
+pub(crate) async fn post_action_optional<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+) -> ApifyClientResult<Option<T>> {
+    let result: ApifyClientResult<T> = post_action(ctx, sub_path, params, body, content_type).await;
+    catch_not_found(result)
 }
 
 /// A `POST` that unwraps the `data` envelope from the response. Used by the common
