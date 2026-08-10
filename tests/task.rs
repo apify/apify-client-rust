@@ -87,6 +87,49 @@ async fn iterate_tasks() {
     );
 }
 
+/// `publish`/`unpublish` are thin wrappers around `update` that flip `isPublic`. Unpublishing an
+/// already-unpublished task is a documented no-op, so it round-trips cleanly; publishing a task
+/// requires write permission over its Actor (here the shared, Apify-owned `apify/hello-world`,
+/// per [`task_definition`]), so the API is expected to reject it with `insufficient-permissions` -
+/// this exercises the same request path without needing a private Actor the test account can
+/// actually publish (which would additionally require an SEO description, an input field
+/// selection, and a dataset view set up on the task's public display configuration).
+#[tokio::test(flavor = "multi_thread")]
+async fn task_publish_unpublish() {
+    let client = require_client!();
+    let name = common::unique_name("task-publish");
+    let task = client
+        .tasks()
+        .create(&task_definition(&name))
+        .await
+        .expect("create task");
+
+    let cleanup_client = client.clone();
+    let id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&id).delete().await;
+    });
+
+    let task_client = client.task(&task.id);
+
+    let unpublished = task_client
+        .unpublish()
+        .await
+        .expect("unpublish an already-unpublished task should be a no-op");
+    assert_eq!(unpublished.extra.get("isPublic"), Some(&json!(false)));
+
+    match task_client.publish().await {
+        Err(apify_client::ApifyClientError::Api(err)) => {
+            assert_eq!(err.status_code, 403);
+            assert_eq!(err.error_type.as_deref(), Some("insufficient-permissions"));
+        }
+        other => panic!(
+            "expected publish() on a task for an Actor we don't own to fail with \
+             `insufficient-permissions`, got {other:?}"
+        ),
+    }
+}
+
 /// Complex flow: create a task for the public hello-world Actor, get it, update its input,
 /// list its runs, and delete it.
 #[tokio::test(flavor = "multi_thread")]

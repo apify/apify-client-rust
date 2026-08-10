@@ -4,6 +4,22 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-08-10
+
+### Added
+- `TaskClient::publish()` and `TaskClient::unpublish()`, setting `isPublic` via `update` to
+  publish/unpublish a task on its public landing page, matching the reference client.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-08-05T133145Z`. The spec delta (relaxed field
+  nullability, e.g. `Webhook.requestUrl`/`TaggedBuildInfo.buildNumber`, and additional
+  documented `402`/`404`/`408`/`409` error responses) needs no other code change: response
+  models are forward-compatible and error responses are handled generically.
+- Removed the duplicated "official, but experimental, AI-generated and AI-maintained" notice
+  from the crate-level rustdoc and `docs/README.md`; it now appears only once, in the
+  top-level `README.md`.
+- Bumped crate version to `0.7.0`.
+
 ## [0.6.1] - 2026-07-14
 
 ### Changed
