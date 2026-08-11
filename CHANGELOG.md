@@ -4,6 +4,31 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-08-11
+
+### Changed
+- `RequestQueueClient::batch_add_requests` now matches the reference client's `batchAddRequests`:
+  it automatically splits large inputs into chunks that respect both the API's per-call
+  request-count limit (25) and its request-body byte-size limit (~9 MiB), sends chunks with up
+  to `BatchAddRequestsOptions::max_parallel` requests in flight at once (default 5), and retries
+  requests an API call reports as `unprocessed` (typically rate-limited) with exponential
+  backoff, up to `max_unprocessed_requests_retries` times (default 3). Its second parameter is
+  now `BatchAddRequestsOptions` (was a bare `forefront: bool`), and it returns the typed
+  `BatchRequestsOperationResult` (was `serde_json::Value`). **Breaking.**
+- `RequestQueueClient::batch_delete_requests` now returns the typed `BatchRequestsOperationResult`
+  (was `serde_json::Value`), and rejects more than 25 requests per call with
+  `ApifyClientError::InvalidArgument` instead of forwarding an oversized payload to the API
+  (matching the reference client, which validates rather than auto-chunks deletes). **Breaking.**
+- `RequestQueueClient::list_and_lock_head` now returns the typed `LockedRequestQueueHead` (was
+  `serde_json::Value`). **Breaking.**
+- `RequestQueueClient::list_requests` now returns the typed `RequestQueueRequestsPage` (was
+  `serde_json::Value`). **Breaking.**
+- `RequestQueueClient::unlock_requests` now returns the typed `UnlockRequestsResult` (was
+  `serde_json::Value`). **Breaking.**
+- `RequestQueueClient::prolong_request_lock` now returns the typed `RequestLockInfo` (was
+  `serde_json::Value`). **Breaking.**
+- Bumped crate version to `0.8.0`.
+
 ## [0.7.0] - 2026-08-10
 
 ### Added

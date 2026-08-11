@@ -364,6 +364,127 @@ pub struct RequestQueueHead {
     pub extra: Extra,
 }
 
+/// The head of a request queue with a server-side lock applied (`POST .../head/lock`).
+///
+/// Same shape as [`RequestQueueHead`] plus the lock metadata the API returns alongside it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockedRequestQueueHead {
+    /// Maximum number of requests returned.
+    #[serde(default)]
+    pub limit: i64,
+    /// Whether more than one client has accessed the queue.
+    #[serde(default)]
+    pub had_multiple_clients: bool,
+    /// Number of seconds the returned requests were locked for.
+    #[serde(default)]
+    pub lock_secs: i64,
+    /// Whether the queue has any requests locked, by this or another client.
+    #[serde(default)]
+    pub queue_has_locked_requests: Option<bool>,
+    /// The client key the lock was acquired with.
+    #[serde(default)]
+    pub client_key: Option<String>,
+    /// The locked requests from the head of the queue.
+    #[serde(default)]
+    pub items: Vec<RequestQueueRequest>,
+    /// Any other fields returned by the API.
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// A page of requests returned by `GET /v2/request-queues/{queueId}/requests` (cursor-based
+/// pagination over every request in the queue, as opposed to [`RequestQueueHead`]'s unlocked
+/// peek at the head).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestQueueRequestsPage {
+    /// Maximum number of requests returned for this request.
+    #[serde(default)]
+    pub limit: i64,
+    /// ID of the last request of the previous page. Deprecated by the API in favour of `cursor`.
+    #[serde(default)]
+    pub exclusive_start_id: Option<String>,
+    /// Cursor identifying the current page.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Cursor to pass as `cursor` to fetch the next page; absent on the last page.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    /// The requests of this page.
+    #[serde(default)]
+    pub items: Vec<RequestQueueRequest>,
+}
+
+/// Result of prolonging a request's lock (`PUT .../requests/{requestId}/lock`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestLockInfo {
+    /// When the (prolonged) lock expires.
+    pub lock_expires_at: DateTime<Utc>,
+}
+
+/// Result of `POST /v2/request-queues/{queueId}/requests/unlock`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockRequestsResult {
+    /// Number of requests that were unlocked.
+    pub unlocked_count: i64,
+}
+
+/// A request successfully processed by a request-queue batch add or batch delete operation.
+///
+/// The populated fields depend on the operation: a batch **add** always sets `unique_key`,
+/// `request_id`, `was_already_present` and `was_already_handled` (the API's `AddedRequest`); a
+/// batch **delete** sets `id` and/or `unique_key`, whichever the request was identified by (the
+/// API's `DeletedRequest`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessedRequest {
+    /// The request's ID, when the operation identifies requests by ID (batch delete).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The request's unique key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_key: Option<String>,
+    /// The request's ID, as returned by a batch **add** (mirrors the API's `requestId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Whether the request was already present in the queue (batch add only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub was_already_present: Option<bool>,
+    /// Whether the request had already been handled (batch add only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub was_already_handled: Option<bool>,
+}
+
+/// A request that a request-queue batch add operation did not process (typically due to rate
+/// limiting), and which [`crate::clients::request_queue::RequestQueueClient::batch_add_requests`]
+/// retries automatically.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnprocessedRequest {
+    /// The request's unique key.
+    pub unique_key: String,
+    /// The request's URL.
+    pub url: String,
+    /// The request's HTTP method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+}
+
+/// Result of a request-queue batch add or batch delete operation.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchRequestsOperationResult {
+    /// Requests that were successfully processed.
+    #[serde(default)]
+    pub processed_requests: Vec<ProcessedRequest>,
+    /// Requests that were not processed and can be retried.
+    #[serde(default)]
+    pub unprocessed_requests: Vec<UnprocessedRequest>,
+}
+
 /// A schedule that triggers Actor or task runs on a cron expression.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

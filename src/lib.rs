@@ -65,7 +65,9 @@ pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, Down
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
 pub use clients::log::LogOptions;
 pub use clients::pagination::ListIterator;
-pub use clients::request_queue::{ListRequestsOptions, RequestQueueRequestsIterator};
+pub use clients::request_queue::{
+    BatchAddRequestsOptions, ListRequestsOptions, RequestQueueRequestsIterator,
+};
 pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
