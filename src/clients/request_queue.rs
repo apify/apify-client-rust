@@ -68,7 +68,7 @@ pub struct BatchAddRequestsOptions {
 
 /// Returns the key used to correlate a request across the batch-add retry loop: its explicit
 /// `unique_key` if set, otherwise its `url` — matching the API's own fallback (a request added
-/// without a `unique_key` is deduplicated by its normalized URL).
+/// without a `unique_key` is deduplicated by its raw `url`).
 fn dedup_key(request: &RequestQueueRequest) -> &str {
     request.unique_key.as_deref().unwrap_or(&request.url)
 }
@@ -327,15 +327,20 @@ impl RequestQueueClient {
     /// Unlike most methods here, this does not propagate per-chunk API errors: a chunk that fails
     /// even after retries has its requests reported in the result's `unprocessed_requests`
     /// instead, so a batch add of many requests never fails outright over one bad chunk (matching
-    /// the reference client). A [`ApifyClientError::InvalidArgument`] is still returned before any
-    /// request is sent if a single request's JSON is too large to ever fit in a chunk.
+    /// the reference client). It still returns [`ApifyClientError::InvalidArgument`] up front,
+    /// before any request is sent, for an empty `requests` (matching
+    /// [`batch_delete_requests`](Self::batch_delete_requests) and the reference client, which
+    /// validates both as non-empty) or if a single request's JSON is too large to ever fit in a
+    /// chunk.
     pub async fn batch_add_requests(
         &self,
         requests: &[RequestQueueRequest],
         options: BatchAddRequestsOptions,
     ) -> ApifyClientResult<BatchRequestsOperationResult> {
         if requests.is_empty() {
-            return Ok(BatchRequestsOperationResult::default());
+            return Err(ApifyClientError::InvalidArgument(
+                "RequestQueueClient::batch_add_requests requires at least 1 request".to_string(),
+            ));
         }
         let max_parallel = options
             .max_parallel
@@ -448,7 +453,7 @@ impl RequestQueueClient {
             processed_requests: processed,
             unprocessed_requests: remaining
                 .iter()
-                .map(|r| crate::models::UnprocessedRequest {
+                .map(|r| UnprocessedRequest {
                     unique_key: dedup_key(r).to_string(),
                     url: r.url.clone(),
                     method: r.method.clone(),

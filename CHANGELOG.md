@@ -19,6 +19,10 @@ to [Semantic Versioning](https://semver.org/).
   (was `serde_json::Value`), and rejects more than 25 requests per call with
   `ApifyClientError::InvalidArgument` instead of forwarding an oversized payload to the API
   (matching the reference client, which validates rather than auto-chunks deletes). **Breaking.**
+- `RequestQueueClient::batch_add_requests` now also rejects an empty `requests` with
+  `ApifyClientError::InvalidArgument` (was `Ok` with an empty result), matching
+  `batch_delete_requests` and the reference client, which validates both as non-empty.
+  **Breaking.**
 - `RequestQueueClient::list_and_lock_head` now returns the typed `LockedRequestQueueHead` (was
   `serde_json::Value`). **Breaking.**
 - `RequestQueueClient::list_requests` now returns the typed `RequestQueueRequestsPage` (was

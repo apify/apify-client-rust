@@ -360,9 +360,14 @@ async fn request_queue_lock_lifecycle() {
         })
         .await
         .expect("list requests with filter");
-    // The filter may legitimately exclude every request; the call succeeding (no parse/API
-    // error) is what this test exercises.
-    assert!(filtered.limit >= 0);
+    // The single request we added is either `locked` or `pending` (every request is one or the
+    // other), so filtering on both states must return exactly the same set as the unfiltered
+    // listing above — a real invariant, not just "the call didn't error".
+    assert_eq!(
+        filtered.items.len(),
+        listed.items.len(),
+        "filtering on both locked and pending must match the unfiltered listing"
+    );
 
     // Lazily paginate requests; we added one, so at least one should be yielded.
     let mut iter = queue_client.paginate_requests(Some(10));
