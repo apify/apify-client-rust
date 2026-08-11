@@ -46,6 +46,25 @@ impl TaskClient {
         delete_resource(&self.ctx, None).await
     }
 
+    /// Publishes the task on its public landing page, by setting `isPublic: true` through
+    /// [`TaskClient::update`].
+    ///
+    /// The task's Actor must be public and the task must already have its public display
+    /// configuration (`publicConfig`) set up. Publishing an already-published task does nothing.
+    pub async fn publish(&self) -> ApifyClientResult<Task> {
+        self.update(&serde_json::json!({ "isPublic": true })).await
+    }
+
+    /// Unpublishes the task from its public landing page, by setting `isPublic: false` through
+    /// [`TaskClient::update`].
+    ///
+    /// The public display configuration (`publicConfig`) is preserved, so the task can be
+    /// published again later without re-entering it. Unpublishing a task that is not published
+    /// does nothing.
+    pub async fn unpublish(&self) -> ApifyClientResult<Task> {
+        self.update(&serde_json::json!({ "isPublic": false })).await
+    }
+
     /// Starts the task and returns immediately with the created run.
     ///
     /// `input` overrides the task's saved input (or `None` to use the saved input).

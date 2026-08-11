@@ -16,6 +16,8 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 |---|---|---|---|
 | `get()` | — | `Option<Task>` | Fetches the task. |
 | `update(fields)` | `&impl Serialize` | `Task` | Updates the task. |
+| `publish()` | — | `Task` | Publishes the task on its public landing page (sets `isPublic: true`). Requires the task's Actor to be public and the task to have `publicConfig` set up. |
+| `unpublish()` | — | `Task` | Unpublishes the task from its public landing page (sets `isPublic: false`), preserving `publicConfig`. |
 | `delete()` | — | `()` | Deletes the task. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. See [`ActorStartOptions`](actors.md#actorstartoptions) for the full field list. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. Same [`ActorStartOptions`](actors.md#actorstartoptions) as `start`. |
