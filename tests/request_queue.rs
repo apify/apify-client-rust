@@ -216,6 +216,92 @@ async fn request_queue_paginate_multiple_pages() {
     queue_client.delete().await.expect("delete queue");
 }
 
+/// Exercises `batch_add_requests` (typed result, default retry/parallelism options) followed by
+/// `batch_delete_requests`, plus the client-side validation `batch_delete_requests` performs on
+/// oversized inputs.
+#[tokio::test(flavor = "multi_thread")]
+async fn request_queue_batch_add_and_delete() {
+    let client = require_client!();
+    let name = common::unique_name("rq-batch");
+
+    let queue = client
+        .request_queues()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create queue");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = queue.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.request_queue(&cleanup_id).delete().await;
+    });
+
+    let queue_client = client.request_queue(&queue.id);
+
+    const TOTAL: usize = 8;
+    let requests: Vec<RequestQueueRequest> = (0..TOTAL)
+        .map(|i| RequestQueueRequest {
+            id: None,
+            url: format!("https://example.com/batch/{i}"),
+            unique_key: Some(format!("batch-{i}")),
+            method: Some("GET".to_string()),
+            user_data: None,
+            extra: Default::default(),
+        })
+        .collect();
+
+    let add_result = queue_client
+        .batch_add_requests(&requests, Default::default())
+        .await
+        .expect("batch add requests");
+    assert_eq!(
+        add_result.processed_requests.len(),
+        TOTAL,
+        "every request should be processed (none rate-limited on a fresh queue)"
+    );
+    assert!(add_result.unprocessed_requests.is_empty());
+    let mut processed_keys: std::collections::HashSet<String> = add_result
+        .processed_requests
+        .iter()
+        .filter_map(|r| r.unique_key.clone())
+        .collect();
+    for i in 0..TOTAL {
+        assert!(
+            processed_keys.remove(&format!("batch-{i}")),
+            "processed_requests should report unique_key batch-{i}"
+        );
+    }
+
+    // Delete them all in one batch call (within the 25-per-call limit). The batch-delete schema
+    // identifies requests by `id` and/or `uniqueKey` only (no `url`/`method`/...), so build
+    // minimal delete-by-key objects rather than reusing the full `RequestQueueRequest`s.
+    let delete_by_key: Vec<serde_json::Value> = requests
+        .iter()
+        .map(|r| json!({ "uniqueKey": r.unique_key }))
+        .collect();
+    let delete_result = queue_client
+        .batch_delete_requests(&delete_by_key)
+        .await
+        .expect("batch delete requests");
+    assert_eq!(delete_result.processed_requests.len(), TOTAL);
+
+    // `batch_delete_requests` rejects more than 25 requests per call client-side, matching the
+    // reference client's validation (it does not auto-chunk deletes).
+    let too_many: Vec<serde_json::Value> = (0..26)
+        .map(|i| json!({ "uniqueKey": format!("toomany-{i}") }))
+        .collect();
+    let err = queue_client
+        .batch_delete_requests(&too_many)
+        .await
+        .expect_err("more than 25 requests must be rejected client-side");
+    assert!(matches!(
+        err,
+        apify_client::ApifyClientError::InvalidArgument(_)
+    ));
+
+    queue_client.delete().await.expect("delete queue");
+}
+
 /// Exercises the request lock lifecycle: add -> list_and_lock_head -> prolong -> unlock,
 /// plus `list_requests` and `unlock_requests`.
 #[tokio::test(flavor = "multi_thread")]
@@ -262,7 +348,7 @@ async fn request_queue_lock_lifecycle() {
         })
         .await
         .expect("list requests");
-    assert!(listed.get("items").is_some());
+    assert!(!listed.items.is_empty());
 
     // Exercise the `filter` parameter with both enum values (`locked`, `pending`). This verifies
     // the multi-value, comma-joined serialization (`filter=locked,pending`) is accepted by the API.
@@ -274,7 +360,14 @@ async fn request_queue_lock_lifecycle() {
         })
         .await
         .expect("list requests with filter");
-    assert!(filtered.get("items").is_some());
+    // The single request we added is either `locked` or `pending` (every request is one or the
+    // other), so filtering on both states must return exactly the same set as the unfiltered
+    // listing above — a real invariant, not just "the call didn't error".
+    assert_eq!(
+        filtered.items.len(),
+        listed.items.len(),
+        "filtering on both locked and pending must match the unfiltered listing"
+    );
 
     // Lazily paginate requests; we added one, so at least one should be yielded.
     let mut iter = queue_client.paginate_requests(Some(10));
@@ -286,7 +379,7 @@ async fn request_queue_lock_lifecycle() {
         .list_and_lock_head(30, Some(5))
         .await
         .expect("lock head");
-    assert!(locked.get("items").is_some());
+    assert!(locked.lock_secs > 0);
 
     // Prolong, then release the lock on the added request.
     queue_client

@@ -192,14 +192,14 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `get_request(id)` | `&str` | `Option<RequestQueueRequest>` | Reads a request. |
 | `update_request(request, forefront)` | `&RequestQueueRequest`, `bool` | `RequestQueueOperationInfo` | Updates a request. |
 | `delete_request(id)` | `&str` | `()` | Deletes a request. |
-| `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `Value` | Locks head requests. |
-| `batch_add_requests(requests, forefront)` | `&[RequestQueueRequest]`, `bool` | `Value` | Batch add. |
-| `batch_delete_requests(requests)` | `&[impl Serialize]` | `Value` | Batch delete. |
-| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `Value` | List requests (cursor/filter pagination). |
+| `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `LockedRequestQueueHead` | Locks head requests. |
+| `batch_add_requests(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `BatchRequestsOperationResult` | Batch add, with automatic chunking, bounded parallelism, and retries for rate-limited requests. |
+| `batch_delete_requests(requests)` | `&[impl Serialize]` | `BatchRequestsOperationResult` | Batch delete (max 25 requests per call; larger inputs are rejected client-side). |
+| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
-| `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `Value` | Extend a lock. |
+| `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `RequestLockInfo` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
-| `unlock_requests()` | — | `Value` | Release all this client's locks. |
+| `unlock_requests()` | — | `UnlockRequestsResult` | Release all this client's locks. |
 
 `paginate_requests(page_limit)` returns a `RequestQueueRequestsIterator` — a lazy, page-fetching
 iterator (parity with the Store iterator in [Store, users and logs](misc.md#apify-store--clientstore)).
@@ -241,22 +241,62 @@ while let Some(request) = iter.next().await? {
 # }
 ```
 
-The `forefront` boolean (on `add_request`, `update_request`, `batch_add_requests`,
-`prolong_request_lock`, `delete_request_lock`) controls queue ordering: `true` puts the
-request(s) at the **front** of the queue so they are handled before the existing backlog;
-`false` (the usual choice) appends them at the **back**.
+The `forefront` boolean (on `add_request`, `update_request`,
+`prolong_request_lock`, `delete_request_lock`) and the `BatchAddRequestsOptions::forefront` field
+(on `batch_add_requests`) control queue ordering: `true` puts the request(s) at the **front** of
+the queue so they are handled before the existing backlog; `false` (the usual choice) appends
+them at the **back**.
 
-Some request-queue methods return an untyped `serde_json::Value` because the API responses are
-open-ended and most callers do not consume them structurally. Their shapes (read fields with
-`value.get("...")`):
+### `batch_add_requests`
 
-- `list_and_lock_head` → an object with `items` (the locked head requests), `limit`,
-  `queueModifiedAt`, `hadMultipleClients`, and the granted `lockSecs`.
-- `batch_add_requests` / `batch_delete_requests` → an object with `processedRequests` and
-  `unprocessedRequests` arrays.
-- `list_requests` → an object with `items` (the page of requests), `count`, `limit`, and
-  `exclusiveStartId` for cursor continuation.
-- `unlock_requests` → an object reporting how many locks were released (`unlockedCount`).
+`batch_add_requests(requests, options)` is the efficient way to add many requests at once —
+significantly cheaper than calling `add_request` in a loop. It mirrors the reference client's
+`batchAddRequests`:
+
+- The input is automatically split into chunks that respect both the API's per-call request-count
+  limit (25) and its request-body byte-size limit (~9 MiB), so there is no need to chunk manually.
+- Chunks are sent with up to `options.max_parallel` requests in flight at once (default 5).
+- Any request an API call reports as `unprocessed` (typically due to rate limiting) is retried
+  automatically with exponential backoff, up to `options.max_unprocessed_requests_retries` times
+  (default 3). A request still unprocessed after every retry is reported in
+  `BatchRequestsOperationResult::unprocessed_requests` rather than failing the call.
+- Every request should set `RequestQueueRequest::unique_key` (or rely on the API's `url`
+  fallback) so a retried request can be correlated back to the original input.
+
+```rust,no_run
+use apify_client::models::RequestQueueRequest;
+use apify_client::BatchAddRequestsOptions;
+# use apify_client::ApifyClient;
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let queue = client.request_queues().get_or_create(None).await?;
+let queue_client = client.request_queue(&queue.id);
+
+let requests: Vec<RequestQueueRequest> = (0..3)
+    .map(|i| RequestQueueRequest {
+        id: None,
+        url: format!("https://example.com/{i}"),
+        unique_key: Some(format!("page-{i}")),
+        method: Some("GET".to_string()),
+        user_data: None,
+        extra: Default::default(),
+    })
+    .collect();
+
+let result = queue_client
+    .batch_add_requests(&requests, BatchAddRequestsOptions::default())
+    .await?;
+println!(
+    "added {} request(s), {} unprocessed",
+    result.processed_requests.len(),
+    result.unprocessed_requests.len()
+);
+# Ok(())
+# }
+```
+
+`batch_delete_requests` does **not** auto-chunk (matching the reference client): it accepts at
+most 25 requests per call, identified by `id` and/or `unique_key` (not the full
+`RequestQueueRequest` shape), and returns `ApifyClientError::InvalidArgument` for a larger input.
 
 ### `RequestQueueRequest` and request-queue return types
 
@@ -304,6 +344,14 @@ Relevant return-type fields:
   `was_already_handled: bool`.
 - `RequestQueueHead`: `limit: i64`, `had_multiple_clients: bool`,
   `items: Vec<RequestQueueRequest>`, `extra: Extra` (any other fields returned by the API).
+- `LockedRequestQueueHead` (from `list_and_lock_head`): same fields as `RequestQueueHead` plus
+  `lock_secs: i64`, `queue_has_locked_requests: Option<bool>`, `client_key: Option<String>`.
+- `RequestQueueRequestsPage` (from `list_requests`): `limit: i64`, `items: Vec<RequestQueueRequest>`,
+  `cursor` / `next_cursor` / `exclusive_start_id` (all `Option<String>`) for pagination.
+- `BatchRequestsOperationResult` (from `batch_add_requests` / `batch_delete_requests`):
+  `processed_requests: Vec<ProcessedRequest>`, `unprocessed_requests: Vec<UnprocessedRequest>`.
+- `RequestLockInfo` (from `prolong_request_lock`): `lock_expires_at: DateTime<Utc>`.
+- `UnlockRequestsResult` (from `unlock_requests`): `unlocked_count: i64`.
 - `KeyValueStoreKeysPage`: `limit: i64`, `is_truncated: bool`, `exclusive_start_key`,
   `next_exclusive_start_key` (both `Option<String>`), `items: Vec<KeyValueStoreKey>`.
 

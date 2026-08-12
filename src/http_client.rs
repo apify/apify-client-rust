@@ -474,7 +474,10 @@ fn build_api_error(
 
 /// Returns a delay chosen randomly from the interval `[delay, 2*delay)`, matching the
 /// exponential-backoff-with-jitter algorithm described in the API docs.
-fn randomized_delay(delay: Duration) -> Duration {
+///
+/// `pub(crate)` so other retrying call sites (e.g. `RequestQueueClient::batch_add_requests`'s
+/// unprocessed-request retries) can reuse the same jitter source instead of duplicating it.
+pub(crate) fn randomized_delay(delay: Duration) -> Duration {
     let base = delay.as_millis() as u64;
     if base == 0 {
         return delay;
