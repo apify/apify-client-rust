@@ -194,3 +194,29 @@ pub fn unique_name(prefix: &str) -> String {
     let uuid = uuid::Uuid::new_v4().simple().to_string();
     format!("rust-test-{prefix}-{}", &uuid[..12])
 }
+
+/// Length of the random suffix [`unique_name`] appends, in hex characters.
+const UNIQUE_NAME_SUFFIX_LEN: usize = 12;
+
+/// Longest human-readable head [`unique_actor_name`] keeps from its sanitized prefix.
+const ACTOR_NAME_HEAD_CAP: usize = 8;
+
+/// Generates a unique name that satisfies Apify's (stricter) Actor naming rules: starts with a
+/// letter and contains no hyphens, unlike the names [`unique_name`] produces for other resources.
+///
+/// Keeps the full [`UNIQUE_NAME_SUFFIX_LEN`]-hex-char random suffix [`unique_name`] appends -
+/// not a truncated prefix of it - so collision resistance survives the length cap regardless of
+/// how long `prefix` is: truncating a hyphen-stripped `unique_name(prefix)` from the front (as
+/// this suite's Actor-creating tests each used to do independently) can eat the random suffix
+/// entirely for a long enough `prefix`, collapsing it to a handful of possible names and
+/// colliding under this suite's mandated cross-process/cross-language parallel runs.
+pub fn unique_actor_name(prefix: &str) -> String {
+    let alnum = unique_name(prefix).replace('-', "");
+    let suffix_len = UNIQUE_NAME_SUFFIX_LEN.min(alnum.len());
+    let (head, suffix) = alnum.split_at(alnum.len() - suffix_len);
+    format!(
+        "a{}{}",
+        &head[..head.len().min(ACTOR_NAME_HEAD_CAP)],
+        suffix
+    )
+}

@@ -172,12 +172,10 @@ fn owned_actor_definition(name: &str) -> serde_json::Value {
 async fn task_public_config_update() {
     let client = require_client!();
 
-    let actor_name = common::unique_name("task-pubcfg-actor").replace('-', "");
+    let actor_name = common::unique_actor_name("task-pubcfg-actor");
     let actor = client
         .actors()
-        .create(&owned_actor_definition(
-            &actor_name[..actor_name.len().min(24)],
-        ))
+        .create(&owned_actor_definition(&actor_name))
         .await
         .expect("create owned actor");
     let cleanup_actor_client = client.clone();
@@ -196,9 +194,10 @@ async fn task_public_config_update() {
         .wait_for_finish(Some(300))
         .await
         .expect("wait for build");
-    assert!(
-        finished.is_terminal(),
-        "build should reach a terminal state before the task can reference it"
+    assert_eq!(
+        finished.status.as_deref(),
+        Some("SUCCEEDED"),
+        "build must succeed for the task to be able to reference it"
     );
 
     let task_name = common::unique_name("task-pubcfg");
