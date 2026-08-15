@@ -171,9 +171,50 @@ pub struct Task {
     /// When the task was last modified.
     #[serde(default)]
     pub modified_at: Option<DateTime<Utc>>,
+    /// Whether the task is published on its public landing page. Derived from
+    /// `public_config.published_at`; set it via [`TaskClient::update`](crate::clients::task::TaskClient::update)
+    /// (or the [`publish`](crate::clients::task::TaskClient::publish)/
+    /// [`unpublish`](crate::clients::task::TaskClient::unpublish) wrappers) to change it.
+    #[serde(default)]
+    pub is_public: Option<bool>,
+    /// The task's public landing page display configuration, or `None` if never configured.
+    #[serde(default)]
+    pub public_config: Option<TaskPublicConfig>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// Public-facing display configuration of a task's public landing page.
+///
+/// The task is published when `published_at` is set and unpublished when it is `None`.
+/// `published_at` is server-controlled (read-only) - use
+/// [`TaskClient::publish`](crate::clients::task::TaskClient::publish) /
+/// [`TaskClient::unpublish`](crate::clients::task::TaskClient::unpublish) to change the
+/// publication state.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPublicConfig {
+    /// When the task was published, or `None` if it isn't published. Read-only.
+    #[serde(default)]
+    pub published_at: Option<DateTime<Utc>>,
+    /// Name shown by search engines. Defaults to the task title when unset.
+    #[serde(default)]
+    pub seo_title: Option<String>,
+    /// Description shown by search engines. Defaults to the task description when unset.
+    #[serde(default)]
+    pub seo_description: Option<String>,
+    /// Names of the task input fields displayed on the public task page.
+    #[serde(default)]
+    pub input_schema_fields: Option<Vec<String>>,
+    /// Name of the Actor dataset schema entry whose results are displayed. `None` uses the
+    /// Actor's default dataset.
+    #[serde(default)]
+    pub dataset_name: Option<String>,
+    /// Key of the dataset view (from the Actor's dataset schema) used to display results.
+    /// Required to publish the task.
+    #[serde(default)]
+    pub dataset_view: Option<String>,
 }
 
 /// A dataset storage.

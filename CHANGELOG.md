@@ -4,6 +4,18 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-08-15
+
+### Added
+- `Task::is_public` and `Task::public_config` (new `TaskPublicConfig` model: `published_at`,
+  `seo_title`, `seo_description`, `input_schema_fields`, `dataset_name`, `dataset_view`),
+  matching the spec's newly-documented Actor task publication fields. Previously only
+  accessible untyped via `Task::extra`.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-08-14T072928Z`.
+- Bumped crate version to `0.9.0`.
+
 ## [0.8.0] - 2026-08-11
 
 ### Changed
