@@ -50,7 +50,8 @@ impl TaskClient {
     /// [`TaskClient::update`].
     ///
     /// The task's Actor must be public and the task must already have its public display
-    /// configuration (`publicConfig`) set up. Publishing an already-published task does nothing.
+    /// configuration ([`Task::public_config`]) set up. Publishing an already-published task
+    /// does nothing. The returned [`Task::is_public`] reflects the new publication state.
     pub async fn publish(&self) -> ApifyClientResult<Task> {
         self.update(&serde_json::json!({ "isPublic": true })).await
     }
@@ -58,9 +59,9 @@ impl TaskClient {
     /// Unpublishes the task from its public landing page, by setting `isPublic: false` through
     /// [`TaskClient::update`].
     ///
-    /// The public display configuration (`publicConfig`) is preserved, so the task can be
-    /// published again later without re-entering it. Unpublishing a task that is not published
-    /// does nothing.
+    /// The public display configuration ([`Task::public_config`]) is preserved, so the task can
+    /// be published again later without re-entering it. Unpublishing a task that is not
+    /// published does nothing.
     pub async fn unpublish(&self) -> ApifyClientResult<Task> {
         self.update(&serde_json::json!({ "isPublic": false })).await
     }

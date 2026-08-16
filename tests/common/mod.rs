@@ -194,3 +194,27 @@ pub fn unique_name(prefix: &str) -> String {
     let uuid = uuid::Uuid::new_v4().simple().to_string();
     format!("rust-test-{prefix}-{}", &uuid[..12])
 }
+
+/// Length of the random suffix [`unique_actor_name`] appends, in hex characters.
+const ACTOR_NAME_SUFFIX_LEN: usize = 12;
+
+/// Longest human-readable head [`unique_actor_name`] keeps from its (sanitized) `prefix` arg.
+const ACTOR_NAME_HEAD_CAP: usize = 8;
+
+/// Generates a unique name that satisfies Apify's (stricter) Actor naming rules: starts with a
+/// letter and contains no hyphens, unlike the names [`unique_name`] produces for other resources.
+///
+/// Built directly from `prefix` (filtered to alphanumerics) plus a full
+/// [`ACTOR_NAME_SUFFIX_LEN`]-hex-char random suffix, rather than truncating an already-formatted
+/// `unique_name(prefix)` string: that would fix the random suffix's *position* but not its
+/// *presence* - a short length cap could still truncate into the fixed `rust-test-` boilerplate
+/// `unique_name` prepends, silently keeping the same literal head (and thus the same account-wide
+/// collision domain, dropping the caller's `prefix` entirely) for every call regardless of
+/// `prefix`. Building the name from `prefix` directly keeps collision resistance and
+/// traceability-to-caller both guaranteed by construction.
+pub fn unique_actor_name(prefix: &str) -> String {
+    let sanitized: String = prefix.chars().filter(char::is_ascii_alphanumeric).collect();
+    let head = &sanitized[..sanitized.len().min(ACTOR_NAME_HEAD_CAP)];
+    let uuid = uuid::Uuid::new_v4().simple().to_string();
+    format!("a{head}{}", &uuid[..ACTOR_NAME_SUFFIX_LEN])
+}

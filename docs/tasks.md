@@ -42,4 +42,21 @@ are preserved in `extra`.
 | `title` | `Option<String>` | Human-readable title shown in the UI. |
 | `created_at` | `Option<DateTime<Utc>>` | When the task was created. |
 | `modified_at` | `Option<DateTime<Utc>>` | When the task was last modified. |
+| `is_public` | `Option<bool>` | Whether the task is published on its public landing page. Derived from `public_config.published_at`; set it via `publish()`/`unpublish()` or `update()`. |
+| `public_config` | `Option<TaskPublicConfig>` | The task's public landing page display configuration, or `None` if never configured. |
 | `extra` | `Extra` | Any other fields returned by the API. |
+
+## The `TaskPublicConfig` model
+
+`TaskPublicConfig` lives in `apify_client::models` (`use apify_client::models::TaskPublicConfig;`).
+The task is published when `published_at` is set and unpublished when it is `None`; `published_at`
+is server-controlled (read-only) - use `publish()`/`unpublish()` to change the publication state.
+
+| Field | Type | Description |
+|---|---|---|
+| `published_at` | `Option<DateTime<Utc>>` | When the task was published, or `None` if unpublished. Read-only. |
+| `seo_title` | `Option<String>` | Name shown by search engines. Defaults to the task title when unset. |
+| `seo_description` | `Option<String>` | Description shown by search engines. Defaults to the task description when unset. |
+| `input_schema_fields` | `Option<Vec<String>>` | Names of the task input fields displayed on the public task page. |
+| `dataset_name` | `Option<String>` | Name of the Actor dataset schema entry whose results are displayed. `None` uses the Actor's default dataset. |
+| `dataset_view` | `Option<String>` | Key of the dataset view (from the Actor's dataset schema) used to display results. Required to publish the task. |

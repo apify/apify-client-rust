@@ -19,8 +19,7 @@ async fn list_actors() {
 }
 
 fn actor_name(prefix: &str) -> String {
-    let name = common::unique_name(prefix).replace('-', ""); // actor names are stricter
-    format!("a{}", &name[..name.len().min(20)])
+    common::unique_actor_name(prefix)
 }
 
 /// Minimal Actor definition with one inline source-files version.

@@ -23,8 +23,7 @@ async fn list_builds() {
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_builds() {
     let client = require_client!();
-    let name = common::unique_name("build-iter").replace('-', "");
-    let name = format!("b{}", &name[..name.len().min(20)]);
+    let name = common::unique_actor_name("build-iter");
 
     let definition = json!({
         "name": name,
@@ -86,8 +85,7 @@ async fn iterate_builds() {
 #[tokio::test(flavor = "multi_thread")]
 async fn build_actor_flow() {
     let client = require_client!();
-    let name = common::unique_name("build").replace('-', "");
-    let name = format!("b{}", &name[..name.len().min(20)]);
+    let name = common::unique_actor_name("build");
 
     let definition = json!({
         "name": name,
