@@ -10,4 +10,4 @@ pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// and verified against.
 ///
 /// This corresponds to the `info.version` field of the Apify OpenAPI document.
-pub const API_SPEC_VERSION: &str = "v2-2026-08-14T072928Z";
+pub const API_SPEC_VERSION: &str = "v2-2026-08-27T071624Z";
