@@ -4,6 +4,12 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-08-28
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-08-27T071624Z`.
+- Bumped crate version to `0.9.1`.
+
 ## [0.9.0] - 2026-08-15
 
 ### Added
