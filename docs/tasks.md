@@ -40,6 +40,7 @@ are preserved in `extra`.
 | `user_id` | `Option<String>` | ID of the user who owns the task. |
 | `name` | `Option<String>` | Technical name of the task, used in API paths. |
 | `title` | `Option<String>` | Human-readable title shown in the UI. |
+| `description` | `Option<String>` | Human-readable description shown on the task's public landing page. Required (up to 400 characters), alongside `title` (3 to 63 characters), to publish the task. |
 | `created_at` | `Option<DateTime<Utc>>` | When the task was created. |
 | `modified_at` | `Option<DateTime<Utc>>` | When the task was last modified. |
 | `is_public` | `Option<bool>` | Whether the task is published on its public landing page. Derived from `public_config.published_at`; set it via `publish()`/`unpublish()` or `update()`. |

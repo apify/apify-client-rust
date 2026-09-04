@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-09-04
+
+### Added
+- `Task::description`, matching the spec's newly-documented task `description` field (also
+  present on the reference JS client's `Task`). Previously only accessible untyped via
+  `Task::extra`.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-09-02T154542Z`.
+- Bumped crate version to `0.10.0`.
+
 ## [0.9.1] - 2026-08-28
 
 ### Changed

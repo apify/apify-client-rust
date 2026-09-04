@@ -283,13 +283,17 @@ async fn task_crud_flow() {
     let input = task_client.get_input().await.expect("get input");
     assert!(input.is_some());
 
-    // Update (rename).
+    // Update (rename + set description).
     let renamed = common::unique_name("task-renamed");
     let updated = task_client
-        .update(&json!({ "name": renamed }))
+        .update(&json!({ "name": renamed, "description": "Updated by task_crud_flow." }))
         .await
         .expect("update task");
     assert_eq!(updated.name.as_deref(), Some(renamed.as_str()));
+    assert_eq!(
+        updated.description.as_deref(),
+        Some("Updated by task_crud_flow.")
+    );
 
     // List its runs (likely empty, but the endpoint should respond).
     let runs = task_client

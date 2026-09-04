@@ -165,6 +165,11 @@ pub struct Task {
     /// Human-readable title.
     #[serde(default)]
     pub title: Option<String>,
+    /// Human-readable description shown on the task's public landing page. Required (up to 400
+    /// characters), alongside `title` (3 to 63 characters), to [`publish`](crate::clients::task::TaskClient::publish)
+    /// the task.
+    #[serde(default)]
+    pub description: Option<String>,
     /// When the task was created.
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
