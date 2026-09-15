@@ -4,6 +4,15 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.10.1] - 2026-09-11
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-09-10T091137Z` (spec now documents pagination
+  response headers on all offset-paginated list endpoints and the `offset`/`limit`/`desc`
+  query parameters on the webhook-dispatches-by-webhook endpoint; the client already
+  implemented both, so no code changes were needed).
+- Bumped crate version to `0.10.1`.
+
 ## [0.10.0] - 2026-09-04
 
 ### Added
