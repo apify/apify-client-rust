@@ -16,7 +16,7 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 |---|---|---|---|
 | `get()` | — | `Option<Task>` | Fetches the task. |
 | `update(fields)` | `&impl Serialize` | `Task` | Updates the task. |
-| `publish()` | — | `Task` | Publishes the task on its public landing page (sets `isPublic: true`). Requires the task's Actor to be public and the task to have `publicConfig` set up. An Actor may have at most 10 published tasks, an account at most 100. |
+| `publish()` | — | `Task` | Publishes the task on its public landing page (sets `isPublic: true`). Requires the task's Actor to be public and the task to have `publicConfig` set up. An Actor may have at most 10 published tasks, an account at most 100 (contact Apify support to raise either limit). |
 | `unpublish()` | — | `Task` | Unpublishes the task from its public landing page (sets `isPublic: false`), preserving `publicConfig`. |
 | `delete()` | — | `()` | Deletes the task. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. See [`ActorStartOptions`](actors.md#actorstartoptions) for the full field list. |

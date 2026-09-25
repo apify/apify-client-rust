@@ -851,6 +851,11 @@ async fn charge_sends_required_idempotency_key_header() {
             .is_some_and(|k| !k.is_empty()),
         "an idempotency-key header must always be sent, even when none is supplied"
     );
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/actor-runs/some-run-id/charge"),
+        "charge must POST to the run's /charge endpoint, got {url}"
+    );
     let body = backend.last_body().expect("a body was sent");
     let parsed: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
     assert_eq!(parsed["eventName"], "ANALYZE_PAGE");
