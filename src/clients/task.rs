@@ -50,8 +50,10 @@ impl TaskClient {
     /// [`TaskClient::update`].
     ///
     /// The task's Actor must be public and the task must already have its public display
-    /// configuration ([`Task::public_config`]) set up. Publishing an already-published task
-    /// does nothing. The returned [`Task::is_public`] reflects the new publication state.
+    /// configuration ([`Task::public_config`]) set up. An Actor can have at most 10 published
+    /// tasks, and an account at most 100 across all its Actors; contact Apify support to raise
+    /// either limit. Publishing an already-published task does nothing. The returned
+    /// [`Task::is_public`] reflects the new publication state.
     pub async fn publish(&self) -> ApifyClientResult<Task> {
         self.update(&serde_json::json!({ "isPublic": true })).await
     }

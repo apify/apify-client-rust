@@ -38,7 +38,9 @@ collections are available via `actor.runs()` and `task.runs()`.
 
 `RunMetamorphOptions`: `build`, `content_type` (both optional; `content_type` defaults to `application/json`).
 
-`RunChargeOptions`: `event_name` (required), `count` (defaults to `1`), `idempotency_key` (auto-generated when omitted).
+`RunChargeOptions`: `event_name` (required), `count` (defaults to `1`), `idempotency_key`
+(auto-generated when omitted; the API requires this header and forgets the key 3 minutes after
+the charge, so a retry past that window creates a new charge instead of being deduplicated).
 
 `ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and

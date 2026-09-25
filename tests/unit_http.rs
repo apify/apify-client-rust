@@ -826,6 +826,61 @@ async fn iterate_keys_zero_limit_sends_no_limit_and_walks_all() {
     );
 }
 
+/// `RunClient::charge` always sends the `idempotency-key` header (required by the spec) and the
+/// `eventName`/`count` body, whether or not an explicit key is supplied. This is hermetic because
+/// a real charge can only be made from inside a running pay-per-event Actor with that run's own
+/// token, which the integration suite (running as an external account-level client) cannot do.
+#[tokio::test]
+async fn charge_sends_required_idempotency_key_header() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(201, b"{}".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    // No explicit key -> one is still auto-generated and sent.
+    client
+        .run("some-run-id")
+        .charge(apify_client::RunChargeOptions {
+            event_name: "ANALYZE_PAGE".to_owned(),
+            count: Some(2),
+            idempotency_key: None,
+        })
+        .await
+        .expect("charge should succeed");
+    assert!(
+        backend
+            .last_header("idempotency-key")
+            .is_some_and(|k| !k.is_empty()),
+        "an idempotency-key header must always be sent, even when none is supplied"
+    );
+    let url = backend.last_url().expect("a request was sent");
+    assert!(
+        url.contains("/actor-runs/some-run-id/charge"),
+        "charge must POST to the run's /charge endpoint, got {url}"
+    );
+    let body = backend.last_body().expect("a body was sent");
+    let parsed: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
+    assert_eq!(parsed["eventName"], "ANALYZE_PAGE");
+    assert_eq!(parsed["count"], 2);
+
+    // Explicit key -> sent verbatim (not overwritten by an auto-generated one).
+    client
+        .run("some-run-id")
+        .charge(apify_client::RunChargeOptions {
+            event_name: "ANALYZE_PAGE".to_owned(),
+            count: None,
+            idempotency_key: Some("my-explicit-key".to_owned()),
+        })
+        .await
+        .expect("charge should succeed");
+    assert_eq!(
+        backend.last_header("idempotency-key").as_deref(),
+        Some("my-explicit-key"),
+        "an explicit idempotency key must be sent verbatim"
+    );
+    let body = backend.last_body().expect("a body was sent");
+    let parsed: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
+    assert_eq!(parsed["count"], 1, "count defaults to 1 when omitted");
+}
+
 /// A finite `iterate_keys` cap larger than one page must be clamped to the endpoint maximum per
 /// request (so it does not 400) while still yielding across pages until the cap or the store is
 /// exhausted.
