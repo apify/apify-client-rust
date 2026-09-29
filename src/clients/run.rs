@@ -69,9 +69,11 @@ pub struct RunChargeOptions {
     pub event_name: String,
     /// Number of times to charge the event (defaults to `1`).
     pub count: Option<i64>,
-    /// Idempotency key deduplicating the charge across retries. If `None`, one is
-    /// auto-generated as `{runId}-{eventName}-{timestampMillis}-{random}`, matching the
-    /// reference client, so a transport-retried charge is applied at most once.
+    /// Idempotency key deduplicating the charge across retries. The API requires this header
+    /// on every charge request and forgets each key 3 minutes after the charge, so a retry sent
+    /// past that window with the same key creates a new charge rather than being deduplicated.
+    /// If `None`, one is auto-generated as `{runId}-{eventName}-{timestampMillis}-{random}`,
+    /// matching the reference client, so a transport-retried charge is applied at most once.
     pub idempotency_key: Option<String>,
 }
 

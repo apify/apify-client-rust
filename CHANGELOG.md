@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.10.2] - 2026-09-25
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-09-24T114302Z` (the `idempotency-key` header on the
+  charge endpoint is now documented as required and expiring 3 minutes after the charge, and
+  the task-publish description now states the 10-per-Actor / 100-per-account publication
+  limits; the client already always sends the idempotency key, so only doc comments changed).
+- Documented the task-publish limits (10 per Actor, 100 per account) on `TaskClient::publish`
+  and the idempotency-key expiration window on `RunChargeOptions::idempotency_key`.
+- Bumped crate version to `0.10.2`.
+
 ## [0.10.1] - 2026-09-11
 
 ### Changed
