@@ -33,6 +33,9 @@ use crate::http_client::{
 
 /// Default base URL of the Apify API (without the `/v2` suffix).
 const DEFAULT_BASE_URL: &str = "https://api.apify.com";
+/// Apify's API version path segment, appended to a configured base URL unless it is already
+/// present there (see [`to_api_base_url`]).
+const API_VERSION_PATH: &str = "/v2";
 /// Default maximum number of retries, matching the reference clients.
 const DEFAULT_MAX_RETRIES: u32 = 8;
 /// Default minimum delay between retries.
@@ -88,7 +91,10 @@ impl ApifyClientBuilder {
         self
     }
 
-    /// Overrides the base URL of the API. The `/v2` suffix is appended automatically.
+    /// Overrides the base URL of the API, with or without the `/v2` version path — it is
+    /// appended automatically when not already the URL's final path segment, so passing a URL
+    /// that already ends in `/v2` (e.g. one read back from [`ApifyClient::api_base_url`]) does
+    /// not double it up.
     ///
     /// Defaults to `https://api.apify.com`.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -97,8 +103,8 @@ impl ApifyClientBuilder {
     }
 
     /// Overrides the base URL used when building public, shareable resource URLs (e.g. a
-    /// signed dataset-items URL). Defaults to the API base URL. The `/v2` suffix is appended
-    /// automatically.
+    /// signed dataset-items URL). Defaults to the API base URL. Like [`base_url`](Self::base_url),
+    /// the `/v2` version path is appended automatically only when not already present.
     pub fn public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
         self.public_base_url = Some(public_base_url.into());
         self
@@ -170,15 +176,9 @@ impl ApifyClientBuilder {
             self.request_compression,
         );
 
-        let trimmed = self.base_url.trim_end_matches('/');
-        let base_url = format!("{trimmed}/v2");
-
-        let public_trimmed = self
-            .public_base_url
-            .as_deref()
-            .unwrap_or(&self.base_url)
-            .trim_end_matches('/');
-        let public_base_url = format!("{public_trimmed}/v2");
+        let base_url = to_api_base_url(&self.base_url);
+        let public_base_url =
+            to_api_base_url(self.public_base_url.as_deref().unwrap_or(&self.base_url));
 
         ApifyClient {
             http,
@@ -399,5 +399,59 @@ impl ApifyClient {
             "isStatusMessageTerminal": is_terminal,
         });
         self.run(run_id).update(&body).await
+    }
+}
+
+/// Appends [`API_VERSION_PATH`] to `url` unless it is already the final path segment, mirroring
+/// the reference client's `toApiBaseUrl`.
+///
+/// A trailing slash (or several) is trimmed first, so `https://host/v2/` and `https://host/v2//`
+/// both normalize to `https://host/v2` rather than growing a double slash. The check looks only
+/// at the URL's *path*, not at the string as a whole: `https://v2` has no path (`v2` is the
+/// host), so it still becomes `https://v2/v2` even though the raw string ends in `v2`.
+fn to_api_base_url(url: &str) -> String {
+    let (authority, path) = split_authority(url);
+    let path = path.trim_end_matches('/');
+    if path.ends_with(API_VERSION_PATH) {
+        format!("{authority}{path}")
+    } else {
+        format!("{authority}{path}{API_VERSION_PATH}")
+    }
+}
+
+/// Splits a URL into its authority (`scheme://host[:port]`, or the whole string if there is no
+/// path) and its path (starting with `/`, or empty if there is none).
+fn split_authority(url: &str) -> (&str, &str) {
+    let search_from = url.find("://").map(|i| i + 3).unwrap_or(0);
+    match url[search_from..].find('/') {
+        Some(rel_idx) => url.split_at(search_from + rel_idx),
+        None => (url, ""),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_api_base_url;
+
+    /// Mirrors the reference client's `toApiBaseUrl` test matrix exactly, so the two clients
+    /// agree on every case, including the `https://v2` host-vs-path edge case.
+    #[test]
+    fn to_api_base_url_matches_reference_matrix() {
+        let cases = [
+            ("https://example.com", "https://example.com/v2"),
+            ("https://example.com/", "https://example.com/v2"),
+            ("https://example.com/v2", "https://example.com/v2"),
+            ("https://example.com/v2/", "https://example.com/v2"),
+            ("https://example.com/v2//", "https://example.com/v2"),
+            (
+                "https://example.com/proxy/v2",
+                "https://example.com/proxy/v2",
+            ),
+            ("https://example.com/apiv2", "https://example.com/apiv2/v2"),
+            ("https://v2", "https://v2/v2"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(to_api_base_url(input), expected, "input: {input}");
+        }
     }
 }

@@ -23,3 +23,27 @@ fn user_agent_format() {
     assert!(ua.contains("Rust/"));
     assert!(ua.contains("isAtHome/"));
 }
+
+/// `base_url` appends `/v2` when missing, but does not double it when the caller already
+/// included it (e.g. a URL read back from [`ApifyClient::api_base_url`] and passed to a new
+/// builder) — exercised through the public builder API, end to end.
+#[test]
+fn base_url_appends_v2_idempotently() {
+    let client = ApifyClient::builder()
+        .token("dummy-token")
+        .base_url("https://example.com")
+        .build();
+    assert_eq!(client.api_base_url(), "https://example.com/v2");
+
+    let client = ApifyClient::builder()
+        .token("dummy-token")
+        .base_url("https://example.com/v2")
+        .build();
+    assert_eq!(client.api_base_url(), "https://example.com/v2");
+
+    let client = ApifyClient::builder()
+        .token("dummy-token")
+        .base_url("https://example.com/v2/")
+        .build();
+    assert_eq!(client.api_base_url(), "https://example.com/v2");
+}

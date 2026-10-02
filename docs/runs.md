@@ -19,6 +19,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
 | `metamorph(target, input, options)` | `&str`, `Option<&impl Serialize>`, `RunMetamorphOptions` | `ActorRun` | Transforms the run into another Actor. |
+| `metamorph_raw(target, input, options)` | `&str`, `&[u8]`, `RunMetamorphOptions` | `ActorRun` | Like `metamorph`, but sends `input` as a raw request body (no JSON serialization), paired with `options.content_type`. |
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
 | `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a finished run. |
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |

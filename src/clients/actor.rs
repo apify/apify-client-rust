@@ -123,10 +123,44 @@ impl ActorClient {
 
     /// Starts the Actor and returns immediately with the created run.
     ///
-    /// `input` is any JSON-serializable value (or `None` for no input).
+    /// `input` is any JSON-serializable value (or `None` for no input). To send a non-JSON
+    /// input (e.g. a ZIP archive) as raw bytes instead, use [`start_raw`](Self::start_raw).
     pub async fn start<T: Serialize>(
         &self,
         input: Option<&T>,
+        options: ActorStartOptions,
+    ) -> ApifyClientResult<ActorRun> {
+        let body = match input {
+            Some(value) => Some(serde_json::to_vec(value)?),
+            None => None,
+        };
+        self.start_with_body(body, "application/json", options)
+            .await
+    }
+
+    /// Starts the Actor with a raw request body instead of a JSON-serializable value.
+    ///
+    /// Use this for a non-JSON input, e.g. a ZIP archive paired with
+    /// `options.content_type = Some("application/zip".into())`; the bytes are sent exactly as
+    /// given, with no JSON serialization. For an object or array input, use
+    /// [`start`](Self::start) instead, which handles the serialization. Mirrors the reference
+    /// client, whose `ActorInput` accepts a plain object, an array of them, or raw bytes.
+    pub async fn start_raw(
+        &self,
+        input: &[u8],
+        options: ActorStartOptions,
+    ) -> ApifyClientResult<ActorRun> {
+        self.start_with_body(Some(input.to_vec()), "application/octet-stream", options)
+            .await
+    }
+
+    /// Shared implementation of [`start`](Self::start) and [`start_raw`](Self::start_raw):
+    /// applies the run-start options as query parameters and posts the given body, falling back
+    /// to `default_content_type` only when the caller did not set `options.content_type`.
+    async fn start_with_body(
+        &self,
+        body: Option<Vec<u8>>,
+        default_content_type: &str,
         options: ActorStartOptions,
     ) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
@@ -134,11 +168,7 @@ impl ActorClient {
         let content_type = options
             .content_type
             .clone()
-            .unwrap_or_else(|| "application/json".to_string());
-        let body = match input {
-            Some(value) => Some(serde_json::to_vec(value)?),
-            None => None,
-        };
+            .unwrap_or_else(|| default_content_type.to_string());
         post_with_body(&self.ctx, Some("runs"), &params, body, &content_type).await
     }
 
@@ -157,6 +187,18 @@ impl ActorClient {
     ) -> ApifyClientResult<ActorRun> {
         let run = self.start(input, options).await?;
         // Use the root client's run client so polling targets the canonical run route.
+        self.root.run(run.id).wait_for_finish(wait_secs).await
+    }
+
+    /// Starts the Actor with a raw request body ([`start_raw`](Self::start_raw)) and waits for
+    /// it to finish, exactly like [`call`](Self::call) but for a non-JSON input.
+    pub async fn call_raw(
+        &self,
+        input: &[u8],
+        options: ActorStartOptions,
+        wait_secs: Option<i64>,
+    ) -> ApifyClientResult<ActorRun> {
+        let run = self.start_raw(input, options).await?;
         self.root.run(run.id).wait_for_finish(wait_secs).await
     }
 
