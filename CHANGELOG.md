@@ -36,9 +36,7 @@ to [Semantic Versioning](https://semver.org/).
   `isCompressibleContentType`.
 
 ### Changed
-- Bumped `API_SPEC_VERSION` to `v2-2026-10-01T153946Z`. The rest of the spec delta (relaxed
-  rate-limiting documentation and a dropped "contact support" note on task-publish limits) is
-  prose only and needs no code change.
+- Bumped `API_SPEC_VERSION` to `v2-2026-10-01T153946Z`.
 - Bumped crate version to `0.11.0`.
 
 ## [0.10.2] - 2026-09-25
