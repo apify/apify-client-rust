@@ -59,6 +59,56 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+impl ApiError {
+    /// `true` for HTTP 400 Bad Request, typically because the request failed validation.
+    ///
+    /// The reference clients throw a distinct `InvalidRequestError` subclass for this status;
+    /// since Rust has no exception hierarchy to mirror, these `is_*` predicates are the
+    /// idiomatic equivalent classification on the one [`ApiError`] type.
+    pub fn is_invalid_request(&self) -> bool {
+        self.status_code == 400
+    }
+
+    /// `true` for HTTP 401 Unauthorized: the token is missing or invalid.
+    pub fn is_unauthorized(&self) -> bool {
+        self.status_code == 401
+    }
+
+    /// `true` for HTTP 403 Forbidden: the token lacks permission for the operation.
+    pub fn is_forbidden(&self) -> bool {
+        self.status_code == 403
+    }
+
+    /// `true` for HTTP 404 Not Found.
+    ///
+    /// Most `get`-style methods already map a `404` to `None` rather than an error (see e.g.
+    /// [`crate::clients::actor::ActorClient::get`]), so this is mainly useful for the methods
+    /// that return other errors directly, e.g. [`crate::clients::actor::ActorClient::start`]
+    /// with a nonexistent Actor ID.
+    pub fn is_not_found(&self) -> bool {
+        self.status_code == 404
+    }
+
+    /// `true` for HTTP 409 Conflict.
+    pub fn is_conflict(&self) -> bool {
+        self.status_code == 409
+    }
+
+    /// `true` for HTTP 429 Too Many Requests. The client already retries these internally (see
+    /// [`crate::ApifyClientBuilder::max_retries`]), so this surfaces only once retries are
+    /// exhausted.
+    pub fn is_rate_limited(&self) -> bool {
+        self.status_code == 429
+    }
+
+    /// `true` for an HTTP 5xx status. Like [`is_rate_limited`](Self::is_rate_limited), the
+    /// client already retries these internally, so this surfaces only once retries are
+    /// exhausted.
+    pub fn is_server_error(&self) -> bool {
+        self.status_code >= 500
+    }
+}
+
 /// The top-level error type for all client operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ApifyClientError {

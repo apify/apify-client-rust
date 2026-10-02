@@ -116,10 +116,29 @@ impl LogClient {
 
         let response = builder.send().await.map_err(ApifyClientError::from)?;
         if !response.status().is_success() {
-            return Err(ApifyClientError::InvalidResponse(format!(
-                "log stream returned status {}",
-                response.status().as_u16()
-            )));
+            let status = response.status().as_u16();
+            // The error body arrives as a stream here too (this request never goes through the
+            // buffered backend path). Read it so the failure carries the same structured
+            // `ApiError` (type/message/data) as every other endpoint, rather than losing the body
+            // to a generic transport error. A body that fails to read (e.g. the connection drops
+            // mid-response) still surfaces the status code, just without a parsed message.
+            let body = response
+                .bytes()
+                .await
+                .map(|b| b.to_vec())
+                .unwrap_or_default();
+            let http_response = crate::http_client::HttpResponse {
+                status,
+                headers: Default::default(),
+                body,
+            };
+            let api_error = crate::http_client::build_api_error(
+                &http_response,
+                1,
+                "GET",
+                &crate::http_client::extract_path(&url),
+            );
+            return Err(ApifyClientError::from(api_error));
         }
 
         let byte_stream = response.bytes_stream();

@@ -4,6 +4,43 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-10-02
+
+### Added
+- `Build::image_digest`, matching the spec's newly-documented build field (also present on the
+  reference JS client's `Build`). Previously only accessible untyped via `Build::extra`.
+- `ActorClient::start_raw`/`call_raw` and `RunClient::metamorph_raw`: send a raw-bytes input
+  (e.g. a ZIP archive, paired with `options.content_type`) instead of a JSON-serializable value,
+  matching the reference client's `ActorInput` now accepting raw bytes in addition to an object
+  or array.
+- `DatasetClient::create_items_public_url_with_format`, matching the reference client's new
+  `format` option on `createItemsPublicUrl`: builds the shareable items URL for an export format
+  other than the default `json`.
+- `ApiError::is_invalid_request`/`is_unauthorized`/`is_forbidden`/`is_not_found`/`is_conflict`/
+  `is_rate_limited`/`is_server_error`: status-classification predicates, the idiomatic equivalent
+  of the reference client's new `InvalidRequestError`/`UnauthorizedError`/.../`ServerError`
+  subclasses (Rust has no exception hierarchy to mirror them with).
+
+### Fixed
+- `ApifyClientBuilder::base_url`/`public_base_url` no longer double up the `/v2` version path
+  when the given URL already ends in it (e.g. one read back from `ApifyClient::api_base_url`);
+  matches the reference client's `toApiBaseUrl` fix.
+- A failed `LogClient::stream`/`stream_with_options` request (e.g. a 404 on a nonexistent run)
+  now surfaces the same structured `ApiError` (status/type/message) as every other endpoint,
+  instead of a generic transport error — this request bypasses the buffered backend path to keep
+  the connection open, so it previously lost the error body.
+- Request bodies are no longer compressed when their content type already carries its own
+  compression (images, audio, video, common archive formats): compressing them again burned CPU
+  for a result usually no smaller, sometimes larger. Mainly relevant to a raw-bytes Actor input
+  sent via the new `start_raw`/`call_raw`/`metamorph_raw`. Matches the reference client's
+  `isCompressibleContentType`.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-10-01T153946Z`. The rest of the spec delta (relaxed
+  rate-limiting documentation and a dropped "contact support" note on task-publish limits) is
+  prose only and needs no code change.
+- Bumped crate version to `0.11.0`.
+
 ## [0.10.2] - 2026-09-25
 
 ### Changed

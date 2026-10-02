@@ -41,6 +41,15 @@
 //!   [`ApifyClientBuilder::http_backend`].
 //! - **Cross-cutting behaviour** (auth, `User-Agent`, retries with exponential backoff,
 //!   timeouts) lives in [`http_client::HttpClient`] and is applied to every request.
+//!
+//! ## Cancellation
+//!
+//! The reference JavaScript client accepts an `AbortSignal` option on most methods so a caller
+//! can cancel an in-flight request. Rust futures are cancel-safe by construction: they do
+//! nothing until polled, so dropping one (e.g. via `tokio::select!`, or letting a
+//! `tokio::time::timeout` elapse) stops the underlying request without any API for it. This
+//! client therefore exposes no separate cancellation parameter — dropping the future returned
+//! by any method is the idiomatic equivalent.
 
 #![warn(missing_docs)]
 

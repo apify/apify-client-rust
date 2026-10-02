@@ -140,7 +140,11 @@ async fn build_actor_flow() {
 
     // Get the build back.
     let fetched = build_client.get().await.expect("get build");
-    assert!(fetched.is_some());
+    let fetched = fetched.expect("build should exist");
+    // `image_digest` is populated once the image manifest is available; a finished build on a
+    // real registry should have one, but we only assert the field deserializes (not `Some`),
+    // since availability timing is outside this test's control.
+    let _ = &fetched.image_digest;
 
     // Fetch the build log.
     let log = build_client.log().get().await.expect("get build log");

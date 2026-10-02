@@ -137,3 +137,54 @@ async fn last_run_access() {
         .expect("get last run");
     assert!(last.is_some(), "there should be a last succeeded run");
 }
+
+/// `ActorClient::call_raw` sends a raw-bytes input (here, pre-serialized JSON bytes) instead of a
+/// JSON-serializable value, and the run still completes normally — exercising the raw-input path
+/// end to end against the real API.
+#[tokio::test(flavor = "multi_thread")]
+async fn call_raw_sends_raw_bytes_input() {
+    let client = require_client!();
+
+    let run = client
+        .actor("apify/hello-world")
+        .call_raw(
+            b"{}",
+            apify_client::ActorStartOptions {
+                content_type: Some("application/json".to_string()),
+                ..Default::default()
+            },
+            Some(120),
+        )
+        .await
+        .expect("call_raw hello-world actor");
+
+    assert_eq!(
+        run.status.as_deref(),
+        Some("SUCCEEDED"),
+        "hello-world run started with a raw-bytes input should still succeed"
+    );
+}
+
+/// A failed `log().stream()` carries the API's structured error (status/type/message), not a
+/// generic transport error: this endpoint bypasses the buffered backend path to keep the
+/// connection open, so it has to parse the error body itself on a non-2xx response.
+#[tokio::test(flavor = "multi_thread")]
+async fn log_stream_of_missing_run_carries_structured_api_error() {
+    let client = require_client!();
+
+    // The stream type doesn't implement `Debug`, so discard it on success via `map` before
+    // `expect_err` (which requires the `Ok` variant to be `Debug` for its panic message).
+    let err = client
+        .run("nonexistent-run-id-xyz")
+        .log()
+        .stream()
+        .await
+        .map(|_| ())
+        .expect_err("streaming a nonexistent run's log should fail");
+
+    let api_error = err
+        .as_api_error()
+        .expect("error should be a structured ApiError, not a generic transport error");
+    assert_eq!(api_error.status_code, 404);
+    assert!(api_error.is_not_found());
+}

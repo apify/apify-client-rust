@@ -140,25 +140,61 @@ impl RunClient {
     ///
     /// `options.content_type` sets the content type of the input body (defaulting to
     /// `application/json`), matching the reference client's `metamorph(..., { contentType })`.
+    /// To send a non-JSON input as raw bytes instead, use [`metamorph_raw`](Self::metamorph_raw).
     pub async fn metamorph<T: Serialize>(
         &self,
         target_actor_id: &str,
         input: Option<&T>,
         options: RunMetamorphOptions,
     ) -> ApifyClientResult<ActorRun> {
-        let mut params = QueryParams::new();
-        params
-            .add_str("targetActorId", Some(to_safe_id(target_actor_id)))
-            .add_str("build", options.build);
         let body = match input {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
+        self.metamorph_with_body(target_actor_id, body, "application/json", options)
+            .await
+    }
+
+    /// Transforms the run into a run of another Actor (metamorph) with a raw request body
+    /// instead of a JSON-serializable value.
+    ///
+    /// The bytes are sent exactly as given, with no JSON serialization — pair this with
+    /// `options.content_type` for a non-JSON input. For an object or array input, use
+    /// [`metamorph`](Self::metamorph) instead.
+    pub async fn metamorph_raw(
+        &self,
+        target_actor_id: &str,
+        input: &[u8],
+        options: RunMetamorphOptions,
+    ) -> ApifyClientResult<ActorRun> {
+        self.metamorph_with_body(
+            target_actor_id,
+            Some(input.to_vec()),
+            "application/octet-stream",
+            options,
+        )
+        .await
+    }
+
+    /// Shared implementation of [`metamorph`](Self::metamorph) and
+    /// [`metamorph_raw`](Self::metamorph_raw).
+    async fn metamorph_with_body(
+        &self,
+        target_actor_id: &str,
+        body: Option<Vec<u8>>,
+        default_content_type: &str,
+        options: RunMetamorphOptions,
+    ) -> ApifyClientResult<ActorRun> {
+        let mut params = QueryParams::new();
+        params
+            .add_str("targetActorId", Some(to_safe_id(target_actor_id)))
+            .add_str("build", options.build);
         let content_type = options
             .content_type
             .as_deref()
-            .unwrap_or("application/json");
-        post_with_body(&self.ctx, Some("metamorph"), &params, body, content_type).await
+            .unwrap_or(default_content_type)
+            .to_string();
+        post_with_body(&self.ctx, Some("metamorph"), &params, body, &content_type).await
     }
 
     /// Reboots the run (restarts its container, preserving the run ID and storages).
