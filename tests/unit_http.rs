@@ -229,6 +229,110 @@ async fn error_body_is_parsed() {
     assert!(api.path.as_deref().unwrap().contains("/users/me"));
 }
 
+/// `ApiError`'s `is_*` status-classification predicates (the idiomatic equivalent of the
+/// reference client's `NotFoundError`/`RateLimitError`/... subclasses) match the response status,
+/// and only that status's predicate is `true`.
+#[tokio::test]
+async fn api_error_status_predicates_classify_by_status_code() {
+    async fn error_for(status: u16) -> apify_client::ApiError {
+        let backend = MockBackend::new(vec![MockOutcome::Status(status, b"{}".to_vec())]);
+        let client = client_with(backend, 0);
+        client
+            .me()
+            .get()
+            .await
+            .expect_err("should fail")
+            .as_api_error()
+            .expect("api error")
+            .clone()
+    }
+
+    let not_found = error_for(404).await;
+    assert!(not_found.is_not_found());
+    assert!(!not_found.is_invalid_request());
+    assert!(!not_found.is_unauthorized());
+    assert!(!not_found.is_forbidden());
+    assert!(!not_found.is_conflict());
+    assert!(!not_found.is_rate_limited());
+    assert!(!not_found.is_server_error());
+
+    assert!(error_for(400).await.is_invalid_request());
+    assert!(error_for(401).await.is_unauthorized());
+    assert!(error_for(403).await.is_forbidden());
+    assert!(error_for(409).await.is_conflict());
+    assert!(error_for(429).await.is_rate_limited());
+    assert!(error_for(500).await.is_server_error());
+    assert!(error_for(503).await.is_server_error());
+}
+
+/// `RunClient::metamorph_raw` sends the given bytes verbatim (no JSON serialization), defaulting
+/// to `application/octet-stream` when the caller does not set `options.content_type`, and still
+/// forwards `targetActorId`/`build` as query parameters like `metamorph`.
+#[tokio::test]
+async fn metamorph_raw_sends_bytes_verbatim_with_default_content_type() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let input = b"raw metamorph input".to_vec();
+    client
+        .run("run1")
+        .metamorph_raw(
+            "other/actor",
+            &input,
+            apify_client::RunMetamorphOptions {
+                build: Some("1.0".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Type").as_deref(),
+        Some("application/octet-stream")
+    );
+    assert_eq!(backend.last_body().expect("a body was sent"), input);
+    let url = backend.last_url().expect("a url was sent");
+    assert!(url.contains("targetActorId=other~actor"));
+    assert!(url.contains("build=1.0"));
+}
+
+/// `DatasetClient::create_items_public_url_with_format` adds a `format` query parameter to the
+/// generated URL, and `create_items_public_url` (unchanged) omits it, defaulting to the
+/// endpoint's own `json` default.
+#[tokio::test]
+async fn create_items_public_url_with_format_adds_format_param() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"ds1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let url = client
+        .dataset("ds1")
+        .create_items_public_url_with_format(
+            Default::default(),
+            None,
+            Some(apify_client::DownloadItemsFormat::Csv),
+        )
+        .await
+        .expect("ok");
+    assert!(url.contains("format=csv"), "url was: {url}");
+
+    let url = client
+        .dataset("ds1")
+        .create_items_public_url(Default::default(), None)
+        .await
+        .expect("ok");
+    assert!(
+        !url.contains("format="),
+        "create_items_public_url must not set a format param, url was: {url}"
+    );
+}
+
 /// `max_retries = 0` means exactly one attempt.
 #[tokio::test]
 async fn zero_retries_single_attempt() {
@@ -448,6 +552,96 @@ async fn small_request_body_is_not_compressed() {
         original,
         "small bodies must be sent verbatim"
     );
+}
+
+/// A large body whose content type already carries its own compression (e.g. a ZIP archive) is
+/// sent uncompressed, with no `Content-Encoding`: compressing it again would burn CPU for little
+/// to no size reduction. Exercises the raw-bytes path via `ActorClient::start_raw`, which is the
+/// main way a caller sets a non-JSON content type on a large body.
+#[tokio::test]
+async fn already_compressed_content_type_is_not_compressed() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let original = vec![b'a'; 4096];
+    client
+        .actor("me/actor")
+        .start_raw(
+            &original,
+            apify_client::ActorStartOptions {
+                content_type: Some("application/zip".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("ok");
+
+    assert!(
+        backend.last_header("Content-Encoding").is_none(),
+        "an already-compressed content type must not be compressed"
+    );
+    assert_eq!(
+        backend.last_body().expect("a body was sent"),
+        original,
+        "an already-compressed body must be sent verbatim, not JSON-re-encoded"
+    );
+}
+
+/// `image/bmp` sits under the already-compressed `image/` prefix but is itself raw, uncompressed
+/// data, so it is still compressed. Exercises the exact-media-type exception list.
+#[tokio::test]
+async fn compressible_exception_under_already_compressed_prefix_is_compressed() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let original = vec![b'a'; 4096];
+    client
+        .actor("me/actor")
+        .start_raw(
+            &original,
+            apify_client::ActorStartOptions {
+                content_type: Some("image/bmp".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("br"),
+        "image/bmp is raw despite the image/ prefix and should still be compressed"
+    );
+}
+
+/// `ActorClient::start_raw` defaults to `application/octet-stream` when the caller does not set
+/// `options.content_type`, and sends the bytes verbatim (not as a JSON-encoded byte array).
+#[tokio::test]
+async fn start_raw_defaults_content_type_and_sends_bytes_verbatim() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"run1"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let input = b"not json, just bytes: \x00\x01\x02".to_vec();
+    client
+        .actor("me/actor")
+        .start_raw(&input, Default::default())
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Type").as_deref(),
+        Some("application/octet-stream")
+    );
+    assert_eq!(backend.last_body().expect("a body was sent"), input);
 }
 
 /// The status-only `last_run(status)` and the options-based `last_run_with_options` thread the

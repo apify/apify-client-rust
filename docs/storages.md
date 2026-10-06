@@ -65,7 +65,8 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
 | `get_statistics()` | — | `Option<Value>` | Field statistics. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
-| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL. |
+| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
+| `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. |
 
 `DatasetListItemsOptions` (all optional):
 

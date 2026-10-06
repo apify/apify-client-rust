@@ -132,6 +132,12 @@ pub struct Build {
     /// Build number, e.g. `0.1.2`.
     #[serde(default)]
     pub build_number: Option<String>,
+    /// Digest of the built Docker image manifest, without the `sha256:` prefix. Compare the
+    /// digests of two builds to find out whether their image contents differ. `None` if the
+    /// digest is not available (e.g. the build has not finished, or is older than when the API
+    /// started recording it).
+    #[serde(default)]
+    pub image_digest: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,

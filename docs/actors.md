@@ -19,7 +19,9 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `update(fields)` | `&impl Serialize` | `Actor` | Updates the Actor. |
 | `delete()` | — | `()` | Deletes the Actor. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
+| `start_raw(input, options)` | `&[u8]`, `ActorStartOptions` | `ActorRun` | Like `start`, but sends `input` as a raw request body (no JSON serialization) — for a non-JSON input such as a ZIP archive, paired with `options.content_type`. |
 | `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. |
+| `call_raw(input, options, wait_secs)` | `&[u8]`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | `start_raw` followed by `wait_for_finish`. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
@@ -45,7 +47,7 @@ All fields are optional. Used by both `start` and `call` here, and by the identi
 | `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
 | `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
 | `max_total_charge_usd` | `Option<f64>` | Maximum total charge in USD (pay-per-event Actors). |
-| `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json`. |
+| `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json` for `start`/`call`, or `application/octet-stream` for `start_raw`/`call_raw`, when unset. |
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
 | `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
@@ -153,6 +155,7 @@ if let Some(actor) = client.actor("apify~hello-world").get().await? {
 | `started_at` | `Option<DateTime<Utc>>` | When the build started. |
 | `finished_at` | `Option<DateTime<Utc>>` | When the build finished. |
 | `build_number` | `Option<String>` | Build number, e.g. `0.1.2`. |
+| `image_digest` | `Option<String>` | Digest of the built Docker image manifest (without the `sha256:` prefix); compare two builds' digests to see if their image contents differ. `None` if not yet available. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 `Build::is_terminal()` reports whether `status` is a terminal value, mirroring `ActorRun`.

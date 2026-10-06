@@ -96,7 +96,7 @@ use apify_client::{ApifyClient, RequestCompression};
 
 let client = ApifyClient::builder()
     .token("my-api-token")
-    .base_url("https://api.apify.com")     // `/v2` is appended automatically
+    .base_url("https://api.apify.com")     // `/v2` is appended automatically unless already present
     .public_base_url("https://api.apify.com") // origin for public/shareable URLs; defaults to `base_url`
     .max_retries(8)                         // default: 8
     .min_delay_between_retries(Duration::from_millis(500)) // default: 500ms
@@ -274,6 +274,18 @@ match client.actor("nonexistent~actor").get().await {
 
 `get`/`delete` operations resolve a missing resource (`404 record-not-found`) to
 `Ok(None)` / a successful no-op, matching the reference clients.
+
+`ApiError` also exposes `is_not_found()`, `is_rate_limited()`, `is_server_error()` and similar
+`is_*` predicates classifying it by HTTP status — the idiomatic equivalent of the reference
+clients' `NotFoundError`/`RateLimitError`/... error subclasses, since Rust has no exception
+hierarchy to mirror them with.
+
+### Cancellation
+
+The reference JavaScript client accepts an `AbortSignal` option on most methods. Rust futures do
+nothing until polled, so dropping one — e.g. via `tokio::select!`, or letting a
+`tokio::time::timeout` elapse — stops the underlying request with no separate API needed; that is
+the idiomatic equivalent here.
 
 ## Custom HTTP transport
 

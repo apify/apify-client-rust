@@ -338,14 +338,30 @@ impl DatasetClient {
     /// the dataset exposes a URL-signing secret key (i.e. it is private), appends an
     /// HMAC-SHA256 `signature` so the URL grants access without an API token. `expires_in_secs`
     /// optionally bounds the validity of a signed URL. The URL is built from the configured
-    /// public base URL.
+    /// public base URL. The served items are JSON; to request another export format, use
+    /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
     pub async fn create_items_public_url(
         &self,
         options: DatasetListItemsOptions,
         expires_in_secs: Option<i64>,
     ) -> ApifyClientResult<String> {
+        self.create_items_public_url_with_format(options, expires_in_secs, None)
+            .await
+    }
+
+    /// Like [`create_items_public_url`](Self::create_items_public_url), but lets the caller
+    /// choose the `format` the items are served in (JSON, CSV, XLSX, ...) via a `format` query
+    /// parameter on the generated URL. `None` defaults to `json`, matching the endpoint's own
+    /// default.
+    pub async fn create_items_public_url_with_format(
+        &self,
+        options: DatasetListItemsOptions,
+        expires_in_secs: Option<i64>,
+        format: Option<DownloadItemsFormat>,
+    ) -> ApifyClientResult<String> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
+        params.add_str("format", format.map(|f| f.as_str().to_string()));
 
         if let Some(dataset) = self.get().await? {
             if let Some(secret) = dataset

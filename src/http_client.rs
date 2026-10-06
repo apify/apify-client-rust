@@ -48,6 +48,63 @@ const BROTLI_BUFFER_SIZE: usize = 4096;
 /// default level (6).
 const GZIP_COMPRESSION_LEVEL: u32 = 6;
 
+/// Media-type prefixes whose payloads already carry their own compression, so running them
+/// through brotli/gzip burns CPU and memory for a result that is usually no smaller — and the
+/// request also keeps the intended `Content-Type`, rather than becoming an unreadable
+/// `Content-Encoding: br` blob the destination may not expect for these formats.
+/// Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES`.
+const ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES: [&str; 3] = ["audio/", "image/", "video/"];
+
+/// Exact media types (outside the prefixes above) whose payloads already carry their own
+/// compression. Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPES`.
+const ALREADY_COMPRESSED_MEDIA_TYPES: [&str; 19] = [
+    "application/epub+zip",
+    "application/gzip",
+    "application/java-archive",
+    "application/vnd.android.package-archive",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.rar",
+    "application/x-7z-compressed",
+    "application/x-bzip",
+    "application/x-bzip2",
+    "application/x-gzip",
+    "application/x-rar-compressed",
+    "application/x-xz",
+    "application/x-zip-compressed",
+    "application/zip",
+    "application/zstd",
+    "font/woff",
+    "font/woff2",
+];
+
+/// Uncompressed media types that sit under an already-compressed prefix above, so compressing
+/// them still pays off. Matches the reference client's `COMPRESSIBLE_MEDIA_TYPES`.
+const COMPRESSIBLE_MEDIA_TYPES: [&str; 16] = [
+    "audio/aiff",
+    "audio/basic",
+    "audio/l16",
+    "audio/l24",
+    "audio/midi",
+    "audio/vnd.wave",
+    "audio/wav",
+    "audio/wave",
+    "audio/x-aiff",
+    "audio/x-wav",
+    "image/bmp",
+    "image/tiff",
+    "image/vnd.adobe.photoshop",
+    "image/vnd.microsoft.icon",
+    "image/x-icon",
+    "image/x-ms-bmp",
+];
+
+/// Structured-syntax suffixes that mark a media type as text even under an already-compressed
+/// prefix (e.g. `image/svg+xml`). Matches the reference client's
+/// `COMPRESSIBLE_MEDIA_TYPE_SUFFIXES`.
+const COMPRESSIBLE_MEDIA_TYPE_SUFFIXES: [&str; 2] = ["+json", "+xml"];
+
 /// Algorithm used to compress large request bodies before they are sent.
 ///
 /// The Apify API accepts both brotli (`br`) and gzip (`gzip`) request bodies. The reference JS
@@ -370,6 +427,18 @@ fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompres
     if already_encoded {
         return;
     }
+    // Skip media types that already carry their own compression (images, audio, video,
+    // archives): compressing them again burns CPU for little to no size reduction. This is
+    // mainly relevant to a raw-bytes Actor input (e.g. `ActorClient::start_raw` with
+    // `content_type: Some("application/zip")`); JSON request bodies always pass this check.
+    let content_type = request
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("Content-Type"))
+        .map(|(_, v)| v.as_str());
+    if !is_compressible_content_type(content_type) {
+        return;
+    }
 
     let (encoding, compressed) = match compression {
         RequestCompression::Brotli => (CONTENT_ENCODING_BROTLI, brotli_compress(body)),
@@ -379,6 +448,42 @@ fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompres
         .headers
         .insert("Content-Encoding".to_string(), encoding.to_string());
     request.body = Some(compressed);
+}
+
+/// Decides whether a request body with the given content type is worth compressing.
+///
+/// Images, audio, video and archives already carry their own compression: running them through
+/// brotli or gzip burns CPU, holds a second full copy of the body in memory, and usually produces
+/// output no smaller than the input (sometimes larger). Formats that are raw despite such a media
+/// type, e.g. `image/bmp` or `audio/wav`, are still compressed. A body with no content type is
+/// assumed to be compressible. Matches the reference client's `isCompressibleContentType`.
+fn is_compressible_content_type(content_type: Option<&str>) -> bool {
+    let Some(content_type) = content_type else {
+        return true;
+    };
+    // `Content-Type` is case-insensitive and may carry parameters, e.g. `text/plain; charset=utf-8`.
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    if COMPRESSIBLE_MEDIA_TYPES.contains(&media_type.as_str()) {
+        return true;
+    }
+    if COMPRESSIBLE_MEDIA_TYPE_SUFFIXES
+        .iter()
+        .any(|suffix| media_type.ends_with(suffix))
+    {
+        return true;
+    }
+    if ALREADY_COMPRESSED_MEDIA_TYPES.contains(&media_type.as_str()) {
+        return false;
+    }
+    !ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES
+        .iter()
+        .any(|prefix| media_type.starts_with(prefix))
 }
 
 /// Brotli-compresses `data`. Writing to an in-memory `Vec` is infallible, so this cannot fail.
@@ -413,7 +518,7 @@ fn gzip_compress(data: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the path + query portion of a URL, for error reporting.
-fn extract_path(url: &str) -> Option<String> {
+pub(crate) fn extract_path(url: &str) -> Option<String> {
     // Find the start of the path after the scheme+host.
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     after_scheme
@@ -435,7 +540,7 @@ fn is_error_retryable(err: &ApifyClientError) -> bool {
 }
 
 /// Parses the API error body (if present) into an [`ApiError`].
-fn build_api_error(
+pub(crate) fn build_api_error(
     response: &HttpResponse,
     attempt: u32,
     method: &str,
