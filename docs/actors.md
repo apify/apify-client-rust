@@ -51,6 +51,7 @@ All fields are optional. Used by both `start` and `call` here, and by the identi
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
 | `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
+| `wait_for_resources` | `Option<WaitForResources>` | Retry the start while the account lacks the memory or a concurrent-run slot for it (`ApiError::error_type` of `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`). See below. |
 
 The `wait_secs` argument of `call` (and of `wait_for_finish` on runs/builds) controls the
 client-side polling budget:
@@ -59,6 +60,48 @@ client-side polling budget:
 - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by then, the
   **last fetched (still non-terminal) run is returned** rather than an error — inspect
   `run.status` / `run.is_terminal()` on the result.
+- A run/build ID that keeps 404ing (e.g. it was never valid, or the resource was deleted) is not
+  polled forever: past a 3-second grace period (reset by any successful fetch), `wait_for_finish`
+  returns the `404` as an error instead.
+
+### Waiting for resources to start a run
+
+Starting a run fails with an `ApiError` (HTTP 402) when the account has no free memory for it, or
+already runs as many Actors as its plan allows (`error_type` of `actor-memory-limit-exceeded` or
+`concurrent-runs-limit-exceeded`). Both clear only once other runs or builds of the account
+finish, so the client does not retry them by default.
+
+Set `ActorStartOptions::wait_for_resources` to retry the start every 10 seconds instead:
+
+- `WaitForResources::Forever` retries until the run starts.
+- `WaitForResources::ForSecs(secs)` stops retrying after that many seconds and returns the last
+  error.
+
+Any other error is returned right away. A run that asks for more memory than the account's whole
+memory limit is rejected with `actor-memory-limit-exceeded` too and never starts, so `Forever`
+retries it forever. In `call`, time spent retrying the start does not count toward `wait_secs`.
+
+```rust,no_run
+use apify_client::{ApifyClient, ActorStartOptions, WaitForResources};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new("my-api-token");
+
+// Retry the start until the account has the resources for the run.
+let run = client
+    .actor("username/actor-name")
+    .call::<serde_json::Value>(
+        None,
+        ActorStartOptions {
+            wait_for_resources: Some(WaitForResources::Forever),
+            ..Default::default()
+        },
+        None,
+    )
+    .await?;
+# Ok(())
+# }
+```
 
 > Note: `list` here takes `ActorListOptions` (fields `offset, limit, desc, my, sort_by`),
 > which is distinct from the generic `ListOptions { offset, limit, desc }` used by most other

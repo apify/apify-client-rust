@@ -177,48 +177,48 @@ impl<T> ListIterator<T> {
         let page = (self.fetch)(self.next_offset, page_limit).await?;
         let received = page.items.len() as i64;
 
+        // The number of rows this page *scanned*, used to advance the offset and decide when the
+        // listing is exhausted. For every endpoint except dataset items this equals `received`
+        // (`page.scanned` is `None`); dataset items can report it separately (see
+        // `PaginationList::scanned`), since a filter can scan more rows than it returns and
+        // `unwind` can return more items than rows scanned. It is capped at the page size actually
+        // requested so an unwound page never advances past rows the next request would then skip.
+        let scanned = page.scanned.unwrap_or(received).max(received);
+        let scanned = match page_limit {
+            Some(limit) if limit > 0 => scanned.min(limit),
+            _ => scanned,
+        };
+
         // Enforce the caller's total-item cap exactly, even if the API returns more than the
         // requested page limit.
         let mut items = page.items;
         if let Some(rem) = self.remaining {
             if received > rem {
-                items.truncate(rem as usize);
+                items.truncate(rem.max(0) as usize);
             }
         }
 
-        self.next_offset += received;
+        self.next_offset += scanned;
         if let Some(rem) = self.remaining.as_mut() {
-            *rem -= received;
+            *rem -= scanned;
         }
 
-        // Decide whether more pages remain.
+        // Decide whether more pages remain. `total` is deliberately never consulted: it changes
+        // as the listed resource grows (e.g. a dataset a still-running Actor keeps pushing to),
+        // so stopping at the `total` a page happened to report can end the walk before rows added
+        // later are ever read. A short page is not treated as terminal either (server-side filters
+        // can legitimately make a full, non-final window come back short) — only a page that
+        // scanned nothing, or the caller's own cap, ends the walk. This matches the reference
+        // client, which pages until a request scans zero rows and so always sends one extra
+        // request at the end to find that empty page.
         if self.single_page {
             // Non-paginated endpoint: everything came back in one response.
             self.exhausted = true;
-        } else if received == 0 {
-            // Empty page: nothing more to read. This is the primary backstop and matches the
-            // reference client, whose loop stops as soon as a page returns no items.
+        } else if scanned == 0 {
             self.exhausted = true;
         } else if matches!(self.remaining, Some(r) if r <= 0) {
             // Reached the caller's total-item cap.
             self.exhausted = true;
-        } else if page.total > 0 {
-            // The endpoint reports a usable total, so drive termination by position, like the
-            // reference `_listPaginatedFromCallback`. A short page is deliberately NOT treated as
-            // terminal here: with dataset item filters (`skip_empty`/`clean`/`skip_hidden`) a full,
-            // non-final window can return fewer items than requested while more remain at higher
-            // offsets, so short-page detection would silently truncate. The empty-page backstop
-            // above ends the walk instead.
-            if self.next_offset >= page.total {
-                self.exhausted = true;
-            }
-        } else {
-            // No usable total (endpoint reports `total == 0`): fall back to short-page detection —
-            // a page shorter than the size the API says it served (`page.limit`) is the last one.
-            // A non-positive reported limit means the endpoint is not offset-paginated at all.
-            if page.limit <= 0 || received < page.limit {
-                self.exhausted = true;
-            }
         }
 
         self.buffer.extend(items);
@@ -272,13 +272,14 @@ mod tests {
                     count: items.len() as i64,
                     desc: false,
                     items,
+                    scanned: None,
                 })
             })
         })
     }
 
     #[tokio::test]
-    async fn walks_all_pages_using_reported_total() {
+    async fn ignores_reported_total_and_pages_to_an_empty_page() {
         let calls = Arc::new(AtomicUsize::new(0));
         let iter = ListIterator::new(
             0,
@@ -287,14 +288,15 @@ mod tests {
         )
         .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4]);
-        // Pages: [0,1] [2,3] [4]. next_offset reaches total (5) on the third page, so no extra
-        // empty request.
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        // Pages: [0,1] [2,3] [4] [] — the third page is short (1 < 2) but not terminal, and
+        // `total` (reported as 5, reached by offset after the third page) is not consulted
+        // either, so a fourth, empty request is what actually ends the walk.
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]
     async fn walks_all_pages_when_total_is_zero() {
-        // Emulates an endpoint that does not report a usable total: short-page detection ends it.
+        // Emulates an endpoint that does not report a usable total: the trailing empty page ends it.
         let calls = Arc::new(AtomicUsize::new(0));
         let iter = ListIterator::new(0, None, slicing_fetcher((0..5).collect(), 2, false, calls))
             .with_chunk_size(2);
@@ -316,8 +318,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reported_total_avoids_extra_request_on_exact_multiple() {
-        // 4 items, page size 2, total known: stops after the second full page (no empty fetch).
+    async fn reported_total_does_not_skip_the_trailing_empty_request() {
+        // 4 items, page size 2, total known and an exact multiple of the page size: even though
+        // offset reaches `total` right after the second (full) page, that is not consulted, so a
+        // third, empty request is still made before the walk ends.
         let calls = Arc::new(AtomicUsize::new(0));
         let iter = ListIterator::new(
             0,
@@ -326,15 +330,120 @@ mod tests {
         )
         .with_chunk_size(2);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3]);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn keeps_paging_past_the_first_pages_total_as_the_listing_grows() {
+        // The listing holds 2 items when the first page is read and 4 from then on (e.g. a
+        // dataset a still-running Actor keeps pushing to). Each response reports the *current*
+        // total, which would wrongly look "complete" at the end of page one if total were
+        // consulted; ignoring it lets the walk pick up the rows added afterwards.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let fetch: PageFetcher<i64> = Box::new(move |offset, limit| {
+            let call_number = counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                let total_rows: i64 = if call_number == 0 { 2 } else { 4 };
+                let page_size = limit.unwrap_or(2);
+                let start = (offset.max(0)).min(total_rows);
+                let end = (start + page_size).min(total_rows);
+                let items: Vec<i64> = (start..end).collect();
+                Ok(PaginationList {
+                    total: total_rows,
+                    offset,
+                    limit: page_size,
+                    count: items.len() as i64,
+                    desc: false,
+                    items,
+                    scanned: None,
+                })
+            })
+        });
+        let iter = ListIterator::new(0, None, fetch).with_chunk_size(2);
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3]);
+        // Pages: [0,1] (total looked like 2) [2,3] (total now 4) [] — three requests.
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn advances_by_the_scanned_count_when_it_exceeds_items_returned() {
+        // Models a dataset `listItems` filter: each page scans 3 rows (`x-apify-pagination-count`)
+        // but a `skip_empty`-style filter leaves only 1 item per page. Advancing by `items.len()`
+        // alone would re-request the same rows forever; advancing by the scanned count moves past
+        // them.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let fetch: PageFetcher<i64> = Box::new(move |offset, _limit| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                // 9 raw rows in windows of 3, only the first of each window "survives" the filter.
+                let window_start = (offset.max(0) / 3) * 3;
+                let items = if window_start < 9 {
+                    vec![window_start]
+                } else {
+                    vec![]
+                };
+                let scanned = if window_start < 9 { 3 } else { 0 };
+                Ok(PaginationList {
+                    total: 0,
+                    offset,
+                    limit: 3,
+                    count: items.len() as i64,
+                    desc: false,
+                    items,
+                    scanned: Some(scanned),
+                })
+            })
+        });
+        let iter = ListIterator::new(0, None, fetch).with_chunk_size(3);
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 3, 6]);
+        // Offsets requested: 0, 3, 6, 9 (empty) — four calls, each advancing by the scanned 3
+        // rows rather than the 1 surviving item.
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn scanned_count_is_capped_at_the_requested_page_size() {
+        // A lagging `x-apify-pagination-count` header can occasionally overshoot what was asked
+        // for (e.g. counting rows added by a concurrent push); the cap keeps the offset from
+        // jumping past rows the next request would then never read.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let fetch: PageFetcher<i64> = Box::new(move |offset, limit| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                let page_size = limit.unwrap_or(2);
+                let start = offset.max(0);
+                let end = (start + page_size).min(6);
+                let items: Vec<i64> = (start..end).collect();
+                // Reports scanning more rows than were actually requested/returned, but only
+                // while there is anything left to scan (a genuinely empty page reports 0, same
+                // as `items.len()`, so the walk can still terminate).
+                let scanned = if items.is_empty() { 0 } else { page_size + 5 };
+                Ok(PaginationList {
+                    total: 0,
+                    offset,
+                    limit: page_size,
+                    count: items.len() as i64,
+                    desc: false,
+                    items,
+                    scanned: Some(scanned),
+                })
+            })
+        });
+        let iter = ListIterator::new(0, None, fetch).with_chunk_size(2);
+        // Without the cap this would skip straight past offset 6 and lose items [2..6).
+        assert_eq!(iter.collect_all().await.unwrap(), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]
     async fn non_final_short_page_with_reported_total_does_not_truncate() {
         // Guards the termination logic, NOT filter de-duplication: every page is "short" (it
-        // returns fewer items than the page size the API reports) while the endpoint reports a
-        // large total. Total-driven termination must keep going and yield every item, ending
-        // only on the empty page. (This fetcher advances offset by the page size and never
+        // returns fewer items than the page size the API reports), and the endpoint also reports
+        // a large `total`. Neither is consulted, so the walk must keep going and yield every item,
+        // ending only on the empty page. (This fetcher advances offset by the page size and never
         // overlaps windows, so it does not model the sparse-window duplicate behaviour
         // documented on `iterate_items`; it only proves a short page is not treated as terminal.)
         let all: Vec<i64> = (0..6).collect();
@@ -346,8 +455,9 @@ mod tests {
             let all = all.clone();
             Box::pin(async move {
                 // Serve at most 2 items per page but report a page limit of 4, so every non-final
-                // page is strictly short (received 2 < reported limit 4). `total` is reported large
-                // (100) so termination can only come from the empty page, never a short page.
+                // page is strictly short (received 2 < reported limit 4), and `total` is reported
+                // large (100) — neither is consulted, so termination can only come from the empty
+                // page, never a short page or a reported total.
                 let start = (offset.max(0) as usize).min(all.len());
                 let end = (start + 2).min(all.len());
                 let items = all[start..end].to_vec();
@@ -358,6 +468,7 @@ mod tests {
                     count: items.len() as i64,
                     desc: false,
                     items,
+                    scanned: None,
                 })
             })
         });
@@ -417,6 +528,7 @@ mod tests {
                     count: 5,
                     desc: false,
                     items: vec![0, 1, 2, 3, 4],
+                    scanned: None,
                 })
             })
         });
@@ -453,6 +565,7 @@ mod tests {
                     count: 3,
                     desc: false,
                     items: vec![10, 20, 30],
+                    scanned: None,
                 })
             })
         });

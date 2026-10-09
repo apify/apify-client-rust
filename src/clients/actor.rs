@@ -19,6 +19,17 @@ use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::{Actor, ActorRun, Build};
 
+/// How long to keep retrying a run start that the API rejects for lack of resources (see
+/// [`ActorStartOptions::wait_for_resources`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WaitForResources {
+    /// Retry until the run starts, how ever long that takes.
+    Forever,
+    /// Retry for up to this many seconds (clamped to `0` if negative), then return the last
+    /// error. `0` makes a single attempt and returns its error without retrying.
+    ForSecs(f64),
+}
+
 /// Options shared by [`ActorClient::start`] and [`ActorClient::call`] (and the task
 /// equivalents).
 #[derive(Debug, Default, Clone)]
@@ -44,6 +55,19 @@ pub struct ActorStartOptions {
     /// Ad-hoc webhooks to attach to this run. Serialized to base64-encoded JSON as the
     /// `webhooks` query parameter, matching the reference clients.
     pub webhooks: Option<Vec<serde_json::Value>>,
+    /// Retry the start while the account lacks the resources for the run, i.e. while the API
+    /// rejects it with an [`ApiError`](crate::ApiError) whose `error_type` is
+    /// `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`. Both clear as other
+    /// runs or builds finish. The start is retried every 10 seconds; any other error is returned
+    /// right away.
+    ///
+    /// [`WaitForResources::Forever`] retries until the run starts.
+    /// [`WaitForResources::ForSecs`] stops retrying after that many seconds and returns the last
+    /// error. `None` (the default) makes a single attempt.
+    ///
+    /// A run that requests more memory than the account's whole memory limit is rejected with
+    /// `actor-memory-limit-exceeded` as well and never starts, so `Forever` retries it forever.
+    pub wait_for_resources: Option<WaitForResources>,
 }
 
 impl ActorStartOptions {
@@ -125,6 +149,8 @@ impl ActorClient {
     ///
     /// `input` is any JSON-serializable value (or `None` for no input). To send a non-JSON
     /// input (e.g. a ZIP archive) as raw bytes instead, use [`start_raw`](Self::start_raw).
+    /// Set [`ActorStartOptions::wait_for_resources`] to retry the start while the account lacks
+    /// the memory or a concurrent-run slot for it.
     pub async fn start<T: Serialize>(
         &self,
         input: Option<&T>,
@@ -169,7 +195,16 @@ impl ActorClient {
             .content_type
             .clone()
             .unwrap_or_else(|| default_content_type.to_string());
-        post_with_body(&self.ctx, Some("runs"), &params, body, &content_type).await
+        crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
+            post_with_body(
+                &self.ctx,
+                Some("runs"),
+                &params,
+                body.clone(),
+                &content_type,
+            )
+        })
+        .await
     }
 
     /// Starts the Actor and waits (client-side polling) for it to finish.
@@ -179,6 +214,9 @@ impl ActorClient {
     /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    ///
+    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count
+    /// toward `wait_secs`, since that budget only starts once the run has actually started.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,

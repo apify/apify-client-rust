@@ -70,7 +70,9 @@ impl TaskClient {
 
     /// Starts the task and returns immediately with the created run.
     ///
-    /// `input` overrides the task's saved input (or `None` to use the saved input).
+    /// `input` overrides the task's saved input (or `None` to use the saved input). Set
+    /// [`ActorStartOptions::wait_for_resources`] to retry the start while the account lacks the
+    /// memory or a concurrent-run slot for it.
     pub async fn start<T: Serialize>(
         &self,
         input: Option<&T>,
@@ -82,7 +84,16 @@ impl TaskClient {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
-        post_with_body(&self.ctx, Some("runs"), &params, body, "application/json").await
+        crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
+            post_with_body(
+                &self.ctx,
+                Some("runs"),
+                &params,
+                body.clone(),
+                "application/json",
+            )
+        })
+        .await
     }
 
     /// Starts the task and waits (client-side polling) for it to finish.
@@ -92,6 +103,9 @@ impl TaskClient {
     /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    ///
+    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count
+    /// toward `wait_secs`, since that budget only starts once the run has actually started.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,

@@ -225,6 +225,12 @@ impl DatasetClient {
             .header("x-apify-pagination-limit")
             .and_then(|v| v.parse().ok())
             .unwrap_or(count);
+        // The number of rows scanned to produce this page, when the API reports it separately
+        // from the item count (see `PaginationList::scanned`): a filter can scan more rows than
+        // it returns, and `unwind` can return more items than rows scanned.
+        let scanned = response
+            .header("x-apify-pagination-count")
+            .and_then(|v| v.parse().ok());
 
         Ok(PaginationList {
             total,
@@ -233,6 +239,7 @@ impl DatasetClient {
             count,
             desc: options.desc.unwrap_or(false),
             items,
+            scanned,
         })
     }
 
@@ -243,22 +250,17 @@ impl DatasetClient {
     /// transparently paging. The caller's `options.limit` caps the total number of items yielded
     /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
     ///
-    /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) are forwarded on every page
-    /// request. Paging advances the offset by the number of items each page returns, exactly
-    /// like the reference JavaScript client (`currentOffset += items.length`). Because the offset
-    /// advances by the post-filter count rather than the raw window size, filtered iteration is
-    /// not exact — this matches the reference client, and it can distort results two ways:
+    /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) and `unwind` are forwarded on
+    /// every page request. Paging advances the offset by the number of underlying rows each page
+    /// *scanned* (the `x-apify-pagination-count` response header), not by `items.len()`, matching
+    /// the reference JavaScript client: a filter can scan more rows than it returns, and `unwind`
+    /// can return more items than rows scanned, so advancing by the returned count alone would
+    /// re-scan or skip rows. The listing's reported `total` is never consulted, so a dataset a
+    /// still-running Actor keeps pushing to is read to the end: iteration keeps requesting pages
+    /// until one scans no rows (one extra, empty request past the last page with data), rather
+    /// than stopping at the size the dataset had when the loop started.
     ///
-    /// - Duplicates: when a page's filtered count is smaller than its raw window, the next page
-    ///   starts at an offset that overlaps the previous window, so some items are yielded more
-    ///   than once.
-    /// - Dropped items: when a filter removes *every* item in a raw window, the page comes back
-    ///   with no items; iteration treats that empty page as the end of the dataset (the empty-page
-    ///   backstop in [`ListIterator`]) and stops, even though unfiltered items still exist at
-    ///   higher offsets.
-    ///
-    /// If you need every filtered item exactly once, apply the filter client-side over an
-    /// unfiltered iteration instead.
+    /// If `x-apify-pagination-count` is ever absent, the scanned count falls back to `items.len()`.
     pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
         &self,
         options: DatasetListItemsOptions,
