@@ -210,9 +210,9 @@ impl DatasetClient {
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
         let count = items.len() as i64;
-        // Fall back to `0` ("total unknown"), never `count`: a total equal to the items already
-        // returned would look complete and stop iteration after page one, dropping later items.
-        // `0` routes iteration to the short-page/empty-page backstop, which walks every page.
+        // `PaginationList::total` is informational only here (`ListIterator` never consults it,
+        // see `scanned` below); falling back to `0` rather than `count` just avoids implying a
+        // precise total when the API did not report one.
         let total = response
             .header("x-apify-pagination-total")
             .and_then(|v| v.parse().ok())
