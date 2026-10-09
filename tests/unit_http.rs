@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
-use apify_client::{ApifyClient, ApifyClientError, LastRunOptions, RequestCompression};
+use apify_client::{
+    ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions, RequestCompression,
+    WaitForResources,
+};
 use async_trait::async_trait;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
@@ -811,9 +814,9 @@ async fn iterate_macro_caps_and_pages_correctly() {
 
 /// Hermetic coverage of `RunCollectionClient::iterate`, which builds its iterator directly
 /// (not via the `list_iterator!` macro) because it threads a separate `filter` argument. The
-/// iterator must walk every page using the reported total for termination and must forward the
-/// `status` filter on every page request. Offline-only; the integration suite gates this on a
-/// live token.
+/// iterator must walk every page — ignoring the reported `total`, which can grow as more runs
+/// start — until a page scans no rows, and must forward the `status` filter on every page
+/// request. Offline-only; the integration suite gates this on a live token.
 #[tokio::test]
 async fn run_collection_iterate_walks_pages_and_forwards_filter() {
     let backend = MockBackend::new(vec![
@@ -824,6 +827,10 @@ async fn run_collection_iterate_walks_pages_and_forwards_filter() {
         MockOutcome::Status(
             200,
             br#"{"data":{"total":3,"limit":2,"items":[{"id":"r2"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":3,"limit":2,"items":[]}}"#.to_vec(),
         ),
     ]);
     let client = client_with(backend.clone(), 0);
@@ -845,7 +852,11 @@ async fn run_collection_iterate_walks_pages_and_forwards_filter() {
         vec!["r0", "r1", "r2"],
         "all runs across pages must be yielded"
     );
-    assert_eq!(backend.call_count(), 2, "two pages then total-driven stop");
+    assert_eq!(
+        backend.call_count(),
+        3,
+        "two data pages then the terminating empty page; `total` is never consulted"
+    );
     for url in backend.urls() {
         assert!(
             url.contains("status=SUCCEEDED"),
@@ -1119,4 +1130,234 @@ async fn iterate_keys_large_cap_clamps_page_size() {
         "the cursor must still advance across the clamped pages, got {}",
         urls[1]
     );
+}
+
+/// `wait_for_finish` must not poll a persistently-missing run forever when `wait_secs` is `None`:
+/// past the 3-second not-found grace period it surfaces the `404` as an error instead. Uses
+/// paused Tokio time so the grace period and poll interval elapse instantly in wall-clock time.
+#[tokio::test(start_paused = true)]
+async fn wait_for_finish_errors_after_persistent_not_found() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        404,
+        br#"{"error":{"type":"record-not-found","message":"Run was not found"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let err = client
+        .run("ghost-run-id")
+        .wait_for_finish(None)
+        .await
+        .expect_err("a run that never appears must error out, not poll forever");
+    let api = err.as_api_error().expect("api error");
+    assert!(api.is_not_found());
+    assert!(
+        backend.call_count() > 1,
+        "must have retried within the grace period, not failed on the very first 404"
+    );
+}
+
+/// A run/build that 404s once (e.g. a replica lagging just behind the write that created it) and
+/// then starts answering normally must not be treated as persistently missing: the grace-period
+/// clock resets on the first successful fetch.
+#[tokio::test(start_paused = true)]
+async fn wait_for_finish_recovers_from_a_transient_not_found() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            404,
+            br#"{"error":{"type":"record-not-found","message":"Run was not found"}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"id":"run-id","status":"SUCCEEDED"}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let run = client
+        .run("run-id")
+        .wait_for_finish(None)
+        .await
+        .expect("a transient 404 followed by success must not error");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+}
+
+/// `ActorStartOptions::wait_for_resources` retries a start rejected for lack of resources
+/// (`actor-memory-limit-exceeded` / `concurrent-runs-limit-exceeded`) every 10 seconds until it
+/// succeeds. Paused time collapses the two 10-second cooldowns to no wall-clock time.
+#[tokio::test(start_paused = true)]
+async fn wait_for_resources_retries_until_success() {
+    let backend =
+        MockBackend::new(vec![
+        MockOutcome::Status(
+            402,
+            br#"{"error":{"type":"actor-memory-limit-exceeded","message":"not enough memory"}}"#
+                .to_vec(),
+        ),
+        MockOutcome::Status(
+            402,
+            br#"{"error":{"type":"concurrent-runs-limit-exceeded","message":"too many runs"}}"#
+                .to_vec(),
+        ),
+        MockOutcome::Status(201, br#"{"data":{"id":"run-id","status":"READY"}}"#.to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let run = client
+        .actor("some-actor")
+        .start::<serde_json::Value>(
+            None,
+            ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::Forever),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("must eventually succeed once resources free up");
+    assert_eq!(run.id, "run-id");
+    assert_eq!(backend.call_count(), 3, "two rejections, then the success");
+}
+
+/// Without `wait_for_resources`, a resource-limit rejection is returned immediately, unretried —
+/// matching every other `ApiError`.
+#[tokio::test]
+async fn wait_for_resources_defaults_to_a_single_attempt() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        402,
+        br#"{"error":{"type":"actor-memory-limit-exceeded","message":"not enough memory"}}"#
+            .to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let err = client
+        .actor("some-actor")
+        .start::<serde_json::Value>(None, ActorStartOptions::default())
+        .await
+        .expect_err("must fail without the option");
+    assert_eq!(
+        err.as_api_error().unwrap().error_type.as_deref(),
+        Some("actor-memory-limit-exceeded")
+    );
+    assert_eq!(backend.call_count(), 1);
+}
+
+/// `WaitForResources::ForSecs` bounds the retrying: attempts happen at 0s, 10s, 20s and 25s (the
+/// last cooldown cut short by the bound), then the last rejection is returned.
+#[tokio::test(start_paused = true)]
+async fn wait_for_resources_for_secs_bounds_retrying_and_returns_last_error() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        402,
+        br#"{"error":{"type":"actor-memory-limit-exceeded","message":"not enough memory"}}"#
+            .to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let err = client
+        .actor("some-actor")
+        .start::<serde_json::Value>(
+            None,
+            ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::ForSecs(25.0)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("must give up once the bound elapses");
+    assert_eq!(
+        err.as_api_error().unwrap().error_type.as_deref(),
+        Some("actor-memory-limit-exceeded")
+    );
+    assert_eq!(backend.call_count(), 4, "attempts at 0s, 10s, 20s and 25s");
+}
+
+/// Any error other than a resource-limit rejection is returned right away, never retried, even
+/// with `wait_for_resources` set.
+#[tokio::test]
+async fn wait_for_resources_does_not_retry_unrelated_errors() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        400,
+        br#"{"error":{"type":"invalid-input","message":"Input is not valid."}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let err = client
+        .actor("some-actor")
+        .start::<serde_json::Value>(
+            None,
+            ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::Forever),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a non-resource-limit error must not be retried");
+    assert_eq!(
+        err.as_api_error().unwrap().error_type.as_deref(),
+        Some("invalid-input")
+    );
+    assert_eq!(backend.call_count(), 1);
+}
+
+/// `TaskClient::start` shares the same `wait_for_resources` retry behavior as `ActorClient::start`
+/// (both funnel through the same helper — DRY).
+#[tokio::test(start_paused = true)]
+async fn task_wait_for_resources_retries_until_success() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            402,
+            br#"{"error":{"type":"concurrent-runs-limit-exceeded","message":"too many runs"}}"#
+                .to_vec(),
+        ),
+        MockOutcome::Status(
+            201,
+            br#"{"data":{"id":"run-id","status":"READY"}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let run = client
+        .task("some-task")
+        .start::<serde_json::Value>(
+            None,
+            ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::Forever),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("must eventually succeed once resources free up");
+    assert_eq!(run.id, "run-id");
+    assert_eq!(backend.call_count(), 2);
+}
+
+/// Time spent retrying a resource-limited start inside `call()` must not count against
+/// `wait_secs`: that budget only starts once the run has actually started.
+#[tokio::test(start_paused = true)]
+async fn call_wait_for_resources_does_not_count_toward_wait_secs() {
+    let backend =
+        MockBackend::new(vec![
+        MockOutcome::Status(
+            402,
+            br#"{"error":{"type":"actor-memory-limit-exceeded","message":"not enough memory"}}"#
+                .to_vec(),
+        ),
+        MockOutcome::Status(201, br#"{"data":{"id":"run-id","status":"READY"}}"#.to_vec()),
+        MockOutcome::Status(200, br#"{"data":{"id":"run-id","status":"SUCCEEDED"}}"#.to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    // `wait_secs: Some(1)` is a tight budget for *finishing*; the resource-limit retry's 10-second
+    // cooldown happens entirely before that budget's clock starts, in `start()`.
+    let run = client
+        .actor("some-actor")
+        .call::<serde_json::Value>(
+            None,
+            ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::Forever),
+                ..Default::default()
+            },
+            Some(1),
+        )
+        .await
+        .expect("the resource-limit retry must not eat into the wait_for_finish budget");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
 }

@@ -4,6 +4,33 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-10-09
+
+### Added
+- `ActorStartOptions::wait_for_resources` (type `WaitForResources`) on `ActorClient::start`/`call`
+  and `TaskClient::start`/`call`: retries the start every 10 seconds while the API rejects it with
+  `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`, matching the reference
+  client's new `waitForResources` option.
+
+### Fixed
+- `ListIterator` (`iterate()`/`iterate_items()` on every collection) no longer stops at a page's
+  reported `total`: it now keeps requesting pages until one scans no rows, so a listing that grows
+  while it is being iterated (e.g. a dataset a still-running Actor keeps pushing to) is read to the
+  end instead of being cut off at the size it had when the loop started. Matches the reference
+  client's `listResourcesPaginated`/`listItems` fix.
+- `DatasetClient::iterate_items` advances its offset by the `x-apify-pagination-count` response
+  header (falling back to the returned item count) instead of the returned item count alone, so a
+  `skip_empty`/`clean`/`skip_hidden` filter or `unwind` no longer causes rows to be re-scanned or
+  skipped between pages.
+- `RunClient::wait_for_finish`/`BuildClient::wait_for_finish` no longer poll a run/build ID that
+  keeps answering `404` forever when `wait_secs` is `None`: past a 3-second grace period (reset by
+  any successful fetch), the `404` is surfaced as an error instead. Matches the reference client's
+  `DEFAULT_WAIT_WHEN_JOB_NOT_EXIST` fix for `waitForFinish()`.
+
+### Changed
+- Bumped `API_SPEC_VERSION` to `v2-2026-10-08T073338Z`.
+- Bumped crate version to `0.12.0`.
+
 ## [0.11.0] - 2026-10-02
 
 ### Added

@@ -21,6 +21,13 @@ const WAIT_FOR_FINISH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// The `waitForFinish` value (in seconds) sent on each poll; the API caps server-side
 /// waiting at 60 seconds, so we poll in chunks of this size.
 const WAIT_FOR_FINISH_REQUEST_SECS: i64 = 60;
+/// How long a run/build may keep answering `404` before [`wait_for_finish`] gives up and returns
+/// a not-found error, instead of polling forever. A brand-new run/build can briefly 404 while the
+/// write that created it has not yet reached the replica a poll happens to land on; a success
+/// within this window resets it. Matches the reference clients' `DEFAULT_WAIT_WHEN_JOB_NOT_EXIST`.
+/// Without this bound, a run/build ID that was simply never valid (e.g. a typo, or the resource
+/// was deleted) would poll indefinitely when `wait_secs` is `None`.
+const NOT_FOUND_GRACE_PERIOD: Duration = Duration::from_secs(3);
 
 /// Default per-request timeout used when an endpoint does not specify its own (6 minutes).
 /// This is the single source of truth for the base request timeout; clients that issue raw
@@ -427,8 +434,11 @@ where
     T: DeserializeOwned,
     F: Fn(&T) -> bool,
 {
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let budget = wait_secs.map(|s| Duration::from_secs(s.max(0) as u64));
+    // When the fetch below starts hitting `404`, the instant the *first* one was seen; reset on
+    // any successful fetch. `None` means the resource has not 404'd (yet).
+    let mut not_found_since: Option<tokio::time::Instant> = None;
 
     loop {
         let remaining_request_secs = match budget {
@@ -449,20 +459,101 @@ where
         let mut params = QueryParams::new();
         params.add_int("waitForFinish", Some(remaining_request_secs));
 
-        let resource: Option<T> = get_resource(ctx, None, &params).await?;
-        if let Some(resource) = resource {
-            if is_terminal(&resource) {
-                return Ok(resource);
-            }
-            // Not finished yet. If we have no budget left, return what we have.
-            if let Some(budget) = budget {
-                if start.elapsed() >= budget {
+        match get_resource_required::<T>(ctx, None, &params).await {
+            Ok(resource) => {
+                not_found_since = None;
+                if is_terminal(&resource) {
                     return Ok(resource);
+                }
+                // Not finished yet. If we have no budget left, return what we have.
+                if let Some(budget) = budget {
+                    if start.elapsed() >= budget {
+                        return Ok(resource);
+                    }
+                }
+            }
+            Err(err) => {
+                let is_not_found = err.as_api_error().is_some_and(|e| e.status_code == 404);
+                if !is_not_found {
+                    return Err(err);
+                }
+                // A run/build that keeps 404ing past the grace period was never going to appear
+                // (bad ID, or it was deleted); without this, `wait_secs: None` would poll it
+                // forever instead of surfacing the not-found error.
+                let now = tokio::time::Instant::now();
+                let first_seen = *not_found_since.get_or_insert(now);
+                if now.duration_since(first_seen) >= NOT_FOUND_GRACE_PERIOD {
+                    return Err(err);
                 }
             }
         }
 
         // Brief pause to let replicas catch up, then poll again.
         crate::http_client::sleep_public(WAIT_FOR_FINISH_POLL_INTERVAL).await;
+    }
+}
+
+/// Cooldown between retries of a run start the API rejected for lack of resources, matching the
+/// reference clients.
+const WAIT_FOR_RESOURCES_COOLDOWN: Duration = Duration::from_secs(10);
+/// `ApiError::error_type` values the API rejects a run start with while the account has no free
+/// memory or concurrent-run slot for it. Both clear as other runs/builds finish.
+const RESOURCE_LIMIT_ERROR_TYPES: [&str; 2] = [
+    "actor-memory-limit-exceeded",
+    "concurrent-runs-limit-exceeded",
+];
+
+/// Retries `attempt` while it fails with a resource-limit [`ApiError`](crate::ApiError), per
+/// `wait_for_resources` (see [`WaitForResources`](crate::clients::actor::WaitForResources)).
+/// `None` makes exactly one attempt. Any other error is returned immediately, unretried. Shared
+/// by [`ActorClient::start`](crate::clients::actor::ActorClient::start) and
+/// [`TaskClient::start`](crate::clients::task::TaskClient::start), whose run-start options and
+/// retry behavior are otherwise identical (the don't-repeat-yourself goal of this module).
+pub(crate) async fn retry_while_resource_limited<F, Fut, T>(
+    wait_for_resources: Option<crate::clients::actor::WaitForResources>,
+    mut attempt: F,
+) -> ApifyClientResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ApifyClientResult<T>>,
+{
+    use crate::clients::actor::WaitForResources;
+
+    let Some(wait) = wait_for_resources else {
+        return attempt().await;
+    };
+    let deadline = match wait {
+        WaitForResources::Forever => None,
+        WaitForResources::ForSecs(secs) => {
+            Some(tokio::time::Instant::now() + Duration::from_secs_f64(secs.max(0.0)))
+        }
+    };
+
+    loop {
+        let err = match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(err) => err,
+        };
+        let is_resource_limited = err.as_api_error().is_some_and(|api_err| {
+            api_err
+                .error_type
+                .as_deref()
+                .is_some_and(|t| RESOURCE_LIMIT_ERROR_TYPES.contains(&t))
+        });
+        if !is_resource_limited {
+            return Err(err);
+        }
+
+        let cooldown = match deadline {
+            Some(deadline) => {
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    return Err(err);
+                }
+                WAIT_FOR_RESOURCES_COOLDOWN.min(deadline - now)
+            }
+            None => WAIT_FOR_RESOURCES_COOLDOWN,
+        };
+        crate::http_client::sleep_public(cooldown).await;
     }
 }

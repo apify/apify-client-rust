@@ -217,7 +217,10 @@ demand as you consume items. Every collection client provides it (`actors`, `bui
 exposes `iterate_items()` for dataset items, and `KeyValueStoreClient` exposes `iterate_keys()`
 for store keys (cursor-based). The options' `limit` caps the total number of items yielded (unset
 iterates everything); to control the per-request page size, call `.with_chunk_size(n)` on the
-returned iterator (offset-paginated iterators only).
+returned iterator (offset-paginated iterators only). An offset-paginated iterator ignores the
+`total` a page reports and keeps requesting pages until one scans no rows, so a listing that grows
+while being iterated (e.g. a dataset a still-running Actor keeps pushing to) is read to the end
+rather than cut off at the size it had when the loop started.
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions};
