@@ -222,6 +222,19 @@ pub struct PaginationList<T> {
     /// The items of this page.
     #[serde(default = "Vec::new")]
     pub items: Vec<T>,
+    /// Number of underlying rows the endpoint scanned to produce this page, when that can
+    /// differ from `items.len()`. Currently only [`DatasetClient::list_items`]
+    /// (`x-apify-pagination-count` header) sets this: a `clean`/`skip_empty`/`skip_hidden`
+    /// filter can scan more rows than it returns, and `unwind` can return more items than rows
+    /// scanned. [`ListIterator`] uses it (capped at the requested page size) instead of
+    /// `items.len()` to advance the offset and decide when a listing is exhausted, so paging
+    /// neither re-scans nor skips rows. `None` for every other endpoint, where the two always
+    /// agree.
+    ///
+    /// [`DatasetClient::list_items`]: crate::clients::dataset::DatasetClient::list_items
+    /// [`ListIterator`]: crate::clients::pagination::ListIterator
+    #[serde(skip)]
+    pub(crate) scanned: Option<i64>,
 }
 
 /// Reports whether the environment variable `name` is set to a non-empty value.
