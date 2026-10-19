@@ -410,9 +410,7 @@ pub(crate) async fn put_raw_with_content_encoding(
 /// request gets. On a non-success status it reads the body and maps it through
 /// [`crate::http_client::build_api_error`], so a failed stream (e.g. a 404) carries the same
 /// structured [`crate::error::ApiError`] as every buffered endpoint, rather than a generic
-/// transport error. Shared by [`LogClient::stream_with_options`](crate::clients::log::LogClient::stream_with_options)
-/// and [`DatasetClient::download_items_stream`](crate::clients::dataset::DatasetClient::download_items_stream),
-/// which both need a live, unbuffered connection (the DRY principle).
+/// transport error.
 pub(crate) async fn get_byte_stream(
     ctx: &ResourceContext,
     url: String,
@@ -424,9 +422,16 @@ pub(crate) async fn get_byte_stream(
         builder = builder.header("Authorization", format!("Bearer {token}"));
     }
 
-    let response = builder
-        .send()
+    // Bounds only the wait for the response to *start* (status/headers), matching the
+    // reference client's documented `stream` semantics; once a response arrives, reading the
+    // body through `bytes_stream()` below is unbounded here (as the reference's "it only limits
+    // inactivity" note implies a separate, finer-grained timeout this crate does not yet have).
+    // Without this, a connection that never gets a response (a dead route, a server that accepts
+    // but never answers) would hang forever instead of surfacing a timeout like every buffered
+    // endpoint does.
+    let response = tokio::time::timeout(DEFAULT_REQUEST_TIMEOUT, builder.send())
         .await
+        .map_err(|_| crate::error::ApifyClientError::Timeout)?
         .map_err(crate::error::ApifyClientError::from)?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
