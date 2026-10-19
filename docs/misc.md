@@ -140,6 +140,8 @@ Also reachable via `run.log()` and `build.log()`.
 |---|---|---|---|
 | `get()` | — | `Option<String>` | The entire log as text. |
 | `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
+| `get_bytes()` | — | `Option<Vec<u8>>` | The entire log as raw bytes (e.g. if it is not valid UTF-8). |
+| `get_bytes_with_options(options)` | `LogOptions` | `Option<Vec<u8>>` | As `get_bytes()`, with options (e.g. `raw`). |
 | `stream()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Streams log chunks live (log redirection). |
 | `stream_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
 

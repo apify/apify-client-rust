@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-10-19
+
+### Added
+- `KeyValueStoreClient::set_record_raw_with_content_encoding`: stores an already-compressed
+  value and sends the given `Content-Encoding` header instead of compressing the bytes again,
+  matching the reference client's new `setRecord({ contentEncoding })`.
+- `LogClient::get_bytes`/`get_bytes_with_options`: fetch a log as raw bytes instead of a
+  (lossily-decoded) `String`, matching the reference client's new `log.get({ buffer: true })`.
+- `DatasetClient::download_items_stream`: like `download_items`, but streams the export instead
+  of buffering it in memory, matching the reference client's new `downloadItems({ stream: true })`.
+
 ## [0.12.0] - 2026-10-09
 
 ### Added

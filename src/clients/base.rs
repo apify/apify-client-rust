@@ -369,9 +369,27 @@ pub(crate) async fn put_raw(
     body: Vec<u8>,
     content_type: &str,
 ) -> ApifyClientResult<()> {
+    put_raw_with_content_encoding(ctx, sub_path, params, body, content_type, None).await
+}
+
+/// Like [`put_raw`], but can also set a `Content-Encoding` header (used for KVS record uploads
+/// of an already-compressed value). Setting it makes [`HttpClient::call`]'s automatic request
+/// compression skip the body (it already refuses to double-encode a request that carries a
+/// `Content-Encoding`), so the bytes reach the API exactly as given.
+pub(crate) async fn put_raw_with_content_encoding(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Vec<u8>,
+    content_type: &str,
+    content_encoding: Option<&str>,
+) -> ApifyClientResult<()> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let mut headers = std::collections::HashMap::new();
     headers.insert("Content-Type".to_string(), content_type.to_string());
+    if let Some(encoding) = content_encoding {
+        headers.insert("Content-Encoding".to_string(), encoding.to_string());
+    }
     ctx.http
         .call(HttpRequest {
             method: HttpMethod::Put,
@@ -382,6 +400,66 @@ pub(crate) async fn put_raw(
         })
         .await?;
     Ok(())
+}
+
+/// Opens a raw streaming `GET` connection to `url` (already fully built, including query
+/// string), bypassing the buffered backend. A buffered [`HttpClient::call`] fully reads a
+/// response into memory before returning it, which defeats a caller that wants to process a
+/// large body (a log or a dataset export) in constant memory as it arrives — so this talks to
+/// `reqwest` directly instead, applying the same bearer auth and `User-Agent` every other
+/// request gets. On a non-success status it reads the body and maps it through
+/// [`crate::http_client::build_api_error`], so a failed stream (e.g. a 404) carries the same
+/// structured [`crate::error::ApiError`] as every buffered endpoint, rather than a generic
+/// transport error. Shared by [`LogClient::stream_with_options`](crate::clients::log::LogClient::stream_with_options)
+/// and [`DatasetClient::download_items_stream`](crate::clients::dataset::DatasetClient::download_items_stream),
+/// which both need a live, unbuffered connection (the DRY principle).
+pub(crate) async fn get_byte_stream(
+    ctx: &ResourceContext,
+    url: String,
+) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    let (token, user_agent) = ctx.http.stream_credentials();
+    let client = reqwest::Client::new();
+    let mut builder = client.get(&url).header("User-Agent", &user_agent);
+    if let Some(token) = &token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = builder
+        .send()
+        .await
+        .map_err(crate::error::ApifyClientError::from)?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        // The error body arrives as a stream here too (this request never goes through the
+        // buffered backend path). Read it so the failure carries the same structured
+        // `ApiError` (type/message/data) as every other endpoint, rather than losing the body
+        // to a generic transport error. A body that fails to read (e.g. the connection drops
+        // mid-response) still surfaces the status code, just without a parsed message.
+        let body = response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
+        let http_response = crate::http_client::HttpResponse {
+            status,
+            headers: Default::default(),
+            body,
+        };
+        let api_error = crate::http_client::build_api_error(
+            &http_response,
+            1,
+            "GET",
+            &crate::http_client::extract_path(&url),
+        );
+        return Err(crate::error::ApifyClientError::from(api_error));
+    }
+
+    let byte_stream = response.bytes_stream();
+    Ok(futures_util::StreamExt::map(byte_stream, |chunk| {
+        chunk
+            .map(|b| b.to_vec())
+            .map_err(crate::error::ApifyClientError::from)
+    }))
 }
 
 /// A `POST` with a raw body that returns an enveloped resource. Used by `actor.start`

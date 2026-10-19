@@ -593,6 +593,40 @@ async fn already_compressed_content_type_is_not_compressed() {
     );
 }
 
+/// `set_record_raw_with_content_encoding` sends the caller's `Content-Encoding` verbatim and
+/// does not compress the body a second time, even above the auto-compression size threshold:
+/// `maybe_compress_request` skips any body that already carries a `Content-Encoding` header.
+#[tokio::test]
+async fn set_record_with_content_encoding_is_not_compressed_again() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(201, b"{}".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    // Pretend this is already-gzipped data; it does not need to actually be valid gzip for this
+    // test, which only checks that the client leaves it untouched and sets the right header.
+    let pre_compressed = [0x1fu8, 0x8b, 0x08, 0x00].repeat(512); // well over the 1024-byte threshold
+    client
+        .key_value_store("me~store")
+        .set_record_raw_with_content_encoding(
+            "key",
+            pre_compressed.clone(),
+            "application/octet-stream",
+            "gzip",
+        )
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("gzip"),
+        "the caller's Content-Encoding must be forwarded verbatim"
+    );
+    assert_eq!(
+        backend.last_body().expect("a body was sent"),
+        pre_compressed,
+        "a pre-compressed body must be sent byte-for-byte, not compressed again"
+    );
+}
+
 /// `image/bmp` sits under the already-compressed `image/` prefix but is itself raw, uncompressed
 /// data, so it is still compressed. Exercises the exact-media-type exception list.
 #[tokio::test]

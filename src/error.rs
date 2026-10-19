@@ -110,6 +110,14 @@ impl ApiError {
 }
 
 /// The top-level error type for all client operations.
+///
+/// The reference client added a common `ApifyClientError` base class that `ApifyApiError` and
+/// its status subclasses, `InvalidResponseBodyError` and `ResponseValidationError` extend — but
+/// deliberately *not* argument-validation, network, timeout or abort errors — so one
+/// `instanceof` check catches only the response-related ones. Rust has no exception hierarchy to
+/// mirror that with, and this single enum already is the idiomatic equivalent: every operation
+/// returns `Result<T, ApifyClientError>`, so one `match`/`if let` already catches everything,
+/// response-related or not, with no separate marker type needed.
 #[derive(Debug, thiserror::Error)]
 pub enum ApifyClientError {
     /// The API returned a non-success status code with a structured error body.
