@@ -704,7 +704,7 @@ fn gzip_compress(data: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the path + query portion of a URL, for error reporting.
-pub(crate) fn extract_path(url: &str) -> Option<String> {
+fn extract_path(url: &str) -> Option<String> {
     // Find the start of the path after the scheme+host.
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     after_scheme
@@ -726,7 +726,7 @@ fn is_error_retryable(err: &ApifyClientError) -> bool {
 }
 
 /// Parses the API error body (if present) into an [`ApiError`].
-pub(crate) fn build_api_error(
+fn build_api_error(
     response: &HttpResponse,
     attempt: u32,
     method: &str,
