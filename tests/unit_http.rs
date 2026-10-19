@@ -13,6 +13,7 @@ use apify_client::{
     WaitForResources,
 };
 use async_trait::async_trait;
+use futures_util::StreamExt;
 
 /// A scripted backend that returns a queued sequence of responses and counts calls.
 #[derive(Debug)]
@@ -432,6 +433,67 @@ async fn log_get_sends_raw_query_param() {
         !url.contains("raw="),
         "default log get must not send a raw param, got {url}"
     );
+}
+
+/// `log().stream()` goes through the configured `HttpBackend` — including a fully custom one,
+/// not just `ReqwestBackend` — and applies the same auth/user-agent headers as a buffered call.
+/// `MockBackend` does not override `send_streaming`, so this also exercises
+/// `HttpBackend::send_streaming`'s default (buffer-via-`send`-and-yield-one-chunk) fallback.
+#[tokio::test]
+async fn log_stream_goes_through_the_configured_backend() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"some log output".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut stream = client
+        .run("some-run-id")
+        .log()
+        .stream()
+        .await
+        .expect("stream should open");
+    let mut collected = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        collected.extend(chunk.expect("chunk"));
+    }
+
+    assert_eq!(
+        collected, b"some log output",
+        "the mock backend's response must reach the stream consumer"
+    );
+    assert_eq!(
+        backend.last_header("Authorization").as_deref(),
+        Some("Bearer test-token"),
+        "a streaming request must carry the same bearer auth as a buffered one"
+    );
+    assert!(
+        backend.last_header("User-Agent").is_some(),
+        "a streaming request must carry the User-Agent header"
+    );
+}
+
+/// A failed `log().stream()` through a custom `HttpBackend` (not just `ReqwestBackend`) still
+/// surfaces the same structured `ApiError` a buffered call would, built from the mock's 404
+/// response — proving the error path also goes through the configured backend.
+#[tokio::test]
+async fn log_stream_through_mock_backend_surfaces_structured_error() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        404,
+        br#"{"error":{"type":"record-not-found","message":"Run was not found"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let err = client
+        .run("missing-run-id")
+        .log()
+        .stream()
+        .await
+        .map(|_| ())
+        .expect_err("streaming a 404 should fail");
+
+    let api_error = err
+        .as_api_error()
+        .expect("error should be a structured ApiError");
+    assert_eq!(api_error.status_code, 404);
+    assert_eq!(api_error.error_type.as_deref(), Some("record-not-found"));
 }
 
 /// A request body at or above the 1024-byte threshold is brotli-compressed: the backend sees a

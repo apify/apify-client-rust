@@ -402,69 +402,26 @@ pub(crate) async fn put_raw_with_content_encoding(
     Ok(())
 }
 
-/// Opens a raw streaming `GET` connection to `url` (already fully built, including query
-/// string), bypassing the buffered backend. A buffered [`HttpClient::call`] fully reads a
-/// response into memory before returning it, which defeats a caller that wants to process a
-/// large body (a log or a dataset export) in constant memory as it arrives — so this talks to
-/// `reqwest` directly instead, applying the same bearer auth and `User-Agent` every other
-/// request gets. On a non-success status it reads the body and maps it through
-/// [`crate::http_client::build_api_error`], so a failed stream (e.g. a 404) carries the same
-/// structured [`crate::error::ApiError`] as every buffered endpoint, rather than a generic
-/// transport error.
+/// Opens a streaming `GET` connection to `url` (already fully built, including query string),
+/// for a caller that wants to process a large body (a log or a dataset export) incrementally
+/// instead of waiting for [`HttpClient::call`] to buffer the whole response. Delegates to
+/// [`HttpClient::call_streaming`], which — unlike a one-off raw `reqwest` call — goes through
+/// the configured [`HttpBackend`](crate::http_client::HttpBackend), so a custom backend (or a
+/// `ReqwestBackend` wrapping a caller-provided, proxy/TLS-configured `reqwest::Client`) is
+/// honoured for streaming requests exactly as it is for buffered ones.
 pub(crate) async fn get_byte_stream(
     ctx: &ResourceContext,
     url: String,
 ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-    let (token, user_agent) = ctx.http.stream_credentials();
-    let client = reqwest::Client::new();
-    let mut builder = client.get(&url).header("User-Agent", &user_agent);
-    if let Some(token) = &token {
-        builder = builder.header("Authorization", format!("Bearer {token}"));
-    }
-
-    // Bounds only the wait for the response to *start* (status/headers), matching the
-    // reference client's documented `stream` semantics; once a response arrives, reading the
-    // body through `bytes_stream()` below is unbounded here (as the reference's "it only limits
-    // inactivity" note implies a separate, finer-grained timeout this crate does not yet have).
-    // Without this, a connection that never gets a response (a dead route, a server that accepts
-    // but never answers) would hang forever instead of surfacing a timeout like every buffered
-    // endpoint does.
-    let response = tokio::time::timeout(DEFAULT_REQUEST_TIMEOUT, builder.send())
-        .await
-        .map_err(|_| crate::error::ApifyClientError::Timeout)?
-        .map_err(crate::error::ApifyClientError::from)?;
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        // The error body arrives as a stream here too (this request never goes through the
-        // buffered backend path). Read it so the failure carries the same structured
-        // `ApiError` (type/message/data) as every other endpoint, rather than losing the body
-        // to a generic transport error. A body that fails to read (e.g. the connection drops
-        // mid-response) still surfaces the status code, just without a parsed message.
-        let body = response
-            .bytes()
-            .await
-            .map(|b| b.to_vec())
-            .unwrap_or_default();
-        let http_response = crate::http_client::HttpResponse {
-            status,
+    ctx.http
+        .call_streaming(HttpRequest {
+            method: HttpMethod::Get,
+            url,
             headers: Default::default(),
-            body,
-        };
-        let api_error = crate::http_client::build_api_error(
-            &http_response,
-            1,
-            "GET",
-            &crate::http_client::extract_path(&url),
-        );
-        return Err(crate::error::ApifyClientError::from(api_error));
-    }
-
-    let byte_stream = response.bytes_stream();
-    Ok(futures_util::StreamExt::map(byte_stream, |chunk| {
-        chunk
-            .map(|b| b.to_vec())
-            .map_err(crate::error::ApifyClientError::from)
-    }))
+            body: None,
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+        })
+        .await
 }
 
 /// A `POST` with a raw body that returns an enveloped resource. Used by `actor.start`

@@ -14,6 +14,18 @@ to [Semantic Versioning](https://semver.org/).
   (lossily-decoded) `String`, matching the reference client's new `log.get({ buffer: true })`.
 - `DatasetClient::download_items_stream`: like `download_items`, but streams the export instead
   of buffering it in memory, matching the reference client's new `downloadItems({ stream: true })`.
+- `HttpBackend::send_streaming`: a new trait method (with a buffering default implementation, so
+  existing custom backends keep compiling) that lets a streaming request go through the
+  configured backend. `ReqwestBackend` overrides it for real constant-memory streaming.
+
+### Fixed
+- `log().stream()`/`stream_with_options()` (and the new `download_items_stream`) now go through
+  the client's configured `HttpBackend` — including a fully custom one, or a `ReqwestBackend`
+  wrapping a caller-provided `reqwest::Client` — instead of always opening a fresh, unconfigured
+  connection that silently ignored any injected backend's proxy/TLS/connection-pool setup.
+- A streaming request that never receives a response now times out instead of hanging forever;
+  once a response starts, silence between chunks (not the stream's total duration) is what times
+  it out, so a long-but-active stream (e.g. live log redirection) is never cut off.
 
 ## [0.12.0] - 2026-10-09
 

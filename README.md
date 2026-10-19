@@ -293,7 +293,10 @@ The transport is a replaceable component: any type implementing `http_client::Ht
 injected with `ApifyClientBuilder::http_backend`. The most common customization is to reuse the
 built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom proxy, TLS, connection
 pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
-`HttpBackend` (a single `async fn send`) on your own type instead. The snippet below constructs a
+`HttpBackend` on your own type instead — just `async fn send`; `send_streaming` (used by
+`log().stream()` and `download_items_stream()`) has a default implementation that buffers the
+whole response via `send`, so it is optional unless you want true incremental streaming. The
+snippet below constructs a
 `reqwest::Client` directly, so it requires adding `reqwest = "0.12"` (matching this crate's
 `reqwest` version) as your own dependency — see [Installation](#installation):
 
