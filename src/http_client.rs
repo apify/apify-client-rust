@@ -504,7 +504,16 @@ impl HttpClient {
 
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
-        let budget = self.retry.timeout;
+        // The caller-supplied `request.timeout` (the same per-endpoint base every buffered call
+        // uses — e.g. `DEFAULT_REQUEST_TIMEOUT`, the reference clients' "long" tier) is reused
+        // here as both the response-start wait and the per-chunk inactivity window. This
+        // matches the reference clients, which apply one configured `timeoutSecs` to a streaming
+        // request the same way ("it only limits inactivity" is the *same* duration as the
+        // non-streaming timeout, not a separate, larger one) — including the tradeoff that a
+        // stream legitimately silent for the whole window (e.g. a long-running Actor logging
+        // nothing for `DEFAULT_REQUEST_TIMEOUT`) times out; the reference's escape hatch for that
+        // is an explicit `'noTimeout'` request option, which this crate does not yet expose.
+        let budget = request.timeout;
 
         let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
             .await
@@ -534,17 +543,32 @@ impl HttpClient {
 /// the stream opening), erroring with [`ApifyClientError::Timeout`] otherwise — an inactivity
 /// timeout, not a cap on the stream's total duration. Shared by
 /// [`HttpClient::call_streaming`]'s success and error-body-reading paths.
+///
+/// A timeout yields exactly one `Err(Timeout)` and then ends the stream (further polls return
+/// `None`), rather than retrying the same read forever: the underlying body is dropped once it
+/// has stalled, so a caller that logs the error and keeps draining (instead of stopping on the
+/// first `Err`, as `?`-style consumption does) still sees the stream terminate.
 fn with_inactivity_timeout(
     body: std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
     timeout: Duration,
 ) -> std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>> {
+    enum State {
+        Active(
+            std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
+        ),
+        Stalled,
+    }
+
     Box::pin(futures_util::stream::unfold(
-        body,
-        move |mut body| async move {
+        State::Active(body),
+        move |state| async move {
+            let State::Active(mut body) = state else {
+                return None;
+            };
             match tokio::time::timeout(timeout, futures_util::StreamExt::next(&mut body)).await {
-                Ok(Some(item)) => Some((item, body)),
+                Ok(Some(item)) => Some((item, State::Active(body))),
                 Ok(None) => None,
-                Err(_) => Some((Err(ApifyClientError::Timeout), body)),
+                Err(_) => Some((Err(ApifyClientError::Timeout), State::Stalled)),
             }
         },
     ))
@@ -795,4 +819,52 @@ pub(crate) async fn sleep_public(duration: Duration) {
 /// Sleeps for the given duration using the Tokio timer (the runtime `reqwest` requires).
 async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    /// After one inactivity timeout, [`with_inactivity_timeout`] must end the stream rather than
+    /// retrying the stalled read forever: a chunk that would only arrive after the stall must
+    /// never be yielded, and a third poll past the timeout error must return `None`.
+    #[tokio::test(start_paused = true)]
+    async fn with_inactivity_timeout_ends_after_one_stall() {
+        let timeout = Duration::from_millis(10);
+        let body: std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>,
+        > = Box::pin(futures_util::stream::unfold(0u8, move |n| async move {
+            match n {
+                0 => Some((Ok(b"chunk".to_vec()), 1)),
+                // Stall well past the inactivity timeout before the stream would otherwise
+                // continue, simulating a connection that goes quiet.
+                1 => {
+                    tokio::time::sleep(timeout * 10).await;
+                    Some((Ok(b"should never be seen".to_vec()), 2))
+                }
+                _ => None,
+            }
+        }));
+
+        let mut timed = with_inactivity_timeout(body, timeout);
+
+        let first = timed.next().await;
+        assert!(
+            matches!(&first, Some(Ok(b)) if b == b"chunk"),
+            "expected the first chunk, got {first:?}"
+        );
+
+        let second = timed.next().await;
+        assert!(
+            matches!(second, Some(Err(ApifyClientError::Timeout))),
+            "expected a timeout error after the stall, got {second:?}"
+        );
+
+        let third = timed.next().await;
+        assert!(
+            third.is_none(),
+            "the stream must end after the inactivity timeout instead of retrying forever, got {third:?}"
+        );
+    }
 }
