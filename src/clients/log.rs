@@ -87,8 +87,10 @@ impl LogClient {
     /// Opens a streaming connection to the log, yielding chunks of bytes as they arrive.
     ///
     /// This powers real-time log redirection: callers can forward each chunk to their own
-    /// logger/stdout while a run is still in progress. The stream completes when the log
-    /// ends (i.e. the run finishes).
+    /// logger/stdout while a run is still in progress. The stream completes when the log ends
+    /// (i.e. the run finishes) — as long as a new chunk arrives at least every 6 minutes; a run
+    /// that legitimately logs nothing for that long errors with
+    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) instead.
     ///
     /// Uses the default (processed) log format. To stream the raw log, use
     /// [`LogClient::stream_with_options`].

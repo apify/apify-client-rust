@@ -506,10 +506,12 @@ impl HttpClient {
         let path = extract_path(&request.url);
         // The caller-supplied `request.timeout` (the same per-endpoint base every buffered call
         // uses — e.g. `DEFAULT_REQUEST_TIMEOUT`, the reference clients' "long" tier) is reused
-        // here as both the response-start wait and the per-chunk inactivity window. This
-        // matches the reference clients, which apply one configured `timeoutSecs` to a streaming
-        // request the same way ("it only limits inactivity" is the *same* duration as the
-        // non-streaming timeout, not a separate, larger one) — including the tradeoff that a
+        // here as both the response-start wait and the per-chunk inactivity window: one
+        // configured duration, not a separate, larger one for inactivity. The JS reference client
+        // documents the same single-duration behavior ("it only limits inactivity"), though it
+        // gets there differently — via its HTTP library's socket-level idle timeout, not an
+        // explicit per-chunk reset like `with_inactivity_timeout` below — so this is a
+        // same-outcome, not same-mechanism, match. It carries the same tradeoff either way: a
         // stream legitimately silent for the whole window (e.g. a long-running Actor logging
         // nothing for `DEFAULT_REQUEST_TIMEOUT`) times out; the reference's escape hatch for that
         // is an explicit `'noTimeout'` request option, which this crate does not yet expose.

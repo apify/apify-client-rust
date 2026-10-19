@@ -166,7 +166,10 @@ if let Some(text) = raw_log {
 ```
 
 The streaming variant takes the same options — `client.run(run_id).log().stream_with_options(LogOptions { raw: Some(true) }).await?`
-yields the raw log chunks (this is what log redirection uses).
+yields the raw log chunks (this is what log redirection uses). A gap of more than 6 minutes
+between chunks (the run legitimately logging nothing for that long) ends the stream with an
+`ApifyClientError::Timeout`; this is an inactivity timeout, not a cap on the stream's total
+duration, so an actively (if slowly) logging run is never cut off.
 
 Consuming `stream()` requires the `futures_util::StreamExt` trait (from the `futures-util`
 crate) in scope to call `.next()` on the returned stream. Add it to your `Cargo.toml`:

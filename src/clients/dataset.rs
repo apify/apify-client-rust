@@ -316,7 +316,11 @@ impl DatasetClient {
     /// instead of buffering the whole response in memory.
     ///
     /// Returns a `Stream` of byte chunks; drive it with `futures_util::StreamExt::next()` (or
-    /// pipe it through an `AsyncRead` adapter) to process a large export in constant memory.
+    /// pipe it through an `AsyncRead` adapter) to process a large export in constant memory. A
+    /// gap of more than 6 minutes between chunks ends the stream with
+    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) — an inactivity
+    /// timeout, not a cap on the export's total duration.
+    ///
     /// Goes through the configured `HttpBackend`'s streaming path instead of the buffered one,
     /// to keep the connection open — like [`crate::clients::log::LogClient::stream`], a failed
     /// request (e.g. a `404`) still surfaces the same structured [`crate::error::ApiError`] as
