@@ -6,9 +6,9 @@
 
 use futures_util::Stream;
 
-use crate::clients::base::{get_raw, ResourceContext};
+use crate::clients::base::{get_byte_stream, get_raw, ResourceContext};
 use crate::common::QueryParams;
-use crate::error::{ApifyClientError, ApifyClientResult};
+use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 
 /// Options for retrieving or streaming a log ([`LogClient::get_with_options`] /
@@ -28,42 +28,27 @@ pub struct LogOptions {
 #[derive(Debug, Clone)]
 pub struct LogClient {
     ctx: ResourceContext,
-    /// The URL used for streaming; we keep it so streaming can bypass the buffered path.
-    stream_url: String,
-    token: Option<String>,
-    user_agent: String,
 }
 
 impl LogClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
-        let ctx = ResourceContext::single(http, base_url, resource_path, id);
-        let stream_url = ctx.url(None);
-        let (token, user_agent) = ctx.http.stream_credentials();
         Self {
-            ctx,
-            stream_url,
-            token,
-            user_agent,
+            ctx: ResourceContext::single(http, base_url, resource_path, id),
         }
     }
 
     /// Creates a log client nested under a run or build (path `.../log`).
     pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
-        let ctx = ResourceContext::collection(http, base_url, sub_path);
-        let stream_url = ctx.url(None);
-        let (token, user_agent) = ctx.http.stream_credentials();
         Self {
-            ctx,
-            stream_url,
-            token,
-            user_agent,
+            ctx: ResourceContext::collection(http, base_url, sub_path),
         }
     }
 
     /// Fetches the entire log as a string, or `None` if it does not exist.
     ///
     /// Uses the default (processed) log format. To request the raw log, use
-    /// [`LogClient::get_with_options`].
+    /// [`LogClient::get_with_options`]. To get the log as raw bytes instead of a `String`
+    /// (e.g. if it is not valid UTF-8), use [`LogClient::get_bytes`].
     pub async fn get(&self) -> ApifyClientResult<Option<String>> {
         self.get_with_options(LogOptions::default()).await
     }
@@ -71,17 +56,41 @@ impl LogClient {
     /// Fetches the entire log as a string, or `None` if it does not exist, applying the given
     /// [`LogOptions`] (e.g. [`LogOptions::raw`]).
     pub async fn get_with_options(&self, options: LogOptions) -> ApifyClientResult<Option<String>> {
+        Ok(self
+            .get_bytes_with_options(options)
+            .await?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// Fetches the entire log as raw bytes, or `None` if it does not exist.
+    ///
+    /// The counterpart of [`LogClient::get`] for a log that is not valid UTF-8, or when the
+    /// caller wants to avoid the lossy-UTF-8 conversion `get()` applies. Uses the default
+    /// (processed) log format; see [`LogClient::get_bytes_with_options`] for the raw format.
+    pub async fn get_bytes(&self) -> ApifyClientResult<Option<Vec<u8>>> {
+        self.get_bytes_with_options(LogOptions::default()).await
+    }
+
+    /// Fetches the entire log as raw bytes, or `None` if it does not exist, applying the given
+    /// [`LogOptions`] (e.g. [`LogOptions::raw`]). The byte-returning counterpart of
+    /// [`LogClient::get_with_options`].
+    pub async fn get_bytes_with_options(
+        &self,
+        options: LogOptions,
+    ) -> ApifyClientResult<Option<Vec<u8>>> {
         let mut params = QueryParams::new();
         params.add_bool("raw", options.raw);
         let response = get_raw(&self.ctx, None, &params).await?;
-        Ok(response.map(|r| String::from_utf8_lossy(&r.body).into_owned()))
+        Ok(response.map(|r| r.body))
     }
 
     /// Opens a streaming connection to the log, yielding chunks of bytes as they arrive.
     ///
     /// This powers real-time log redirection: callers can forward each chunk to their own
-    /// logger/stdout while a run is still in progress. The stream completes when the log
-    /// ends (i.e. the run finishes).
+    /// logger/stdout while a run is still in progress. The stream completes when the log ends
+    /// (i.e. the run finishes) — as long as a new chunk arrives at least every 6 minutes; a run
+    /// that legitimately logs nothing for that long errors with
+    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) instead.
     ///
     /// Uses the default (processed) log format. To stream the raw log, use
     /// [`LogClient::stream_with_options`].
@@ -101,49 +110,13 @@ impl LogClient {
         &self,
         options: LogOptions,
     ) -> ApifyClientResult<impl Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        // Streaming needs a live connection, so we go through reqwest directly rather than
-        // the buffered backend path. The retry policy does not apply to an open stream.
-        let client = reqwest::Client::new();
+        // Goes through `get_byte_stream` (the configured `HttpBackend`'s streaming path) instead
+        // of `HttpClient::call`, whose buffered backend fully reads a response before returning
+        // it. The retry policy does not apply to an open stream.
         let mut params = QueryParams::new();
         params.push_raw("stream".to_string(), "1".to_string());
         params.add_bool("raw", options.raw);
-        let url = params.apply_to_url(&self.stream_url);
-
-        let mut builder = client.get(&url).header("User-Agent", &self.user_agent);
-        if let Some(token) = &self.token {
-            builder = builder.header("Authorization", format!("Bearer {token}"));
-        }
-
-        let response = builder.send().await.map_err(ApifyClientError::from)?;
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            // The error body arrives as a stream here too (this request never goes through the
-            // buffered backend path). Read it so the failure carries the same structured
-            // `ApiError` (type/message/data) as every other endpoint, rather than losing the body
-            // to a generic transport error. A body that fails to read (e.g. the connection drops
-            // mid-response) still surfaces the status code, just without a parsed message.
-            let body = response
-                .bytes()
-                .await
-                .map(|b| b.to_vec())
-                .unwrap_or_default();
-            let http_response = crate::http_client::HttpResponse {
-                status,
-                headers: Default::default(),
-                body,
-            };
-            let api_error = crate::http_client::build_api_error(
-                &http_response,
-                1,
-                "GET",
-                &crate::http_client::extract_path(&url),
-            );
-            return Err(ApifyClientError::from(api_error));
-        }
-
-        let byte_stream = response.bytes_stream();
-        Ok(futures_util::StreamExt::map(byte_stream, |chunk| {
-            chunk.map(|b| b.to_vec()).map_err(ApifyClientError::from)
-        }))
+        let url = params.apply_to_url(&self.ctx.url(None));
+        get_byte_stream(&self.ctx, url).await
     }
 }

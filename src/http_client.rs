@@ -193,6 +193,18 @@ impl HttpResponse {
     }
 }
 
+/// A streaming counterpart of [`HttpResponse`]: the status and headers, available as soon as
+/// the response starts, and the body delivered incrementally instead of as one buffered `Vec<u8>`.
+pub struct StreamingHttpResponse {
+    /// HTTP status code.
+    pub status: u16,
+    /// Response headers.
+    pub headers: HashMap<String, String>,
+    /// The body, as a stream of chunks.
+    pub body:
+        std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
+}
+
 /// The replaceable transport contract.
 ///
 /// Implementors are responsible only for sending a single request and returning the
@@ -206,6 +218,38 @@ pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// [`ApifyClientError::Http`] or [`ApifyClientError::Timeout`]. A non-2xx HTTP
     /// status is *not* an error at this layer — return it as a normal [`HttpResponse`].
     async fn send(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse>;
+
+    /// Like [`send`](Self::send), but for a request whose body the caller wants to process
+    /// incrementally (a live log or a large export) instead of fully buffered.
+    ///
+    /// The default implementation just buffers the whole response via [`send`](Self::send) and
+    /// yields it as a single chunk: correct for a custom backend that does not override this
+    /// (streaming still works end-to-end, just without a memory-usage benefit), while the
+    /// default [`ReqwestBackend`] overrides it for real constant-memory streaming through
+    /// `reqwest`'s own chunked body reader.
+    async fn send_streaming(
+        &self,
+        request: HttpRequest,
+    ) -> ApifyClientResult<StreamingHttpResponse> {
+        let response = self.send(request).await?;
+        Ok(StreamingHttpResponse {
+            status: response.status,
+            headers: response.headers,
+            body: Box::pin(futures_util::stream::once(async move { Ok(response.body) })),
+        })
+    }
+}
+
+/// Maps this crate's [`HttpMethod`] to `reqwest`'s, shared by [`ReqwestBackend`]'s buffered and
+/// streaming sends.
+fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
+    match method {
+        HttpMethod::Get => reqwest::Method::GET,
+        HttpMethod::Post => reqwest::Method::POST,
+        HttpMethod::Put => reqwest::Method::PUT,
+        HttpMethod::Delete => reqwest::Method::DELETE,
+        HttpMethod::Head => reqwest::Method::HEAD,
+    }
 }
 
 /// The default [`HttpBackend`] implementation, backed by [`reqwest`].
@@ -239,13 +283,7 @@ impl Default for ReqwestBackend {
 #[async_trait]
 impl HttpBackend for ReqwestBackend {
     async fn send(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse> {
-        let method = match request.method {
-            HttpMethod::Get => reqwest::Method::GET,
-            HttpMethod::Post => reqwest::Method::POST,
-            HttpMethod::Put => reqwest::Method::PUT,
-            HttpMethod::Delete => reqwest::Method::DELETE,
-            HttpMethod::Head => reqwest::Method::HEAD,
-        };
+        let method = to_reqwest_method(request.method);
 
         let mut builder = self
             .client
@@ -271,6 +309,45 @@ impl HttpBackend for ReqwestBackend {
 
         let body = response.bytes().await?.to_vec();
         Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    async fn send_streaming(
+        &self,
+        request: HttpRequest,
+    ) -> ApifyClientResult<StreamingHttpResponse> {
+        let method = to_reqwest_method(request.method);
+
+        // Deliberately no `.timeout(request.timeout)` here: reqwest's per-request timeout bounds
+        // the *entire* request including reading the whole body (it wraps the body stream in a
+        // `TotalTimeoutBody`), which would cut off a long-but-active stream (e.g. live log
+        // redirection). `HttpClient::call_streaming` applies its own response-start and
+        // per-chunk-inactivity bounds instead, uniformly across backends.
+        let mut builder = self.client.request(method, &request.url);
+        for (key, value) in &request.headers {
+            builder = builder.header(key, value);
+        }
+        if let Some(body) = request.body {
+            builder = builder.body(body);
+        }
+
+        let response = builder.send().await?;
+        let status = response.status().as_u16();
+        let mut headers = HashMap::new();
+        for (name, value) in response.headers().iter() {
+            if let Ok(v) = value.to_str() {
+                headers.insert(name.as_str().to_string(), v.to_string());
+            }
+        }
+
+        let byte_stream = response.bytes_stream();
+        let body = Box::pin(futures_util::StreamExt::map(byte_stream, |chunk| {
+            chunk.map(|b| b.to_vec()).map_err(ApifyClientError::from)
+        }));
+        Ok(StreamingHttpResponse {
             status,
             headers,
             body,
@@ -399,11 +476,122 @@ impl HttpClient {
         &self.user_agent
     }
 
-    /// Returns the token and user-agent, for endpoints (like log streaming) that must
-    /// open a raw connection outside the buffered backend.
-    pub(crate) fn stream_credentials(&self) -> (Option<String>, String) {
-        (self.token.clone(), self.user_agent.clone())
+    /// Sends `request` through the configured [`HttpBackend`]'s [`HttpBackend::send_streaming`],
+    /// with authentication and the user-agent header applied like [`call`](Self::call), but with
+    /// no retries and no request compression: matches the reference clients, which do not retry
+    /// an open stream (a log redirection or a large export already in flight can't be safely
+    /// replayed from the start).
+    ///
+    /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
+    /// successful body below) and returns the same structured [`ApiError`] [`call`](Self::call)
+    /// would. On success, returns the body as a stream whose `.next()` must resolve within the
+    /// client's overall timeout budget each time — bounding silence (a stalled connection)
+    /// without capping the stream's total duration, so a long-but-active stream (e.g. live log
+    /// redirection) is never cut off. That same budget also bounds the initial wait for the
+    /// response to start, mirroring the reference clients' streaming `timeoutSecs`.
+    pub(crate) async fn call_streaming(
+        &self,
+        mut request: HttpRequest,
+    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        request
+            .headers
+            .insert("User-Agent".to_string(), self.user_agent.clone());
+        if let Some(token) = &self.token {
+            request
+                .headers
+                .insert("Authorization".to_string(), format!("Bearer {token}"));
+        }
+
+        let method_str = request.method.as_str().to_string();
+        let path = extract_path(&request.url);
+        // The caller-supplied `request.timeout` (the same per-endpoint base every buffered call
+        // uses — e.g. `DEFAULT_REQUEST_TIMEOUT`, the reference clients' "long" tier) is reused
+        // here as both the response-start wait and the per-chunk inactivity window: one
+        // configured duration, not a separate, larger one for inactivity. The JS reference client
+        // documents the same single-duration behavior ("it only limits inactivity"), though it
+        // gets there differently — via its HTTP library's socket-level idle timeout, not an
+        // explicit per-chunk reset like `with_inactivity_timeout` below — so this is a
+        // same-outcome, not same-mechanism, match. It carries the same tradeoff either way: a
+        // stream legitimately silent for the whole window (e.g. a long-running Actor logging
+        // nothing for `DEFAULT_REQUEST_TIMEOUT`) times out; the reference's escape hatch for that
+        // is an explicit `'noTimeout'` request option, which this crate does not yet expose.
+        let budget = request.timeout;
+
+        let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
+            .await
+            .map_err(|_| ApifyClientError::Timeout)??;
+
+        if response.status < MAX_SUCCESS_STATUS_CODE {
+            return Ok(with_inactivity_timeout(response.body, budget));
+        }
+
+        // The error body arrives as a stream here too; read it (under the same inactivity
+        // budget) so the failure carries the same structured `ApiError` (type/message/data) as
+        // every buffered endpoint, rather than losing the body to a generic transport error. A
+        // body that fails to read (e.g. the connection drops mid-response) still surfaces the
+        // status code, just without a parsed message.
+        let body = collect_with_timeout(response.body, budget).await;
+        let http_response = HttpResponse {
+            status: response.status,
+            headers: response.headers,
+            body,
+        };
+        let api_error = build_api_error(&http_response, 1, &method_str, &path);
+        Err(ApifyClientError::from(api_error))
     }
+}
+
+/// Wraps a streaming body so each chunk must arrive within `timeout` of the previous one (or of
+/// the stream opening), erroring with [`ApifyClientError::Timeout`] otherwise — an inactivity
+/// timeout, not a cap on the stream's total duration. Shared by
+/// [`HttpClient::call_streaming`]'s success and error-body-reading paths.
+///
+/// A timeout yields exactly one `Err(Timeout)` and then ends the stream (further polls return
+/// `None`), rather than retrying the same read forever: the underlying body is dropped once it
+/// has stalled, so a caller that logs the error and keeps draining (instead of stopping on the
+/// first `Err`, as `?`-style consumption does) still sees the stream terminate.
+fn with_inactivity_timeout(
+    body: std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
+    timeout: Duration,
+) -> std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>> {
+    enum State {
+        Active(
+            std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
+        ),
+        Stalled,
+    }
+
+    Box::pin(futures_util::stream::unfold(
+        State::Active(body),
+        move |state| async move {
+            let State::Active(mut body) = state else {
+                return None;
+            };
+            match tokio::time::timeout(timeout, futures_util::StreamExt::next(&mut body)).await {
+                Ok(Some(item)) => Some((item, State::Active(body))),
+                Ok(None) => None,
+                Err(_) => Some((Err(ApifyClientError::Timeout), State::Stalled)),
+            }
+        },
+    ))
+}
+
+/// Drains a streaming body into a single buffer, under the same per-chunk inactivity timeout as
+/// [`with_inactivity_timeout`]. Used only for a non-success response's (typically small) error
+/// body, so buffering it is fine — unlike a successful body, which callers stream incrementally.
+async fn collect_with_timeout(
+    body: std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
+    timeout: Duration,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut timed = with_inactivity_timeout(body, timeout);
+    while let Some(chunk) = futures_util::StreamExt::next(&mut timed).await {
+        match chunk {
+            Ok(bytes) => buf.extend(bytes),
+            Err(_) => break,
+        }
+    }
+    buf
 }
 
 /// Compresses `request.body` in place when it is present, at least [`MIN_COMPRESS_BYTES`] long,
@@ -518,7 +706,7 @@ fn gzip_compress(data: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the path + query portion of a URL, for error reporting.
-pub(crate) fn extract_path(url: &str) -> Option<String> {
+fn extract_path(url: &str) -> Option<String> {
     // Find the start of the path after the scheme+host.
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     after_scheme
@@ -540,7 +728,7 @@ fn is_error_retryable(err: &ApifyClientError) -> bool {
 }
 
 /// Parses the API error body (if present) into an [`ApiError`].
-pub(crate) fn build_api_error(
+fn build_api_error(
     response: &HttpResponse,
     attempt: u32,
     method: &str,
@@ -633,4 +821,52 @@ pub(crate) async fn sleep_public(duration: Duration) {
 /// Sleeps for the given duration using the Tokio timer (the runtime `reqwest` requires).
 async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    /// After one inactivity timeout, [`with_inactivity_timeout`] must end the stream rather than
+    /// retrying the stalled read forever: a chunk that would only arrive after the stall must
+    /// never be yielded, and a third poll past the timeout error must return `None`.
+    #[tokio::test(start_paused = true)]
+    async fn with_inactivity_timeout_ends_after_one_stall() {
+        let timeout = Duration::from_millis(10);
+        let body: std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>,
+        > = Box::pin(futures_util::stream::unfold(0u8, move |n| async move {
+            match n {
+                0 => Some((Ok(b"chunk".to_vec()), 1)),
+                // Stall well past the inactivity timeout before the stream would otherwise
+                // continue, simulating a connection that goes quiet.
+                1 => {
+                    tokio::time::sleep(timeout * 10).await;
+                    Some((Ok(b"should never be seen".to_vec()), 2))
+                }
+                _ => None,
+            }
+        }));
+
+        let mut timed = with_inactivity_timeout(body, timeout);
+
+        let first = timed.next().await;
+        assert!(
+            matches!(&first, Some(Ok(b)) if b == b"chunk"),
+            "expected the first chunk, got {first:?}"
+        );
+
+        let second = timed.next().await;
+        assert!(
+            matches!(second, Some(Err(ApifyClientError::Timeout))),
+            "expected a timeout error after the stall, got {second:?}"
+        );
+
+        let third = timed.next().await;
+        assert!(
+            third.is_none(),
+            "the stream must end after the inactivity timeout instead of retrying forever, got {third:?}"
+        );
+    }
 }

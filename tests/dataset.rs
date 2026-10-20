@@ -2,6 +2,7 @@
 
 mod common;
 
+use futures_util::StreamExt;
 use serde_json::json;
 
 /// Simple GET: listing datasets should succeed and return a paginated structure.
@@ -216,4 +217,70 @@ async fn dataset_crud_flow() {
         after_delete.is_none(),
         "dataset should be gone after delete"
     );
+}
+
+/// `download_items_stream` must yield the same bytes as the buffered `download_items`, just
+/// delivered incrementally instead of all at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn download_items_stream_matches_buffered_download() {
+    let client = require_client!();
+    let name = common::unique_name("dataset-stream");
+    let dataset = client
+        .datasets()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create dataset");
+
+    let cleanup_client = client.clone();
+    let id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&id).delete().await;
+    });
+
+    let dataset_client = client.dataset(&dataset.id);
+    dataset_client
+        .push_items(&json!([{ "n": 1 }, { "n": 2 }, { "n": 3 }]))
+        .await
+        .expect("push items");
+
+    let buffered = dataset_client
+        .download_items(apify_client::DownloadItemsFormat::Json, Default::default())
+        .await
+        .expect("buffered download");
+
+    let mut stream = dataset_client
+        .download_items_stream(apify_client::DownloadItemsFormat::Json, Default::default())
+        .await
+        .expect("stream download");
+    let mut streamed = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        streamed.extend(chunk.expect("stream chunk"));
+    }
+
+    assert_eq!(
+        streamed, buffered,
+        "streamed export must match the buffered export byte-for-byte"
+    );
+}
+
+/// A failed `download_items_stream` (nonexistent dataset) carries the API's structured error
+/// (status/type/message), not a generic transport error — like `log().stream()` of a
+/// nonexistent run, this bypasses the buffered backend path to keep the connection open, so it
+/// has to parse the error body itself on a non-2xx response.
+#[tokio::test(flavor = "multi_thread")]
+async fn download_items_stream_of_missing_dataset_carries_structured_api_error() {
+    let client = require_client!();
+
+    let err = client
+        .dataset("nonexistent-dataset-id-xyz")
+        .download_items_stream(apify_client::DownloadItemsFormat::Json, Default::default())
+        .await
+        .map(|_| ())
+        .expect_err("streaming a nonexistent dataset's items should fail");
+
+    let api_error = err
+        .as_api_error()
+        .expect("error should be a structured ApiError, not a generic transport error");
+    assert_eq!(api_error.status_code, 404);
+    assert!(api_error.is_not_found());
 }

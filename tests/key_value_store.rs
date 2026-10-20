@@ -278,6 +278,76 @@ async fn key_value_store_crud_flow() {
         .is_none());
 }
 
+/// `set_record_raw_with_content_encoding` uploads an already-compressed value without the
+/// client compressing it a second time, and the value round-trips without corruption.
+///
+/// The payload is well above the client's own auto-compression size threshold, so this also
+/// exercises that the `Content-Encoding` header (not just the small-body skip) is what the
+/// client relies on to avoid double-compression; `set_record_with_content_encoding_is_not_compressed_again`
+/// in `tests/unit_http.rs` pins that exact wire behaviour hermetically. What the API does with
+/// the encoded upload server-side (store the compressed bytes as-is per
+/// `KeyValueStoreClient::set_record_raw_with_content_encoding`'s docs, or transparently decode
+/// it before storing) is outside the client's control, so this only asserts the value it reads
+/// back decodes to the original payload either way, never that the bytes are corrupted or
+/// double-compressed.
+#[tokio::test(flavor = "multi_thread")]
+async fn set_record_with_content_encoding_round_trips_without_corruption() {
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+
+    let client = require_client!();
+    let name = common::unique_name("kvs-enc");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+
+    let payload = serde_json::to_vec(&json!({ "data": "x".repeat(4096) })).expect("serialize");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&payload).expect("gzip write");
+    let gzipped = encoder.finish().expect("gzip finish");
+
+    store_client
+        .set_record_raw_with_content_encoding(
+            "gz-record",
+            gzipped.clone(),
+            "application/json",
+            "gzip",
+        )
+        .await
+        .expect("set record with content encoding");
+
+    let record = store_client
+        .get_record("gz-record")
+        .await
+        .expect("get record")
+        .expect("record should exist");
+
+    // Accept either: the API served the exact gzip bytes we uploaded (decode them), or it
+    // stored/served the decoded value directly (already equal to `payload`).
+    let decoded = if record.value.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder = flate2::read::GzDecoder::new(&record.value[..]);
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut out).expect("gunzip response value");
+        out
+    } else {
+        record.value
+    };
+    assert_eq!(
+        decoded, payload,
+        "the record must round-trip to the original payload without corruption"
+    );
+}
+
 /// Builds a record public URL and confirms it is well-formed and fetchable without auth.
 ///
 /// The URL points at the public records endpoint; when the store exposes a URL-signing

@@ -4,7 +4,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::clients::base::{delete_resource, get_resource, update_resource, ResourceContext};
+use crate::clients::base::{
+    delete_resource, get_byte_stream, get_resource, update_resource, ResourceContext,
+};
 use crate::clients::pagination::ListIterator;
 use crate::common::{parse_data_envelope, sign_storage_content, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
@@ -308,6 +310,31 @@ impl DatasetClient {
             })
             .await?;
         Ok(response.body)
+    }
+
+    /// Like [`download_items`](Self::download_items), but streams the export as it arrives
+    /// instead of buffering the whole response in memory.
+    ///
+    /// Returns a `Stream` of byte chunks; drive it with `futures_util::StreamExt::next()` (or
+    /// pipe it through an `AsyncRead` adapter) to process a large export in constant memory. A
+    /// gap of more than 6 minutes between chunks ends the stream with
+    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) — an inactivity
+    /// timeout, not a cap on the export's total duration.
+    ///
+    /// Goes through the configured `HttpBackend`'s streaming path instead of the buffered one,
+    /// to keep the connection open — like [`crate::clients::log::LogClient::stream`], a failed
+    /// request (e.g. a `404`) still surfaces the same structured [`crate::error::ApiError`] as
+    /// the buffered endpoints, from reading the error body before the stream is handed back.
+    pub async fn download_items_stream(
+        &self,
+        format: DownloadItemsFormat,
+        options: DatasetDownloadOptions,
+    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        let mut params = QueryParams::new();
+        params.add_str("format", Some(format.as_str()));
+        options.apply(&mut params);
+        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        get_byte_stream(&self.ctx, url).await
     }
 
     /// Pushes one or more items to the dataset.

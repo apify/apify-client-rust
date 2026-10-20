@@ -369,9 +369,27 @@ pub(crate) async fn put_raw(
     body: Vec<u8>,
     content_type: &str,
 ) -> ApifyClientResult<()> {
+    put_raw_with_content_encoding(ctx, sub_path, params, body, content_type, None).await
+}
+
+/// Like [`put_raw`], but can also set a `Content-Encoding` header (used for KVS record uploads
+/// of an already-compressed value). Setting it makes [`HttpClient::call`]'s automatic request
+/// compression skip the body (it already refuses to double-encode a request that carries a
+/// `Content-Encoding`), so the bytes reach the API exactly as given.
+pub(crate) async fn put_raw_with_content_encoding(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Vec<u8>,
+    content_type: &str,
+    content_encoding: Option<&str>,
+) -> ApifyClientResult<()> {
     let url = ctx.merged_params(params).apply_to_url(&ctx.url(sub_path));
     let mut headers = std::collections::HashMap::new();
     headers.insert("Content-Type".to_string(), content_type.to_string());
+    if let Some(encoding) = content_encoding {
+        headers.insert("Content-Encoding".to_string(), encoding.to_string());
+    }
     ctx.http
         .call(HttpRequest {
             method: HttpMethod::Put,
@@ -382,6 +400,28 @@ pub(crate) async fn put_raw(
         })
         .await?;
     Ok(())
+}
+
+/// Opens a streaming `GET` connection to `url` (already fully built, including query string),
+/// for a caller that wants to process a large body (a log or a dataset export) incrementally
+/// instead of waiting for [`HttpClient::call`] to buffer the whole response. Delegates to
+/// [`HttpClient::call_streaming`], which — unlike a one-off raw `reqwest` call — goes through
+/// the configured [`HttpBackend`](crate::http_client::HttpBackend), so a custom backend (or a
+/// `ReqwestBackend` wrapping a caller-provided, proxy/TLS-configured `reqwest::Client`) is
+/// honoured for streaming requests exactly as it is for buffered ones.
+pub(crate) async fn get_byte_stream(
+    ctx: &ResourceContext,
+    url: String,
+) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ctx.http
+        .call_streaming(HttpRequest {
+            method: HttpMethod::Get,
+            url,
+            headers: Default::default(),
+            body: None,
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+        })
+        .await
 }
 
 /// A `POST` with a raw body that returns an enveloped resource. Used by `actor.start`

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::clients::base::{
     delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
-    update_resource, ResourceContext,
+    put_raw_with_content_encoding, update_resource, ResourceContext,
 };
 use crate::common::{
     create_hmac_signature, encode_path_segment, sign_storage_content, QueryParams,
@@ -197,6 +197,36 @@ impl KeyValueStoreClient {
             &QueryParams::new(),
             value,
             content_type,
+        )
+        .await
+    }
+
+    /// Stores a record with raw, already-compressed bytes, sending `content_encoding` as the
+    /// `Content-Encoding` header so it is uploaded (and later served) exactly as given, without
+    /// the client compressing it again.
+    ///
+    /// The API accepts `gzip`, `br`, `deflate`, and `identity`. Unlike the reference client's
+    /// `setRecord({ contentEncoding })`, there is no separate runtime check rejecting a
+    /// non-identity encoding on a string or JSON value: this method, like
+    /// [`set_record_raw`](Self::set_record_raw), only ever accepts bytes that are already the
+    /// wire payload, so that case cannot arise here — pass pre-serialized/pre-compressed bytes,
+    /// not a value for the client to serialize. For plain (uncompressed) raw bytes, use
+    /// [`set_record_raw`](Self::set_record_raw); for a JSON value, use
+    /// [`set_record_json`](Self::set_record_json).
+    pub async fn set_record_raw_with_content_encoding(
+        &self,
+        key: &str,
+        value: Vec<u8>,
+        content_type: &str,
+        content_encoding: &str,
+    ) -> ApifyClientResult<()> {
+        put_raw_with_content_encoding(
+            &self.ctx,
+            Some(&format!("records/{}", encode_path_segment(key))),
+            &QueryParams::new(),
+            value,
+            content_type,
+            Some(content_encoding),
         )
         .await
     }

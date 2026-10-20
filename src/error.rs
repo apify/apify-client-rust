@@ -109,7 +109,8 @@ impl ApiError {
     }
 }
 
-/// The top-level error type for all client operations.
+/// The top-level error type for all client operations: every method returns
+/// `Result<T, ApifyClientError>`, so one `match`/`if let` already catches every kind of failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ApifyClientError {
     /// The API returned a non-success status code with a structured error body.

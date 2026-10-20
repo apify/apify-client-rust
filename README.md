@@ -22,7 +22,7 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.6"
+apify-client = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -50,7 +50,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.6", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.13", default-features = false, features = ["rustls"] }
 ```
 
 ## Quick start
@@ -293,7 +293,10 @@ The transport is a replaceable component: any type implementing `http_client::Ht
 injected with `ApifyClientBuilder::http_backend`. The most common customization is to reuse the
 built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom proxy, TLS, connection
 pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
-`HttpBackend` (a single `async fn send`) on your own type instead. The snippet below constructs a
+`HttpBackend` on your own type instead — just `async fn send`; `send_streaming` (used by
+`log().stream()` and `download_items_stream()`) has a default implementation that buffers the
+whole response via `send`, so it is optional unless you want true incremental streaming. The
+snippet below constructs a
 `reqwest::Client` directly, so it requires adding `reqwest = "0.12"` (matching this crate's
 `reqwest` version) as your own dependency — see [Installation](#installation):
 

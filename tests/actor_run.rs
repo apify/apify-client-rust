@@ -49,6 +49,20 @@ async fn run_actor_and_read_outputs() {
     let log = client.run(&run.id).log().get().await.expect("get run log");
     assert!(log.is_some(), "finished run should have a log");
 
+    // Fetch the same log as raw bytes; it must decode to the same text `get()` returned.
+    let log_bytes = client
+        .run(&run.id)
+        .log()
+        .get_bytes()
+        .await
+        .expect("get run log as bytes")
+        .expect("finished run should have a log");
+    assert_eq!(
+        String::from_utf8_lossy(&log_bytes),
+        log.expect("log should be present"),
+        "get_bytes() must decode to the same text as get()"
+    );
+
     // Fetch the raw log via the `raw` query parameter (LogOptions). The endpoint must accept
     // it and still return the log content.
     let raw_log = client

@@ -65,6 +65,7 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
 | `get_statistics()` | — | `Option<Value>` | Field statistics. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
+| `download_items_stream(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Like `download_items`, but streams the export instead of buffering it, for constant-memory processing of a large export. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
 | `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. |
 
@@ -112,6 +113,29 @@ println!("exported {} bytes of CSV", csv.len());
 # }
 ```
 
+For a large export, `download_items_stream` avoids holding the whole thing in memory. Like
+`LogClient::stream` (see [Logs](misc.md#logs--clientlogbuild_or_run_id)), consuming it requires
+the `futures_util::StreamExt` trait in scope:
+
+```rust,no_run
+# use apify_client::{ApifyClient, DownloadItemsFormat};
+use futures_util::StreamExt;
+
+# async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
+let dataset = client.datasets().get_or_create(None).await?;
+let mut stream = client
+    .dataset(&dataset.id)
+    .download_items_stream(DownloadItemsFormat::Jsonl, Default::default())
+    .await?;
+let mut total_bytes = 0;
+while let Some(chunk) = stream.next().await {
+    total_bytes += chunk?.len();
+}
+println!("streamed {total_bytes} bytes of JSONL");
+# Ok(())
+# }
+```
+
 ## Key-value stores — `client.key_value_stores()` / `client.key_value_store(id)`
 
 `KeyValueStoreCollectionClient`: `list(options: StorageListOptions)`,
@@ -130,6 +154,7 @@ println!("exported {} bytes of CSV", csv.len());
 | `record_exists(key)` | `&str` | `bool` | Whether a record exists (HEAD). |
 | `get_record(key)` | `&str` | `Option<KeyValueStoreRecord>` | Reads a record's raw value. |
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
+| `set_record_raw_with_content_encoding(key, bytes, content_type, content_encoding)` | `&str`, `Vec<u8>`, `&str`, `&str` | `()` | Like `set_record_raw`, for a value that is already compressed (`gzip`, `br`, `deflate`): sends `content_encoding` as the `Content-Encoding` header instead of compressing the bytes again. |
 | `set_record_json(key, value)` | `&str`, `&impl Serialize` | `()` | Stores a JSON record. |
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
 | `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
