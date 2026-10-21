@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::clients::base::{create_resource, list_resource, ResourceContext};
-use crate::clients::pagination::ListIterator;
+use crate::clients::pagination::{single_page_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -30,16 +30,11 @@ impl ActorVersionCollectionClient {
 
     /// Lazily iterates over the Actor's versions.
     ///
-    /// The version listing is not offset-paginated (the API returns every version in a single
-    /// page), so this yields all versions from that one page and then completes. It exists for
-    /// interface parity with the other collection clients and the reference client. Built with
-    /// [`ListIterator::new_single_page`], which fetches exactly once and never re-requests.
+    /// The listing is not offset-paginated (the API returns every version in a single page), so this
+    /// yields all of them from that one page and then completes. It exists for interface parity
+    /// with the other collection clients and the reference client.
     pub fn iterate(&self) -> ListIterator<ActorVersion> {
-        let client = self.clone();
-        ListIterator::new_single_page(Box::new(move |_offset, _page_limit| {
-            let client = client.clone();
-            Box::pin(async move { client.list().await })
-        }))
+        single_page_iterator!(self)
     }
 
     /// Creates a new Actor version.

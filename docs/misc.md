@@ -10,7 +10,8 @@
 | `iterate(options)` | `StoreListOptions` | `StoreActorIterator` | Lazy, page-fetching iterator. |
 
 `StoreListOptions`: `offset`, `limit`, `search`, `sort_by`, `category`, `username`,
-`pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`. `limit` means a single page's size for `list`, but a cap on the *total* number of
+`pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`.
+`limit` means a single page's size for `list`, but a cap on the *total* number of
 items yielded for `iterate` (see below).
 
 `StoreActorIterator` is a type alias for `ListIterator<ActorStoreListItem>` (the shared iterator
