@@ -4,7 +4,7 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.14.0] - 2026-10-21
 
 ### Added
 - `RunChargeOptions::request_id`: sends the `requestId` body field of the charge endpoint (the
@@ -14,10 +14,6 @@ to [Semantic Versioning](https://semver.org/).
 ### Changed
 - **Breaking:** `RunChargeOptions` gained a public field, so struct literals that do not use
   `..Default::default()` must set `request_id`.
-
-## [0.14.0] - 2026-10-21
-
-### Changed
 - **Breaking:** `ActorVersionCollectionClient::list` and `iterate` no longer take `ListOptions`.
   The endpoint has no query parameters, so the options were silently ignored; `iterate` now
   fetches the single page once.
