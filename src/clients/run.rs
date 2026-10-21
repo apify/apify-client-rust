@@ -318,8 +318,9 @@ impl RunClient {
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
-    /// [`LogOptions`](crate::LogOptions) (e.g. [`LogOptions::raw`](crate::LogOptions::raw) to stream the unprocessed log, which is the
-    /// form the JS reference's log redirection consumes internally).
+    /// [`LogOptions`](crate::LogOptions) (e.g. [`LogOptions::raw`](crate::LogOptions::raw) to
+    /// stream the unprocessed log, which is the form the JS reference's log redirection consumes
+    /// internally).
     ///
     /// This is a Rust-specific convenience that simply forwards `LogOptions` to
     /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
