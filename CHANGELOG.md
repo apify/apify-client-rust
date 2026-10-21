@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `RunChargeOptions::request_id`: sends the `requestId` body field of the charge endpoint (the
+  `X-Actor-Request-ID` of the Server Actor request being charged), matching the reference client's
+  `charge({ requestId })` and the spec's `ChargeRunRequest`.
+
+### Changed
+- **Breaking:** `RunChargeOptions` gained a public field, so struct literals that do not use
+  `..Default::default()` must set `request_id`.
+
 ## [0.14.0] - 2026-10-21
 
 ### Changed

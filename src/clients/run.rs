@@ -75,6 +75,11 @@ pub struct RunChargeOptions {
     /// If `None`, one is auto-generated as `{runId}-{eventName}-{timestampMillis}-{random}`,
     /// matching the reference client, so a transport-retried charge is applied at most once.
     pub idempotency_key: Option<String>,
+    /// ID of the Server Actor request being charged, taken from the `X-Actor-Request-ID` header
+    /// of the incoming request. Required for multi-tenant Server Actor runs, where it maps the
+    /// charge to the caller's account instead of the account that started the run. Omitted from
+    /// the request body when `None`.
+    pub request_id: Option<String>,
 }
 
 /// Client for a specific Actor run.
@@ -228,7 +233,10 @@ impl RunClient {
         let idempotency_key = options
             .idempotency_key
             .unwrap_or_else(|| self.generate_idempotency_key(&options.event_name));
-        let body = serde_json::json!({ "eventName": options.event_name, "count": count });
+        let mut body = serde_json::json!({ "eventName": options.event_name, "count": count });
+        if let Some(request_id) = options.request_id {
+            body["requestId"] = serde_json::Value::String(request_id);
+        }
         let body_bytes = serde_json::to_vec(&body)?;
         let url = self.ctx.url(Some("charge"));
         let mut headers = std::collections::HashMap::new();

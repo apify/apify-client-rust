@@ -1232,6 +1232,7 @@ async fn charge_sends_required_idempotency_key_header() {
             event_name: "ANALYZE_PAGE".to_owned(),
             count: Some(2),
             idempotency_key: None,
+            request_id: None,
         })
         .await
         .expect("charge should succeed");
@@ -1250,6 +1251,10 @@ async fn charge_sends_required_idempotency_key_header() {
     let parsed: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
     assert_eq!(parsed["eventName"], "ANALYZE_PAGE");
     assert_eq!(parsed["count"], 2);
+    assert!(
+        parsed.get("requestId").is_none(),
+        "requestId must be omitted from the body when not supplied"
+    );
 
     // Explicit key -> sent verbatim (not overwritten by an auto-generated one).
     client
@@ -1258,6 +1263,7 @@ async fn charge_sends_required_idempotency_key_header() {
             event_name: "ANALYZE_PAGE".to_owned(),
             count: None,
             idempotency_key: Some("my-explicit-key".to_owned()),
+            request_id: Some("some-request-id".to_owned()),
         })
         .await
         .expect("charge should succeed");
@@ -1269,6 +1275,10 @@ async fn charge_sends_required_idempotency_key_header() {
     let body = backend.last_body().expect("a body was sent");
     let parsed: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
     assert_eq!(parsed["count"], 1, "count defaults to 1 when omitted");
+    assert_eq!(
+        parsed["requestId"], "some-request-id",
+        "a supplied request ID must be sent in the body"
+    );
 }
 
 /// A finite `iterate_keys` cap larger than one page must be clamped to the endpoint maximum per
