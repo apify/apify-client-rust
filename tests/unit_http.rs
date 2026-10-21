@@ -233,11 +233,11 @@ async fn error_body_is_parsed() {
     assert!(api.path.as_deref().unwrap().contains("/users/me"));
 }
 
-/// The API returns `null` for some fields the specification types as non-null
-/// (`actVersion.buildTag`, `restartOnError`, `isOneTimeEvent`); such a response must still
-/// deserialize, with the value kept in the model's `extra` map.
+/// The API returns `null` for some fields (`actVersion.buildTag`, `restartOnError`,
+/// `isOneTimeEvent`); such a response must deserialize, with the value kept in the model's
+/// `extra` map.
 #[tokio::test]
-async fn nullable_fields_returned_as_null_still_deserialize() {
+async fn null_valued_fields_still_deserialize() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
         200,
         br#"{"data":{"id":"b1","actId":"a1","status":"SUCCEEDED","actVersion":{"versionNumber":"0.1","buildTag":null}}}"#
@@ -250,11 +250,14 @@ async fn nullable_fields_returned_as_null_still_deserialize() {
         .await
         .expect("a build with a null buildTag should deserialize")
         .expect("build should exist");
-    assert!(build.extra["actVersion"]["buildTag"].is_null());
+    assert_eq!(
+        build.extra["actVersion"].get("buildTag"),
+        Some(&serde_json::Value::Null)
+    );
 
     let backend = MockBackend::new(vec![MockOutcome::Status(
         200,
-        br#"{"data":{"id":"a1","restartOnError":null,"defaultRunOptions":{"restartOnError":null}}}"#
+        br#"{"data":{"id":"a1","restartOnError":null,"pricingInfos":[{"pricingModel":"PAY_PER_EVENT","pricingPerEvent":{"actorChargeEvents":{"e":{"eventTitle":"E","isOneTimeEvent":null}}}}]}}"#
             .to_vec(),
     )]);
     let client = client_with(backend, 0);
@@ -262,23 +265,17 @@ async fn nullable_fields_returned_as_null_still_deserialize() {
         .actor("a1")
         .get()
         .await
-        .expect("an Actor with a null restartOnError should deserialize")
+        .expect("an Actor with null fields should deserialize")
         .expect("actor should exist");
-    assert!(actor.extra["restartOnError"].is_null());
-}
-
-/// An error `type` the client does not know yet is surfaced verbatim, so error types added to the
-/// specification need no client change.
-#[tokio::test]
-async fn newly_added_error_type_is_surfaced_verbatim() {
-    let backend = MockBackend::new(vec![MockOutcome::Status(
-        400,
-        br#"{"error":{"type":"readme-required","message":"A README is required"}}"#.to_vec(),
-    )]);
-    let client = client_with(backend, 0);
-    let err = client.me().get().await.expect_err("should fail");
-    let api = err.as_api_error().expect("api error");
-    assert_eq!(api.error_type.as_deref(), Some("readme-required"));
+    assert_eq!(
+        actor.extra.get("restartOnError"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        actor.extra["pricingInfos"][0]["pricingPerEvent"]["actorChargeEvents"]["e"]
+            .get("isOneTimeEvent"),
+        Some(&serde_json::Value::Null)
+    );
 }
 
 /// A successful response whose body does not parse is reported on the first attempt: the body

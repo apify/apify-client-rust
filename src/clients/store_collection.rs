@@ -38,7 +38,7 @@ pub struct StoreListOptions {
     pub include_unrunnable_actors: Option<bool>,
     /// Filter to Actors that allow agentic (x402/Skyfire) users.
     pub allows_agentic_users: Option<bool>,
-    /// Response format requested from the API (e.g. `json`).
+    /// Response format requested from the API (`full` or `agent`, the API default is `full`).
     pub response_format: Option<String>,
 }
 

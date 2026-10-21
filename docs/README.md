@@ -31,7 +31,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.13"
+apify-client = "0.14"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

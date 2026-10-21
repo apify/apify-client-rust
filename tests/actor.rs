@@ -130,10 +130,7 @@ async fn iterate_actor_versions() {
 
     assert!(
         common::iter_contains_eventually(
-            || client
-                .actor(&actor.id)
-                .versions()
-                .iterate(Default::default()),
+            || client.actor(&actor.id).versions().iterate(),
             |v| v.version_number == "0.0",
         )
         .await,
@@ -224,11 +221,7 @@ async fn actor_crud_flow() {
     assert!(builds.total >= 0);
 
     // List versions.
-    let versions = actor_client
-        .versions()
-        .list(Default::default())
-        .await
-        .expect("list versions");
+    let versions = actor_client.versions().list().await.expect("list versions");
     assert!(versions.items.iter().any(|v| v.version_number == "0.0"));
 
     // Delete.
@@ -298,11 +291,7 @@ async fn actor_version_crud_flow() {
     assert_eq!(fetched.version_number, "0.1");
 
     // List should include both 0.0 and 0.1.
-    let versions = actor_client
-        .versions()
-        .list(Default::default())
-        .await
-        .expect("list versions");
+    let versions = actor_client.versions().list().await.expect("list versions");
     assert!(versions.items.iter().any(|v| v.version_number == "0.1"));
 
     // Update the version (change its build tag).

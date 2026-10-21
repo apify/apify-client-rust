@@ -215,9 +215,11 @@ println!("build {} status {:?}", build.id, build.status);
 ## Actor versions and environment variables
 
 `ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.
-`ActorVersionCollectionClient`: `list(options)`, `iterate(options)`, `create(version)`.
-
-A version body needs `versionNumber` and `sourceType`. The writable source types are
-`SOURCE_FILES`, `GIT_REPO`, `TARBALL` and `GITHUB_GIST`; `SOURCE_CODE` can be read but not sent.
+`ActorVersionCollectionClient`: `list()`, `iterate()`, `create(version)`.
 `ActorEnvVarClient`: `get`, `update`, `delete`.
 `ActorEnvVarCollectionClient`: `list()`, `iterate()`, `create(env_var)`.
+
+Creating a version needs `versionNumber` and `sourceType` in the body, and so does every item of
+the `versions` array in an Actor create or update body. The writable source types are
+`SOURCE_FILES`, `GIT_REPO`, `TARBALL` and `GITHUB_GIST`; `SOURCE_CODE` can be read but not sent.
+Updating a version needs no required field.
