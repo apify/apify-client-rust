@@ -53,6 +53,10 @@ By default the client uses the system TLS (`native-tls`). To use rustls instead:
 apify-client = { version = "0.13", default-features = false, features = ["rustls"] }
 ```
 
+The `rustls` feature requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10 or
+newer. With `native-tls`, certificate trust comes from the operating system, so keep its CA
+certificates up to date.
+
 ## Quick start
 
 ```rust,no_run

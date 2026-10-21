@@ -49,6 +49,10 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      # The `rustls` feature swaps the TLS stack, so it needs its own compile check.
+      - name: Build with rustls
+        run: cargo clippy --no-default-features --features rustls -- -D warnings
+
       # Fail fast if the integration-test secret is missing or empty. Without this guard the
       # integration tests silently "pass" (they early-return when APIFY_TOKEN is unset), so a
       # green run would not prove the API logic actually executed.

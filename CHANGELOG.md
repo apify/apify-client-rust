@@ -4,6 +4,23 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.13.1] - 2026-10-21
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-10-20T121847Z` (`API_SPEC_VERSION`). Request bodies are
+  caller-supplied, so the spec's request-schema changes (required `versions` items, writable
+  version source types, schedule `notifications`) need no client change; the store `pricing_model`
+  filter docs no longer list the removed `FLAT_PRICE_PER_MONTH` value.
+- The `rustls` feature now requires `rustls-webpki >= 0.103.16` and `webpki-roots >= 1.0.10`, the
+  releases that no longer trust the compromised intermediate CA certificates. Run `cargo update`
+  to pick them up if your lockfile pins older ones; the default `native-tls` feature uses the
+  operating system's trust store, so update the system CA certificates instead.
+
+### Added
+- Tests that a build with a null `actVersion.buildTag`, an Actor with a null `restartOnError`
+  and an error with a newly added `type` are handled, that an unparsable success body is not
+  retried, and that an unparsable error body is retried by its status code.
+
 ## [0.13.0] - 2026-10-19
 
 ### Added

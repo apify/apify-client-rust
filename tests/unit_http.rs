@@ -233,6 +233,98 @@ async fn error_body_is_parsed() {
     assert!(api.path.as_deref().unwrap().contains("/users/me"));
 }
 
+/// The API returns `null` for some fields the specification types as non-null
+/// (`actVersion.buildTag`, `restartOnError`, `isOneTimeEvent`); such a response must still
+/// deserialize, with the value kept in the model's `extra` map.
+#[tokio::test]
+async fn nullable_fields_returned_as_null_still_deserialize() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"b1","actId":"a1","status":"SUCCEEDED","actVersion":{"versionNumber":"0.1","buildTag":null}}}"#
+            .to_vec(),
+    )]);
+    let client = client_with(backend, 0);
+    let build = client
+        .build("b1")
+        .get()
+        .await
+        .expect("a build with a null buildTag should deserialize")
+        .expect("build should exist");
+    assert!(build.extra["actVersion"]["buildTag"].is_null());
+
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"id":"a1","restartOnError":null,"defaultRunOptions":{"restartOnError":null}}}"#
+            .to_vec(),
+    )]);
+    let client = client_with(backend, 0);
+    let actor = client
+        .actor("a1")
+        .get()
+        .await
+        .expect("an Actor with a null restartOnError should deserialize")
+        .expect("actor should exist");
+    assert!(actor.extra["restartOnError"].is_null());
+}
+
+/// An error `type` the client does not know yet is surfaced verbatim, so error types added to the
+/// specification need no client change.
+#[tokio::test]
+async fn newly_added_error_type_is_surfaced_verbatim() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        400,
+        br#"{"error":{"type":"readme-required","message":"A README is required"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend, 0);
+    let err = client.me().get().await.expect_err("should fail");
+    let api = err.as_api_error().expect("api error");
+    assert_eq!(api.error_type.as_deref(), Some("readme-required"));
+}
+
+/// A successful response whose body does not parse is reported on the first attempt: the body
+/// arrived in full, so a retry would receive the same body.
+#[tokio::test]
+async fn unparsable_success_body_is_not_retried() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        b"<html>oops</html>".to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 3);
+    let err = client.me().get().await.expect_err("should fail to parse");
+    assert!(
+        matches!(err, ApifyClientError::Serde(_)),
+        "expected a deserialization error, got {err:?}"
+    );
+    assert_eq!(
+        backend.call_count(),
+        1,
+        "an unparsable success body is not retried"
+    );
+}
+
+/// An error status whose body is not the API's JSON error (such as an HTML page from a proxy) is
+/// reported as an `ApiError` carrying the raw body, and is retried by its status code.
+#[tokio::test]
+async fn unparsable_error_body_is_retried_by_status_code() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        502,
+        b"<html>Bad Gateway</html>".to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 2);
+    let err = client.me().get().await.expect_err("should fail");
+    let api = err.as_api_error().expect("api error");
+    assert_eq!(api.status_code, 502);
+    assert!(
+        api.message.contains("Bad Gateway"),
+        "raw body is kept in the message"
+    );
+    assert_eq!(
+        backend.call_count(),
+        3,
+        "a 502 is retried until the retries run out"
+    );
+}
+
 /// `ApiError`'s `is_*` status-classification predicates (the idiomatic equivalent of the
 /// reference client's `NotFoundError`/`RateLimitError`/... subclasses) match the response status,
 /// and only that status's predicate is `true`.

@@ -32,7 +32,7 @@ pub struct StoreListOptions {
     pub category: Option<String>,
     /// Filter by owner username.
     pub username: Option<String>,
-    /// Filter by pricing model.
+    /// Filter by pricing model: `FREE`, `PRICE_PER_DATASET_ITEM` or `PAY_PER_EVENT`.
     pub pricing_model: Option<String>,
     /// Include Actors that the current user cannot run (e.g. needing a missing integration).
     pub include_unrunnable_actors: Option<bool>,
