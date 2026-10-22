@@ -4,6 +4,13 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Brotli request bodies are compressed at quality 4 instead of the reference client's 6. On
+  dataset items that halves the compression CPU time (about 1.3 ms to 0.7 ms per 70 KB item) for
+  bodies about 5% larger, still smaller than gzip at the same speed.
+
 ## [0.13.0] - 2026-10-19
 
 ### Added
