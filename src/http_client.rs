@@ -38,10 +38,10 @@ const CONTENT_ENCODING_BROTLI: &str = "br";
 /// `Content-Encoding` value used for gzip-compressed request bodies.
 const CONTENT_ENCODING_GZIP: &str = "gzip";
 /// Brotli quality level (0–11). The reference client uses quality 6, but on dataset items quality
-/// 4 takes about half the CPU for 5% larger bodies: as fast as gzip at the reference client's level
-/// 6, and still smaller. For scrapers pushing many items, compression is a noticeable share of
-/// their CPU time.
-const BROTLI_QUALITY: u32 = 4;
+/// 1 is about 5x faster for bodies about 14% larger (the body still shrinks by over 80%). Qualities
+/// 2 to 5 are barely faster than 6. For scrapers pushing many items, compression is a noticeable
+/// share of their CPU time.
+const BROTLI_QUALITY: u32 = 1;
 /// Brotli sliding-window size (log2), 22 is the library default (a 4 MiB window).
 const BROTLI_WINDOW_SIZE: u32 = 22;
 /// Internal buffer size for the brotli encoder.
