@@ -4,6 +4,17 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.14.1] - 2026-10-23
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-10-22T140011Z` (`API_SPEC_VERSION`).
+
+### Fixed
+- Documented `RunClient::resurrect`: the terminal statuses it accepts and how
+  `max_total_charge_usd` applies to a run that reached its cost limit.
+- Corrected the `max_total_charge_usd` field docs: it caps the total cost of the run for all
+  pricing models, not only pay-per-event Actors.
+
 ## [0.14.0] - 2026-10-21
 
 ### Added

@@ -44,7 +44,7 @@ pub struct ActorStartOptions {
     pub wait_for_finish: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
     pub max_items: Option<i64>,
-    /// Maximum total charge in USD (pay-per-event Actors).
+    /// Maximum total cost of the run in USD, across all pricing models.
     pub max_total_charge_usd: Option<f64>,
     /// Content type of the input body. Defaults to `application/json`.
     pub content_type: Option<String>,
