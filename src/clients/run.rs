@@ -47,7 +47,7 @@ pub struct RunResurrectOptions {
     pub timeout_secs: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
     pub max_items: Option<i64>,
-    /// Maximum total charge in USD (pay-per-event Actors).
+    /// Maximum total cost of the run in USD, across all pricing models.
     pub max_total_charge_usd: Option<f64>,
     /// If `true`, restart the run automatically when it fails.
     pub restart_on_error: Option<bool>,

@@ -46,7 +46,7 @@ All fields are optional. Used by both `start` and `call` here, and by the identi
 | `timeout_secs` | `Option<i64>` | Timeout for the run in seconds (`0` means no timeout). |
 | `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
 | `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
-| `max_total_charge_usd` | `Option<f64>` | Maximum total charge in USD (pay-per-event Actors). |
+| `max_total_charge_usd` | `Option<f64>` | Maximum total cost of the run in USD, across all pricing models. |
 | `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json` for `start`/`call`, or `application/octet-stream` for `start_raw`/`call_raw`, when unset. |
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
