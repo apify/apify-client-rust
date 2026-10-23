@@ -208,6 +208,12 @@ impl RunClient {
     }
 
     /// Resurrects a finished run, starting it again with (optionally overridden) settings.
+    ///
+    /// Only runs in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED` or `TIMED-OUT`) can be
+    /// resurrected. The run continues with the same storages, and its timeout counts from the
+    /// resurrection. `max_total_charge_usd` applies to the whole run including the cost before the
+    /// resurrection, so raise it to continue a run that stopped at its cost limit; otherwise the
+    /// resurrected run keeps the original limit and stops right after it starts.
     pub async fn resurrect(&self, options: RunResurrectOptions) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params
