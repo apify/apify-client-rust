@@ -32,13 +32,13 @@ pub struct StoreListOptions {
     pub category: Option<String>,
     /// Filter by owner username.
     pub username: Option<String>,
-    /// Filter by pricing model.
+    /// Filter by pricing model: `FREE`, `PRICE_PER_DATASET_ITEM` or `PAY_PER_EVENT`.
     pub pricing_model: Option<String>,
     /// Include Actors that the current user cannot run (e.g. needing a missing integration).
     pub include_unrunnable_actors: Option<bool>,
     /// Filter to Actors that allow agentic (x402/Skyfire) users.
     pub allows_agentic_users: Option<bool>,
-    /// Response format requested from the API (e.g. `json`).
+    /// Response format requested from the API (`full` or `agent`, the API default is `full`).
     pub response_format: Option<String>,
 }
 

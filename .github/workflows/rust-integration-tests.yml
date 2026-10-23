@@ -46,8 +46,17 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Docs (deny warnings)
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       - name: Build
         run: cargo build --verbose
+
+      # The `rustls` feature swaps the TLS stack, so it needs its own lint and compile check.
+      - name: Clippy with rustls
+        run: cargo clippy --no-default-features --features rustls -- -D warnings
 
       # Fail fast if the integration-test secret is missing or empty. Without this guard the
       # integration tests silently "pass" (they early-return when APIFY_TOKEN is unset), so a

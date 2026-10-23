@@ -41,7 +41,10 @@ collections are available via `actor.runs()` and `task.runs()`.
 
 `RunChargeOptions`: `event_name` (required), `count` (defaults to `1`), `idempotency_key`
 (auto-generated when omitted; the API requires this header and forgets the key 3 minutes after
-the charge, so a retry past that window creates a new charge instead of being deduplicated).
+the charge, so a retry past that window creates a new charge instead of being deduplicated),
+`request_id` (ID of the Server Actor request being charged, from the `X-Actor-Request-ID` header of
+the incoming request; required for multi-tenant Server Actor runs, where it maps the charge to the
+caller's account; omitted from the request when `None`).
 
 `ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and

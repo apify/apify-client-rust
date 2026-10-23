@@ -22,6 +22,7 @@ fn schedule_definition(name: &str) -> serde_json::Value {
         "cronExpression": "0 0 * * *",
         "isEnabled": false,
         "isExclusive": true,
+        "notifications": { "email": false },
         "actions": []
     })
 }
@@ -100,6 +101,11 @@ async fn schedule_crud_flow() {
         .await
         .expect("create schedule");
     assert_eq!(schedule.name.as_deref(), Some(name.as_str()));
+    assert_eq!(
+        schedule.extra["notifications"]["email"],
+        json!(false),
+        "the notifications settings sent on create should be stored"
+    );
 
     let cleanup_client = client.clone();
     let cleanup_id = schedule.id.clone();

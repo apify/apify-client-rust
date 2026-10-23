@@ -1,6 +1,6 @@
 [package]
 name = "apify-client"
-version = "0.13.0"
+version = "0.14.0"
 authors = ["Apify Technologies <support@apify.com>"]
 description = "An official, but experimental, AI-generated and AI-maintained Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"
@@ -26,6 +26,11 @@ hmac = "0.12"
 sha2 = "0.10"
 brotli = "7"
 flate2 = "1"
+# Minimum-version floors for the TLS trust stack behind the `rustls` feature. The crates are not
+# used directly: `reqwest` pulls them in, and the floor here makes Cargo resolve at least the
+# releases that no longer trust the compromised intermediate CA certificates.
+rustls-webpki = { version = "0.103.16", optional = true }
+webpki-roots = { version = "1.0.10", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
@@ -34,4 +39,4 @@ uuid = { version = "1", features = ["v4"] }
 [features]
 default = ["native-tls"]
 native-tls = ["reqwest/native-tls"]
-rustls = ["reqwest/rustls-tls"]
+rustls = ["reqwest/rustls-tls", "dep:rustls-webpki", "dep:webpki-roots"]

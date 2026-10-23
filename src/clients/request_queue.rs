@@ -46,8 +46,8 @@ const DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES: Duration = Duratio
 /// Options for [`RequestQueueClient::batch_add_requests`].
 ///
 /// Mirrors the reference client's retrying, chunked, parallel `batchAddRequests`: large inputs
-/// are split by count (max [`MAX_REQUESTS_PER_BATCH_OPERATION`]) and by JSON byte size (max
-/// [`MAX_PAYLOAD_SIZE_BYTES`], minus a safety margin), chunks are sent with up to `max_parallel`
+/// are split by count (max `MAX_REQUESTS_PER_BATCH_OPERATION`) and by JSON byte size (max
+/// `MAX_PAYLOAD_SIZE_BYTES`, minus a safety margin), chunks are sent with up to `max_parallel`
 /// requests in flight at once, and any request an API call reports as `unprocessed` (typically
 /// due to rate limiting) is retried with exponential backoff.
 #[derive(Debug, Default, Clone)]
@@ -55,14 +55,14 @@ pub struct BatchAddRequestsOptions {
     /// If `true`, adds all requests to the front of the queue.
     pub forefront: bool,
     /// Maximum retries for requests reported as `unprocessed`. Defaults to
-    /// [`DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES`] (3) when `None`.
+    /// `DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES` (3) when `None`.
     pub max_unprocessed_requests_retries: Option<u32>,
     /// Maximum number of chunk-add API calls in flight at once. Defaults to
-    /// [`DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS`] (5) when `None`.
+    /// `DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS` (5) when `None`.
     pub max_parallel: Option<usize>,
     /// Minimum delay before the first unprocessed-request retry (doubles, with jitter, on each
     /// subsequent retry). Defaults to
-    /// [`DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES`] (500ms) when `None`.
+    /// `DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES` (500ms) when `None`.
     pub min_delay_between_unprocessed_requests_retries: Option<Duration>,
 }
 
@@ -316,8 +316,8 @@ impl RequestQueueClient {
     /// This is significantly more efficient than calling [`add_request`](Self::add_request)
     /// once per request, especially for large batches: the input is automatically split into
     /// chunks that respect both the API's per-call request-count limit
-    /// ([`MAX_REQUESTS_PER_BATCH_OPERATION`]) and its request-body byte-size limit
-    /// ([`MAX_PAYLOAD_SIZE_BYTES`]), chunks are sent with up to `options.max_parallel` API calls
+    /// (`MAX_REQUESTS_PER_BATCH_OPERATION`) and its request-body byte-size limit
+    /// (`MAX_PAYLOAD_SIZE_BYTES`), chunks are sent with up to `options.max_parallel` API calls
     /// in flight at once, and any request an API call reports as `unprocessed` (typically due to
     /// rate limiting) is retried with exponential backoff — matching the reference client's
     /// `batchAddRequests`. Every request must be identifiable by [`RequestQueueRequest::unique_key`]
@@ -485,7 +485,7 @@ impl RequestQueueClient {
     /// Deletes multiple requests in a single batch operation.
     ///
     /// Unlike [`batch_add_requests`](Self::batch_add_requests), this does not auto-chunk: the API
-    /// accepts at most [`MAX_REQUESTS_PER_BATCH_OPERATION`] requests per call (matching the
+    /// accepts at most `MAX_REQUESTS_PER_BATCH_OPERATION` requests per call (matching the
     /// reference client, which validates rather than chunks), so a larger `requests` returns
     /// [`ApifyClientError::InvalidArgument`] before any request is sent.
     pub async fn batch_delete_requests<T: Serialize>(

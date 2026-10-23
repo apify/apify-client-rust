@@ -33,7 +33,8 @@ type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Syn
 ///
 /// Collections whose listing does not fit this shape build their iterator directly instead:
 /// the run listing takes a separate `filter` argument, dataset items use `list_items::<T>`, and
-/// an Actor's env vars are non-paginated ([`ListIterator::new_single_page`]).
+/// the listings that are not paginated (an Actor's versions and a version's env vars) use
+/// `single_page_iterator!`.
 macro_rules! list_iterator {
     ($self:expr, $options:expr, $list:ident) => {{
         let client = $self.clone();
@@ -54,6 +55,22 @@ macro_rules! list_iterator {
     }};
 }
 pub(crate) use list_iterator;
+
+/// Generates the body of the `iterate()` method of a collection whose endpoint is not
+/// offset-paginated: it has a no-argument `list()` method and returns every item in one response.
+/// The resulting [`ListIterator`] calls `list` exactly once and then completes.
+macro_rules! single_page_iterator {
+    ($self:expr) => {{
+        let client = $self.clone();
+        $crate::clients::pagination::ListIterator::new_single_page(Box::new(
+            move |_offset, _page_limit| {
+                let client = client.clone();
+                Box::pin(async move { client.list().await })
+            },
+        ))
+    }};
+}
+pub(crate) use single_page_iterator;
 
 /// Returns the smaller of two optional positive limits, treating a non-positive value as "no
 /// limit" (`None`). Mirrors the reference client's `minForLimitParam`, where the API treats `0`

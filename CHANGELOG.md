@@ -4,6 +4,29 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-10-21
+
+### Added
+- `RunChargeOptions::request_id`: sends the `requestId` body field of the charge endpoint (the
+  `X-Actor-Request-ID` of the Server Actor request being charged), matching the reference client's
+  `charge({ requestId })` and the spec's `ChargeRunRequest`.
+
+### Changed
+- **Breaking:** `RunChargeOptions` gained a public field, so struct literals that do not use
+  `..Default::default()` must set `request_id`.
+- **Breaking:** `ActorVersionCollectionClient::list` and `iterate` no longer take `ListOptions`.
+  The endpoint has no query parameters, so the options were silently ignored; `iterate` now
+  fetches the single page once.
+- Synced with Apify OpenAPI spec `v2-2026-10-20T121847Z` (`API_SPEC_VERSION`).
+- The `rustls` feature now requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10
+  or newer, the releases that no longer trust the compromised intermediate CA certificates. The
+  default `native-tls` feature uses the operating system's trust store, so keep its CA
+  certificates up to date.
+
+### Fixed
+- Documented the values accepted by the Store `pricing_model` filter (the removed
+  `FLAT_PRICE_PER_MONTH` is gone) and `response_format` (`full` or `agent`).
+
 ## [0.13.0] - 2026-10-19
 
 ### Added
