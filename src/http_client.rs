@@ -37,9 +37,9 @@ const MIN_COMPRESS_BYTES: usize = 1024;
 const CONTENT_ENCODING_BROTLI: &str = "br";
 /// `Content-Encoding` value used for gzip-compressed request bodies.
 const CONTENT_ENCODING_GZIP: &str = "gzip";
-/// Brotli quality level (0–11). The reference client compresses request bodies at quality 6,
-/// which balances ratio against CPU cost; we mirror that.
-const BROTLI_QUALITY: u32 = 6;
+/// Brotli quality level (0–11). Quality 1 is about 5x faster than 6 on dataset items for bodies
+/// about 14% larger.
+const BROTLI_QUALITY: u32 = 1;
 /// Brotli sliding-window size (log2), 22 is the library default (a 4 MiB window).
 const BROTLI_WINDOW_SIZE: u32 = 22;
 /// Internal buffer size for the brotli encoder.
