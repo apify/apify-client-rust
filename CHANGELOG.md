@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/).
 ## [0.14.1] - 2026-10-23
 
 ### Changed
-- Synced with Apify OpenAPI spec `v2-2026-10-22T140011Z` (`API_SPEC_VERSION`).
+- Synced with Apify OpenAPI spec `v2-2026-10-26T112451Z` (`API_SPEC_VERSION`).
 
 ### Fixed
 - Documented `RunClient::resurrect`: the terminal statuses it accepts and how
