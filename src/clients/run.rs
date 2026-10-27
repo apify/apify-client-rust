@@ -47,7 +47,7 @@ pub struct RunResurrectOptions {
     pub timeout_secs: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
     pub max_items: Option<i64>,
-    /// Maximum total charge in USD (pay-per-event Actors).
+    /// Maximum total cost of the run in USD, across all pricing models.
     pub max_total_charge_usd: Option<f64>,
     /// If `true`, restart the run automatically when it fails.
     pub restart_on_error: Option<bool>,
@@ -208,6 +208,12 @@ impl RunClient {
     }
 
     /// Resurrects a finished run, starting it again with (optionally overridden) settings.
+    ///
+    /// Only runs in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED` or `TIMED-OUT`) can be
+    /// resurrected. The run continues with the same storages, and its timeout counts from the
+    /// resurrection. `max_total_charge_usd` applies to the whole run including the cost before the
+    /// resurrection, so raise it to continue a run that stopped at its cost limit; otherwise the
+    /// resurrected run keeps the original limit and stops right after it starts.
     pub async fn resurrect(&self, options: RunResurrectOptions) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params

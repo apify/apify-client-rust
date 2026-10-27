@@ -21,7 +21,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `metamorph(target, input, options)` | `&str`, `Option<&impl Serialize>`, `RunMetamorphOptions` | `ActorRun` | Transforms the run into another Actor. |
 | `metamorph_raw(target, input, options)` | `&str`, `&[u8]`, `RunMetamorphOptions` | `ActorRun` | Like `metamorph`, but sends `input` as a raw request body (no JSON serialization), paired with `options.content_type`. |
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
-| `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a finished run. |
+| `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a run in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`). To continue a run that reached its cost limit, pass a higher `max_total_charge_usd`; the limit covers the whole run, including the cost before the resurrection. |
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |

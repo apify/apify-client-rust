@@ -1,7 +1,7 @@
 name: Rust integration tests
 
 # Language-specific workflow: only runs for the Rust client. Triggers on PRs to master
-# that touch Rust client or test code, and can be dispatched manually from any branch.
+# that touch Rust client, test, docs or build code, and can be dispatched manually from any branch.
 on:
   pull_request:
     branches: [master]
@@ -9,6 +9,9 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'build.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/rust-integration-tests.yml'
