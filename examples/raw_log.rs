@@ -1,10 +1,9 @@
 //! Fetch an Actor run's log in its raw (unprocessed) form.
 //!
 //! By default the API adds a per-line timestamp prefix to log lines. Passing
-//! `LogOptions { raw: Some(true), ..Default::default() }` requests the unprocessed log instead — the same raw form
-//! the JS reference's log redirection consumes. This example exercises both the buffered
-//! (`get_with_options`) and the streaming (`stream_with_options`) raw-log paths end-to-end so
-//! the `Test examples` CI step covers the new `raw` parameter against the live API.
+//! `LogOptions { raw: Some(true), ..Default::default() }` requests the unprocessed log instead.
+//! The example fetches it as a whole with `get_with_options`, and streams it with
+//! `get_streamed_log_with_options`.
 //!
 //! Run with: `APIFY_TOKEN=... cargo run --example raw_log`
 
@@ -25,8 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Buffered raw log: fetch the whole log without the server-added per-line timestamps.
     let raw_log = client
-        .run(&run.id)
-        .log()
+        .log(&run.id)
         .get_with_options(LogOptions {
             raw: Some(true),
             ..Default::default()
@@ -44,7 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             raw: Some(true),
             ..Default::default()
         })
-        .await?;
+        .await?
+        .ok_or("the run does not exist")?;
     let mut streamed_bytes = 0usize;
     while let Some(chunk) = stream.next().await {
         streamed_bytes += chunk?.len();

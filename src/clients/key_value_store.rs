@@ -6,17 +6,17 @@ use serde::Serialize;
 
 use crate::clients::base::{
     delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
-    put_raw_with_content_encoding, update_resource, ResourceContext,
+    update_resource, RawUpload, ResourceContext,
 };
 use crate::common::{create_hmac_signature, sign_storage_content, to_path_segment, QueryParams};
-use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod};
+use crate::error::{ApifyClientError, ApifyClientResult};
+use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
 use crate::timeouts::Timeout;
 
 /// The path of the record with the given key, relative to the store. A key that is empty or a dot
 /// segment cannot be placed in the path, so it is rejected with
-/// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument).
+/// [`ApifyClientError::InvalidArgument`].
 fn record_path(key: &str) -> ApifyClientResult<String> {
     Ok(format!("records/{}", to_path_segment(key)?))
 }
@@ -50,6 +50,20 @@ pub struct GetRecordOptions {
     pub attachment: Option<bool>,
     /// URL-signing signature granting access to a record in a private store.
     pub signature: Option<String>,
+}
+
+/// Options of [`KeyValueStoreClient::set_record_raw_with_options`] and
+/// [`KeyValueStoreClient::set_record_json_with_options`].
+#[derive(Debug, Default, Clone)]
+pub struct SetRecordOptions {
+    /// `Content-Encoding` of a value that is already compressed (`gzip`, `br`, `deflate` or
+    /// `identity`). The client then sends the bytes as they are, instead of compressing them
+    /// again.
+    pub content_encoding: Option<String>,
+    /// Give up on the first transport timeout instead of retrying it. A retry of an upload that
+    /// timed out is safe for a record, which the next upload overwrites, but it can take as long
+    /// as the first attempt: set this to fail fast on a slow connection.
+    pub do_not_retry_timeouts: bool,
 }
 
 /// Client for a specific key-value store.
@@ -87,7 +101,7 @@ impl KeyValueStoreClient {
 
     /// Updates the store metadata (e.g. `name`, `title`).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<KeyValueStore> {
-        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Long).await
     }
 
     /// Deletes the store.
@@ -147,7 +161,7 @@ impl KeyValueStoreClient {
             &self.ctx,
             Some(&record_path(key)?),
             &QueryParams::new(),
-            Timeout::Short,
+            Timeout::Long,
         )
         .await
     }
@@ -203,15 +217,8 @@ impl KeyValueStoreClient {
         value: Vec<u8>,
         content_type: &str,
     ) -> ApifyClientResult<()> {
-        put_raw(
-            &self.ctx,
-            Some(&record_path(key)?),
-            &QueryParams::new(),
-            value,
-            content_type,
-            Timeout::Long,
-        )
-        .await
+        self.set_record_raw_with_options(key, value, content_type, SetRecordOptions::default())
+            .await
     }
 
     /// Stores a record with raw, already-compressed bytes, sending `content_encoding` as the
@@ -233,13 +240,38 @@ impl KeyValueStoreClient {
         content_type: &str,
         content_encoding: &str,
     ) -> ApifyClientResult<()> {
-        put_raw_with_content_encoding(
+        self.set_record_raw_with_options(
+            key,
+            value,
+            content_type,
+            SetRecordOptions {
+                content_encoding: Some(content_encoding.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Like [`set_record_raw`](Self::set_record_raw), with [`SetRecordOptions`].
+    pub async fn set_record_raw_with_options(
+        &self,
+        key: &str,
+        value: Vec<u8>,
+        content_type: &str,
+        options: SetRecordOptions,
+    ) -> ApifyClientResult<()> {
+        put_raw(
             &self.ctx,
             Some(&record_path(key)?),
             &QueryParams::new(),
-            value,
-            content_type,
-            Some(content_encoding),
+            RawUpload {
+                body: value,
+                content_type,
+                content_encoding: options.content_encoding.as_deref(),
+            },
+            CallOptions {
+                do_not_retry_timeouts: options.do_not_retry_timeouts,
+            },
             Timeout::Long,
         )
         .await
@@ -251,9 +283,37 @@ impl KeyValueStoreClient {
         key: &str,
         value: &T,
     ) -> ApifyClientResult<()> {
-        let bytes = serde_json::to_vec(value)?;
-        self.set_record_raw(key, bytes, "application/json; charset=utf-8")
+        self.set_record_json_with_options(key, value, SetRecordOptions::default())
             .await
+    }
+
+    /// Like [`set_record_json`](Self::set_record_json), with [`SetRecordOptions`]. A
+    /// `content_encoding` is rejected with
+    /// [`ApifyClientError::InvalidArgument`]: the
+    /// client serializes the value itself, so it can never be pre-compressed.
+    pub async fn set_record_json_with_options<T: Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        options: SetRecordOptions,
+    ) -> ApifyClientResult<()> {
+        if options.content_encoding.is_some() {
+            return Err(ApifyClientError::InvalidArgument(
+                "set_record_json_with_options cannot send a Content-Encoding: the JSON value is \
+                 serialized by the client, so it is never pre-compressed; use \
+                 set_record_raw_with_options for pre-compressed bytes"
+                    .to_string(),
+            ));
+        }
+        let bytes = serde_json::to_vec(value)?;
+        self.set_record_raw_with_options(key, bytes, "application/json; charset=utf-8", options)
+            .await
+    }
+
+    /// Fetches the store to read its URL-signing secret key, with the `Long` tier of the public URL
+    /// methods.
+    async fn get_for_public_url(&self) -> ApifyClientResult<Option<KeyValueStore>> {
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Long).await
     }
 
     /// Builds a public URL for reading the record with the given key.
@@ -265,7 +325,7 @@ impl KeyValueStoreClient {
     pub async fn get_record_public_url(&self, key: &str) -> ApifyClientResult<String> {
         let path = record_path(key)?;
         let mut params = QueryParams::new();
-        if let Some(store) = self.get().await? {
+        if let Some(store) = self.get_for_public_url().await? {
             if let Some(secret) = store
                 .extra
                 .get("urlSigningSecretKey")
@@ -287,7 +347,7 @@ impl KeyValueStoreClient {
         expires_in_secs: Option<i64>,
     ) -> ApifyClientResult<String> {
         let mut params = QueryParams::new();
-        if let Some(store) = self.get().await? {
+        if let Some(store) = self.get_for_public_url().await? {
             if let Some(secret) = store
                 .extra
                 .get("urlSigningSecretKey")

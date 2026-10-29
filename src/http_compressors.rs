@@ -35,8 +35,10 @@ const BROTLI_BUFFER_SIZE: usize = 4096;
 const GZIP_MIN_QUALITY: u32 = 1;
 /// Highest gzip quality, the slowest with the best compression.
 const GZIP_MAX_QUALITY: u32 = 9;
-/// Gzip quality used by [`GzipHttpCompressor::default`], matching the reference client.
-const GZIP_DEFAULT_QUALITY: u32 = 9;
+/// Gzip quality used by [`GzipHttpCompressor::default`]: zlib's own default, which the reference
+/// client uses too. The levels above it roughly double the CPU cost for about a percent fewer
+/// bytes.
+const GZIP_DEFAULT_QUALITY: u32 = 6;
 
 /// Media-type prefixes whose payloads already carry their own compression, so running them
 /// through brotli/gzip burns CPU and memory for a result that is usually no smaller — and the
@@ -106,7 +108,9 @@ pub trait HttpCompressor: Send + Sync + Debug {
     /// Value sent in the `Content-Encoding` header, for example `gzip` or `br`.
     fn content_encoding(&self) -> &str;
 
-    /// Compresses a request body and returns the compressed bytes.
+    /// Compresses a request body and returns the compressed bytes. The built-in compressors work
+    /// in memory and cannot fail; an implementation that can returns its failure as the error of
+    /// the request.
     fn compress(&self, data: &[u8]) -> ApifyClientResult<Vec<u8>>;
 }
 
@@ -147,7 +151,9 @@ impl HttpCompressor for BrotliHttpCompressor {
             self.quality,
             BROTLI_WINDOW_SIZE,
         );
-        write_all(&mut writer, data)?;
+        writer
+            .write_all(data)
+            .expect("writing to an in-memory Vec never fails");
         Ok(writer.into_inner())
     }
 }
@@ -170,7 +176,7 @@ impl GzipHttpCompressor {
 }
 
 impl Default for GzipHttpCompressor {
-    /// Gzip at quality 9.
+    /// Gzip at quality 6, zlib's own default.
     fn default() -> Self {
         Self {
             quality: GZIP_DEFAULT_QUALITY,
@@ -186,8 +192,12 @@ impl HttpCompressor for GzipHttpCompressor {
     fn compress(&self, data: &[u8]) -> ApifyClientResult<Vec<u8>> {
         let mut encoder =
             flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(self.quality));
-        write_all(&mut encoder, data)?;
-        encoder.finish().map_err(compression_failed)
+        encoder
+            .write_all(data)
+            .expect("writing to an in-memory Vec never fails");
+        Ok(encoder
+            .finish()
+            .expect("finishing an in-memory Vec never fails"))
     }
 }
 
@@ -224,14 +234,6 @@ fn check_quality(algorithm: &str, quality: u32, min: u32, max: u32) -> ApifyClie
             "{algorithm} quality must be between {min} and {max}, got {quality}"
         )))
     }
-}
-
-fn write_all(writer: &mut impl Write, data: &[u8]) -> ApifyClientResult<()> {
-    writer.write_all(data).map_err(compression_failed)
-}
-
-fn compression_failed(err: std::io::Error) -> ApifyClientError {
-    ApifyClientError::InvalidArgument(format!("compressing the request body failed: {err}"))
 }
 
 /// Compresses `body` with `compressor` and adds the matching `Content-Encoding` header, when the
@@ -330,6 +332,29 @@ mod tests {
         assert!(GzipHttpCompressor::new(1).is_ok());
         assert!(GzipHttpCompressor::new(0).is_err());
         assert!(GzipHttpCompressor::new(10).is_err());
+    }
+
+    #[test]
+    fn default_qualities_are_the_zlib_and_brotli_defaults_of_the_reference_client() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(6));
+        gzip.write_all(&data).unwrap();
+        assert_eq!(
+            GzipHttpCompressor::default().compress(&data).unwrap(),
+            gzip.finish().unwrap()
+        );
+        assert_eq!(
+            GzipHttpCompressor::default().compress(&data).unwrap(),
+            GzipHttpCompressor::new(6).unwrap().compress(&data).unwrap()
+        );
+        assert_eq!(
+            BrotliHttpCompressor::default().compress(&data).unwrap(),
+            BrotliHttpCompressor::new(6)
+                .unwrap()
+                .compress(&data)
+                .unwrap()
+        );
     }
 
     #[test]

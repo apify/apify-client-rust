@@ -194,6 +194,11 @@ fn chunk_requests_for_batch_add(
 pub struct ListRequestsOptions {
     /// Maximum number of requests to return.
     pub limit: Option<i64>,
+    /// Start listing after this request ID (exclusive).
+    ///
+    /// Deprecated by the API: use `cursor`, which cannot be combined with it.
+    #[deprecated(note = "the API deprecated `exclusiveStartId`: use `cursor`")]
+    pub exclusive_start_id: Option<String>,
     /// Opaque pagination cursor returned by a previous call.
     pub cursor: Option<String>,
     /// Restrict the returned requests to the given states. The spec defines this as an array of
@@ -225,6 +230,17 @@ impl RequestQueueClient {
             ctx: ResourceContext::collection(http, base_url, sub_path),
             client_key: None,
         }
+    }
+
+    /// Caps the timeout of every request this queue client sends: a tier longer than `cap` is
+    /// lowered to it, a shorter one is kept. Unlike [`with_timeout`](Self::with_timeout), which
+    /// replaces the tier, this never makes a request wait longer than it would by default. A
+    /// timeout set with `with_timeout` wins over the cap. A zero cap is rejected: every request
+    /// then fails with `InvalidArgument`.
+    #[must_use]
+    pub fn with_timeout_cap(mut self, cap: Duration) -> Self {
+        self.ctx = self.ctx.with_timeout_cap(cap);
+        self
     }
 
     /// Sets the `clientKey` used to identify this client across requests (for locking).
@@ -555,14 +571,17 @@ impl RequestQueueClient {
     /// Lists requests in the queue.
     ///
     /// Supports pagination via `limit` and `cursor`, and the spec's `filter` parameter (see
-    /// [`ListRequestsOptions`]).
+    /// [`ListRequestsOptions`]). The deprecated `exclusive_start_id` is still sent when set.
     pub async fn list_requests(
         &self,
         options: ListRequestsOptions,
     ) -> ApifyClientResult<RequestQueueRequestsPage> {
         let mut params = self.base_params();
+        params.add_int("limit", options.limit);
+        // The field is deprecated for callers; the spec still documents the parameter.
+        #[allow(deprecated)]
+        params.add_str("exclusiveStartId", options.exclusive_start_id);
         params
-            .add_int("limit", options.limit)
             .add_str("cursor", options.cursor)
             .add_csv("filter", options.filter.as_deref());
         get_resource_required(&self.ctx, Some("requests"), &params, Timeout::Medium).await

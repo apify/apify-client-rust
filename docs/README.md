@@ -147,8 +147,8 @@ Builder options:
 | `user_agent_suffix(s)` | none | Extra text appended to the `User-Agent` header. |
 | `default_header(name, value)` | none | Header sent with every request. It wins over the built-in `User-Agent` and `Authorization` headers; a header a request sets itself wins over it. Names are compared case-insensitively. |
 | `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
-| `http_compressor(c)` | Brotli, quality 6 | A custom `Arc<dyn HttpCompressor>`: `BrotliHttpCompressor::new(quality)` (0 to 11), `GzipHttpCompressor::new(quality)` (1 to 9), or your own implementation. |
-| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). |
+| `http_compressor(c)` | Brotli, quality 6 | A custom `Arc<dyn HttpCompressor>`: `BrotliHttpCompressor::new(quality)` (0 to 11, default 6), `GzipHttpCompressor::new(quality)` (1 to 9, default 6), or your own implementation. |
+| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). A request whose `timeout` is `timeouts::NO_TIMEOUT` may run for as long as it takes, so a backend must check for it before it applies a timeout of its own. |
 
 Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
 `request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is
@@ -182,8 +182,18 @@ retry, up to the same cap.
 
 Every resource client has a `with_timeout(Timeout)` method that replaces the tier of all the
 requests it sends with a tier, `Timeout::Custom(duration)`, or `Timeout::NoTimeout` (the client
-never aborts the request, so a stalled connection is not retried either). Clients obtained from it,
-such as `run.dataset()`, do not inherit the timeout.
+never aborts the request, so a stalled connection is not retried either). A zero duration is
+rejected: every request then fails with `InvalidArgument`. Clients obtained from it, such as
+`run.dataset()`, do not inherit the timeout. A request queue client also has
+`with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
+
+`dataset.push_items` is not retried after a transport timeout, because the request may have
+reached the API and a retry could store the items twice. The same goes for the key-value store
+`set_record_*_with_options` methods when `do_not_retry_timeouts` is set.
+
+`client.stats()` returns the `Statistics` of the client and of every resource client obtained from
+it: `calls()` (each call counts once), `requests()` (every attempt counts) and `rate_limit_errors()`
+(the `429` responses, indexed by attempt).
 
 ```rust,no_run
 use std::time::Duration;
@@ -293,8 +303,8 @@ Every fallible method returns `Result<T, ApifyClientError>`. The variants are:
 `get`/`delete` map a missing resource (any `404`) to `Ok(None)` / a no-op, on a client that names
 its resource by id. A client chained from a parent, such as `run.dataset()` or `run.log()`, and the
 methods that address a fixed sub-path of a resource (`get_statistics`, `get_input`, `get_log`,
-`get_openapi_definition`) return the `404` as an error, because the response cannot tell which
-resource is missing.
+`get_openapi_definition`, `limits`, `monthly_usage*`, webhook `test`) return the `404` as an error,
+because the response cannot tell which resource is missing.
 
 An id that is empty or a dot segment (`.` or `..`) cannot be placed in a URL path, so every request
 through a client created with it fails with `InvalidArgument`.

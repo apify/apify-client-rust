@@ -27,6 +27,8 @@ pub struct MockBackend {
 pub enum MockOutcome {
     Status(u16, Vec<u8>),
     NetworkError,
+    /// The transport gave up on the request because it outlived its timeout.
+    Timeout,
 }
 
 impl MockBackend {
@@ -105,6 +107,7 @@ impl HttpBackend for MockBackend {
                 body,
             }),
             MockOutcome::NetworkError => Err(ApifyClientError::Http("boom".to_string())),
+            MockOutcome::Timeout => Err(ApifyClientError::Timeout),
         }
     }
 }

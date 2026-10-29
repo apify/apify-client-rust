@@ -10,7 +10,7 @@ use crate::clients::dataset::DatasetClient;
 use crate::clients::key_value_store::KeyValueStoreClient;
 use crate::clients::log::LogClient;
 use crate::clients::request_queue::RequestQueueClient;
-use crate::common::{to_safe_id, QueryParams};
+use crate::common::{catch_not_found, to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorRun;
@@ -347,30 +347,33 @@ impl RunClient {
         LogClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "log")
     }
 
-    /// Opens a live stream of the run's log for redirection.
+    /// Opens a live stream of the run's log for redirection, or `None` if the run does not exist.
     ///
     /// Convenience equivalent to `run.log().stream()` (mirrors the reference client's
     /// `getStreamedLog`): yields log chunks as they arrive, so callers can forward them to
-    /// their own logger/stdout while the run is in progress. A run that does not exist is a
-    /// [`NotFound`](crate::ApiError::is_not_found) error.
+    /// their own logger/stdout while the run is in progress. Unlike `run.log().stream()`, whose
+    /// chained client cannot tell a missing run from a missing log, a missing run is `None` here,
+    /// because the run is the resource this client names.
     pub async fn get_streamed_log(
         &self,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream_required(Default::default()).await
+    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
+    {
+        self.get_streamed_log_with_options(Default::default()).await
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
     /// [`LogOptions`](crate::LogOptions) (e.g. [`LogOptions::raw`](crate::LogOptions::raw) to
     /// stream the unprocessed log, which is the form the JS reference's log redirection consumes
-    /// internally).
+    /// internally). `None` if the run does not exist.
     ///
-    /// This is a Rust-specific convenience that simply forwards `LogOptions` to
-    /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
-    /// method's signature (which takes redirect options and returns a `StreamedLog` object).
+    /// This is a Rust-specific convenience that simply forwards `LogOptions` to the log stream;
+    /// it is not a 1:1 mirror of the JS `getStreamedLog` method's signature (which takes redirect
+    /// options and returns a `StreamedLog` object).
     pub async fn get_streamed_log_with_options(
         &self,
         options: crate::clients::log::LogOptions,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream_required(options).await
+    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
+    {
+        catch_not_found(self.log().stream_required(options).await)
     }
 }

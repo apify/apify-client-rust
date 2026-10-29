@@ -148,7 +148,8 @@ Also reachable via `run.log()` and `build.log()`.
 `get*` and `stream*` return `None` for a missing log only on a client that names its log by id
 (`client.log(id)`). A client chained from a run or build (`run.log()`, `build.log()`) has no id of
 its own, so it returns the `404` as an error: the response cannot tell a missing run from a missing
-log. `run.get_streamed_log()` returns the stream directly and fails for a missing run.
+log. `run.get_streamed_log()` returns `None` for a missing run, because the run is the resource
+that client names.
 
 `LogOptions` has two fields, `raw` and `download`, both `Option<bool>`. When `raw` is `Some(true)`,
 the API returns the raw log content without server-side processing (e.g. without the per-line
@@ -195,7 +196,11 @@ use apify_client::ApifyClient;
 use futures_util::StreamExt;
 
 # async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-let mut stream = client.run(run_id).get_streamed_log().await?;
+let mut stream = client
+    .run(run_id)
+    .get_streamed_log()
+    .await?
+    .ok_or("the run does not exist")?;
 while let Some(chunk) = stream.next().await {
     let chunk = chunk?;
     print!("{}", String::from_utf8_lossy(&chunk));
