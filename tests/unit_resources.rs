@@ -8,7 +8,8 @@
 mod common;
 
 use apify_client::{
-    ApifyClientError, ListRequestsOptions, LogOptions, RunListOptions, StoreListOptions,
+    ApifyClientError, LastRunOptions, ListRequestsOptions, LogOptions, RunListOptions,
+    StoreListOptions,
 };
 use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use futures_util::StreamExt;
@@ -474,4 +475,84 @@ async fn a_schedule_with_a_null_ui_state_deserializes() {
         .unwrap()
         .expect("the schedule exists");
     assert_eq!(schedule.extra.get("uiState"), Some(&Value::Null));
+}
+
+// ----- clients chained from the last run --------------------------------------------------
+
+/// The `status` and `origin` filters of `last_run` select the run, so the log and the storages of
+/// that run have to carry them, or they would belong to the newest run of any status.
+#[tokio::test]
+async fn storages_and_log_chained_from_a_filtered_last_run_carry_its_filters() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"[]".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+    let last_run = client.actor("a").last_run_with_options(LastRunOptions {
+        status: Some("SUCCEEDED".to_string()),
+        origin: Some("API".to_string()),
+    });
+    let carries_filters = |url: String, path: &str| {
+        assert!(url.contains(path), "{url}");
+        assert!(url.contains("status=SUCCEEDED"), "{url}");
+        assert!(url.contains("origin=API"), "{url}");
+    };
+
+    last_run.log().get().await.unwrap();
+    carries_filters(backend.last_url().unwrap(), "/runs/last/log");
+    last_run.log().stream().await.unwrap();
+    carries_filters(backend.last_url().unwrap(), "/runs/last/log");
+    last_run
+        .dataset()
+        .list_items::<Value>(Default::default())
+        .await
+        .unwrap();
+    carries_filters(backend.last_url().unwrap(), "/runs/last/dataset/items");
+    last_run
+        .dataset()
+        .push_items(&json!({ "a": 1 }))
+        .await
+        .unwrap();
+    carries_filters(backend.last_url().unwrap(), "/runs/last/dataset/items");
+    last_run
+        .key_value_store()
+        .get_record("OUTPUT")
+        .await
+        .unwrap();
+    carries_filters(
+        backend.last_url().unwrap(),
+        "/runs/last/key-value-store/records/OUTPUT",
+    );
+    last_run
+        .key_value_store()
+        .delete_record("OUTPUT")
+        .await
+        .unwrap();
+    carries_filters(
+        backend.last_url().unwrap(),
+        "/runs/last/key-value-store/records/OUTPUT",
+    );
+    last_run
+        .request_queue()
+        .delete_request("request-id")
+        .await
+        .unwrap();
+    carries_filters(
+        backend.last_url().unwrap(),
+        "/runs/last/request-queue/requests/request-id",
+    );
+}
+
+/// The tasks' `last_run` filters apply the same way.
+#[tokio::test]
+async fn the_log_chained_from_a_task_last_run_carries_its_filters() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"log".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+    client
+        .task("t")
+        .last_run(Some("FAILED"))
+        .log()
+        .get()
+        .await
+        .unwrap();
+    let url = backend.last_url().unwrap();
+    assert!(url.contains("/actor-tasks/t/runs/last/log"), "{url}");
+    assert!(url.contains("status=FAILED"), "{url}");
 }

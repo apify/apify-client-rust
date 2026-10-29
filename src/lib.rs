@@ -95,6 +95,7 @@ pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
+pub use clients::run_dataset_items::RunDatasetItemsIterator;
 pub use clients::store_collection::{StoreActorIterator, StoreListOptions};
 
 // Compile-test the code snippets in the README and the external `docs/` pages so every

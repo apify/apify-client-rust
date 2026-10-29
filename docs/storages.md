@@ -16,6 +16,10 @@ core; the `.id` field is what the examples read to build a per-storage client
 | `created_at` | `Option<DateTime<Utc>>` | all three | When the storage was created. |
 | `modified_at` | `Option<DateTime<Utc>>` | all three | When the storage was last modified. |
 | `item_count` | `Option<i64>` | `Dataset` only | Total number of items in the dataset. |
+| `console_url` | `Option<String>` | all three | URL of the storage in Apify Console. |
+| `items_public_url` | `Option<String>` | `Dataset` only | Public URL of the dataset items. |
+| `keys_public_url` | `Option<String>` | `KeyValueStore` only | Public URL of the store's key listing. |
+| `records_public_url` | `Option<String>` | `KeyValueStore` only | Public URL prefix of the store's records. |
 | `total_request_count` | `Option<i64>` | `RequestQueue` only | Total number of requests ever added. |
 | `extra` | `Extra` | all three | Any other fields returned by the API. |
 
@@ -199,6 +203,7 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 |---|---|---|
 | `key` | `String` | The record key (always present). |
 | `size` | `Option<i64>` | Size of the record value in bytes, if reported by the API. |
+| `record_public_url` | `Option<String>` | Public link to access this record directly. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`

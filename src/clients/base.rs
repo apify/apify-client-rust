@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::common::{
     catch_not_found, parse_data_envelope, to_path_segment, to_safe_id, PaginationList, QueryParams,
 };
-use crate::error::ApifyClientResult;
+use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod, HttpRequest, HttpResponse};
 use crate::timeouts::Timeout;
 
@@ -35,8 +35,8 @@ const NOT_FOUND_GRACE_PERIOD: Duration = Duration::from_secs(3);
 const INVALID_ID_PLACEHOLDER: &str = "invalid-id";
 
 /// Why a zero timeout is refused.
-const ZERO_TIMEOUT_MESSAGE: &str =
-    "a timeout must be longer than zero; use Timeout::NoTimeout to run without one";
+const ZERO_TIMEOUT_MESSAGE: &str = "a timeout and a timeout cap must be longer than zero; use \
+     Timeout::NoTimeout to run without a timeout";
 
 /// The resolved context for a resource client: its base URL and the shared HTTP client.
 #[derive(Debug, Clone)]
@@ -104,16 +104,35 @@ impl ResourceContext {
         }
     }
 
-    /// Replaces the tier of every request with `timeout`. A zero duration cannot be told apart
-    /// from an immediate failure of every attempt (`Timeout::NoTimeout` is the way to run without
-    /// a timeout), so it makes every request through this context fail with
-    /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument),
-    /// like an invalid id does.
+    /// Replaces the tier of every request with `timeout`. A zero duration is refused when a request
+    /// is sent (see [`check_request_allowed`](Self::check_request_allowed)).
     pub(crate) fn with_timeout(mut self, timeout: Timeout) -> Self {
-        if timeout == Timeout::Custom(Duration::ZERO) {
-            self.http = self.http.poisoned(ZERO_TIMEOUT_MESSAGE.to_string());
-        }
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Fails with [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument)
+    /// when a request cannot be sent: the client was addressed with an invalid id (which follows
+    /// every client chained from it), or was given a zero timeout or cap. A zero timeout makes
+    /// every attempt fail at once and can never grow by doubling, and `Timeout::NoTimeout` is the
+    /// way to run without one. The timeout and cap of this client alone are checked, so a zero one
+    /// is neither inherited by chained clients nor sticky once `with_timeout` replaces it.
+    fn check_request_allowed(&self) -> ApifyClientResult<()> {
+        self.http.fail_if_poisoned()?;
+        let zero_timeout = self.timeout == Some(Timeout::Custom(Duration::ZERO))
+            || self.timeout_cap == Some(Duration::ZERO);
+        if zero_timeout {
+            return Err(ApifyClientError::InvalidArgument(
+                ZERO_TIMEOUT_MESSAGE.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Gives this context the query parameters of the client it is chained from, so that e.g. the
+    /// dataset of `actor.last_run(Some("SUCCEEDED"))` is the dataset of the last *succeeded* run.
+    pub(crate) fn with_base_params(mut self, base_params: &QueryParams) -> Self {
+        self.base_params = base_params.clone();
         self
     }
 
@@ -160,12 +179,9 @@ impl ResourceContext {
         }
     }
 
-    /// Lowers the tier of every request to `cap` where it is longer. A zero cap is rejected like
-    /// a zero timeout (see [`with_timeout`](Self::with_timeout)).
+    /// Lowers the tier of every request to `cap` where it is longer. A zero cap is refused like a
+    /// zero timeout.
     pub(crate) fn with_timeout_cap(mut self, cap: Duration) -> Self {
-        if cap.is_zero() {
-            self.http = self.http.poisoned(ZERO_TIMEOUT_MESSAGE.to_string());
-        }
         self.timeout_cap = Some(cap);
         self
     }
@@ -226,6 +242,7 @@ impl ResourceContext {
         timeout: Duration,
         options: CallOptions,
     ) -> ApifyClientResult<HttpResponse> {
+        self.check_request_allowed()?;
         self.http
             .call_with_options(
                 HttpRequest {
@@ -240,8 +257,9 @@ impl ResourceContext {
             .await
     }
 
-    /// The URL of `sub_path` with the inherited and per-call query parameters applied.
-    fn url_with_params(&self, sub_path: Option<&str>, params: &QueryParams) -> String {
+    /// The URL of `sub_path` with the inherited (see [`with_base_params`](Self::with_base_params))
+    /// and per-call query parameters applied.
+    pub(crate) fn url_with_params(&self, sub_path: Option<&str>, params: &QueryParams) -> String {
         self.merged_params(params).apply_to_url(&self.url(sub_path))
     }
 }
@@ -510,7 +528,7 @@ pub(crate) async fn head_exists(
 /// `content_encoding`, when set, is sent as the `Content-Encoding` header for an
 /// already-compressed value; it makes [`HttpClient::call`]'s automatic request compression skip
 /// the body (it already refuses to double-encode a request that carries a `Content-Encoding`), so
-/// the bytes reach the API exactly as given. `options` are the per-call [`CallOptions`].
+/// the bytes reach the API exactly as given.
 pub(crate) async fn put_raw(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -556,6 +574,7 @@ pub(crate) async fn get_byte_stream(
     url: String,
     tier: Timeout,
 ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+    ctx.check_request_allowed()?;
     ctx.http
         .call_streaming(HttpRequest {
             method: HttpMethod::Get,

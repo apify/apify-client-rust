@@ -234,9 +234,15 @@ impl DatasetClient {
     }
 
     /// Creates a dataset client for a run's default dataset (no ID; nested path only).
-    pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
+    pub(crate) fn nested(
+        http: HttpClient,
+        base_url: &str,
+        sub_path: &str,
+        base_params: &QueryParams,
+    ) -> Self {
         Self {
-            ctx: ResourceContext::collection(http, base_url, sub_path),
+            ctx: ResourceContext::collection(http, base_url, sub_path)
+                .with_base_params(base_params),
         }
     }
 
@@ -272,7 +278,7 @@ impl DatasetClient {
     ) -> ApifyClientResult<PaginationList<T>> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        let url = self.ctx.url_with_params(Some("items"), &params);
         let response = self
             .ctx
             .send(HttpMethod::Get, url, self.ctx.timeout(Timeout::Long))
@@ -365,7 +371,7 @@ impl DatasetClient {
         let mut params = QueryParams::new();
         params.add_str("format", Some(format.as_str()));
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        let url = self.ctx.url_with_params(Some("items"), &params);
         let response = self
             .ctx
             .send(HttpMethod::Get, url, self.ctx.timeout(Timeout::Long))
@@ -395,7 +401,7 @@ impl DatasetClient {
         let mut params = QueryParams::new();
         params.add_str("format", Some(format.as_str()));
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        let url = self.ctx.url_with_params(Some("items"), &params);
         get_byte_stream(&self.ctx, url, Timeout::Long).await
     }
 
@@ -411,14 +417,12 @@ impl DatasetClient {
     pub async fn push_items<T: Serialize>(&self, items: &T) -> ApifyClientResult<()> {
         let body = serde_json::to_vec(items)?;
         check_items_shape(&body)?;
-        let url = self.ctx.url(Some("items"));
+        let url = self.ctx.url_with_params(Some("items"), &QueryParams::new());
         let mut headers = std::collections::HashMap::new();
         headers.insert(
             "Content-Type".to_string(),
             "application/json; charset=utf-8".to_string(),
         );
-        // A push that timed out may have reached the API, so retrying it could store the items
-        // twice: the first transport timeout is final.
         self.ctx
             .send_with_options(
                 HttpMethod::Post,

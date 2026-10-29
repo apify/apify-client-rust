@@ -59,9 +59,11 @@ and the iterator. Its fields:
 | `name` | `Option<String>` | Technical name of the Actor. |
 | `username` | `Option<String>` | Username of the Actor's owner. |
 | `title` | `Option<String>` | Human-readable title. |
+| `url` | `Option<String>` | URL of the Actor's page. |
+| `user_picture_url` | `Option<String>` | URL of the owner's picture. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
-`name`, `username` and `title` are optional, so a display routine typically prefers `title`
+`url` and `user_picture_url` are normalized to their WHATWG URL serialization. `name`, `username` and `title` are optional, so a display routine typically prefers `title`
 and falls back to `name` (e.g. `actor.title.or(actor.name)`).
 
 ## Users — `client.me()` / `client.user(id)`
@@ -87,6 +89,7 @@ organization your API token belongs to. They return a `404` as an error.
 |---|---|---|
 | `id` | `String` | Unique user ID (always present). |
 | `username` | `Option<String>` | Username. |
+| `profile` | `Option<UserProfile>` | The public profile: `name`, `picture_url` and `website_url` (both normalized to their WHATWG URL serialization) and the other fields in `extra`. |
 | `extra` | `Extra` | Any other fields returned by the API (more fields are present for `me` than for a public `user(id)`). |
 
 ```rust,no_run

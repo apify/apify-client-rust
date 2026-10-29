@@ -288,12 +288,12 @@ pub(crate) struct HttpClientConfig {
 
 /// Options of a single [`HttpClient::call_with_options`].
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CallOptions {
+pub(crate) struct CallOptions {
     /// Give up on the first transport timeout instead of retrying it. For a call that is not
     /// idempotent, such as pushing dataset items, whose request may have reached the API before
     /// the client gave up on it: a retry could then store the same data twice. Other errors are
     /// retried as usual.
-    pub do_not_retry_timeouts: bool,
+    pub(crate) do_not_retry_timeouts: bool,
 }
 
 /// The orchestrating HTTP client shared by every resource client.
@@ -340,7 +340,7 @@ impl HttpClient {
         self
     }
 
-    fn fail_if_poisoned(&self) -> ApifyClientResult<()> {
+    pub(crate) fn fail_if_poisoned(&self) -> ApifyClientResult<()> {
         match &self.poison {
             Some(message) => Err(ApifyClientError::InvalidArgument(message.to_string())),
             None => Ok(()),
@@ -397,7 +397,7 @@ impl HttpClient {
     }
 
     /// Like [`call`](Self::call), with the given per-call [`CallOptions`].
-    pub async fn call_with_options(
+    pub(crate) async fn call_with_options(
         &self,
         mut request: HttpRequest,
         options: CallOptions,

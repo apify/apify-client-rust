@@ -225,9 +225,15 @@ impl RequestQueueClient {
     }
 
     /// Creates an RQ client for a run's default queue (nested path, no ID).
-    pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
+    pub(crate) fn nested(
+        http: HttpClient,
+        base_url: &str,
+        sub_path: &str,
+        base_params: &QueryParams,
+    ) -> Self {
         Self {
-            ctx: ResourceContext::collection(http, base_url, sub_path),
+            ctx: ResourceContext::collection(http, base_url, sub_path)
+                .with_base_params(base_params),
             client_key: None,
         }
     }
@@ -325,7 +331,7 @@ impl RequestQueueClient {
         })?;
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&request_path(&id)?)));
+        let url = self.ctx.url_with_params(Some(&request_path(&id)?), &params);
         let body = serde_json::to_vec(request)?;
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -345,7 +351,7 @@ impl RequestQueueClient {
     /// Deletes a request by ID.
     pub async fn delete_request(&self, id: &str) -> ApifyClientResult<()> {
         let params = self.base_params();
-        let url = params.apply_to_url(&self.ctx.url(Some(&request_path(id)?)));
+        let url = self.ctx.url_with_params(Some(&request_path(id)?), &params);
         self.ctx
             .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;
@@ -601,7 +607,9 @@ impl RequestQueueClient {
         params
             .add_int("lockSecs", Some(lock_secs))
             .add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("{}/lock", request_path(id)?))));
+        let url = self
+            .ctx
+            .url_with_params(Some(&format!("{}/lock", request_path(id)?)), &params);
         let response = self
             .ctx
             .send(HttpMethod::Put, url, self.ctx.timeout(Timeout::Medium))
@@ -615,7 +623,9 @@ impl RequestQueueClient {
     pub async fn delete_request_lock(&self, id: &str, forefront: bool) -> ApifyClientResult<()> {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(&self.ctx.url(Some(&format!("{}/lock", request_path(id)?))));
+        let url = self
+            .ctx
+            .url_with_params(Some(&format!("{}/lock", request_path(id)?)), &params);
         self.ctx
             .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;

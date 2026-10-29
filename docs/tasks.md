@@ -45,6 +45,7 @@ are preserved in `extra`.
 | `modified_at` | `Option<DateTime<Utc>>` | When the task was last modified. |
 | `is_public` | `Option<bool>` | Whether the task is published on its public landing page. Derived from `public_config.published_at`; set it via `publish()`/`unpublish()` or `update()`. |
 | `public_config` | `Option<TaskPublicConfig>` | The task's public landing page display configuration, or `None` if never configured. |
+| `standby_url` | `Option<String>` | URL of the task's Actor Standby endpoint, or `None` if it has none. Normalized to its WHATWG URL serialization. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 ## The `TaskPublicConfig` model
