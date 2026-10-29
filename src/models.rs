@@ -9,11 +9,32 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Convenience alias for the catch-all map of unmodelled JSON fields.
 pub type Extra = HashMap<String, Value>;
+
+/// Deserializes an optional URL field the OpenAPI specification declares as `format: uri`, into
+/// the WHATWG URL serialization of the value the API sent, so every Apify client returns the same
+/// string for the same field.
+///
+/// Normalization adds a trailing slash to an empty path, lowercases and punycodes the host, drops
+/// a default port, and percent-encodes unsafe characters. A value that is not a valid absolute URL
+/// fails the deserialization of the whole response.
+fn deserialize_normalized_url<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    value
+        .map(|raw| {
+            url::Url::parse(&raw)
+                .map(String::from)
+                .map_err(|err| serde::de::Error::custom(format!("invalid URL `{raw}`: {err}")))
+        })
+        .transpose()
+}
 
 /// An Actor on the Apify platform.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -89,8 +110,8 @@ pub struct ActorRun {
     /// Default request queue ID associated with the run.
     #[serde(default)]
     pub default_request_queue_id: Option<String>,
-    /// URL of the run's container, if running.
-    #[serde(default)]
+    /// URL of the run's container, if running. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
     pub container_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
@@ -569,8 +590,8 @@ pub struct Webhook {
     /// ID of the owner.
     #[serde(default)]
     pub user_id: Option<String>,
-    /// The URL that receives the webhook POST request.
-    #[serde(default)]
+    /// The URL that receives the webhook POST request. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
     pub request_url: Option<String>,
     /// Event types that trigger this webhook.
     #[serde(default)]
@@ -657,4 +678,54 @@ pub struct ActorEnvVar {
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_fields_are_normalized_to_the_whatwg_serialization() {
+        let run: ActorRun = serde_json::from_value(serde_json::json!({
+            "id": "run",
+            "containerUrl": "HTTPS://Run-1.Example.COM:443"
+        }))
+        .unwrap();
+        assert_eq!(
+            run.container_url.as_deref(),
+            Some("https://run-1.example.com/")
+        );
+
+        let webhook: Webhook = serde_json::from_value(serde_json::json!({
+            "id": "hook",
+            "requestUrl": "https://example.com/a b?q=1"
+        }))
+        .unwrap();
+        assert_eq!(
+            webhook.request_url.as_deref(),
+            Some("https://example.com/a%20b?q=1")
+        );
+    }
+
+    #[test]
+    fn null_and_missing_url_fields_stay_none() {
+        let run: ActorRun = serde_json::from_value(serde_json::json!({
+            "id": "run",
+            "containerUrl": null
+        }))
+        .unwrap();
+        assert_eq!(run.container_url, None);
+
+        let webhook: Webhook = serde_json::from_value(serde_json::json!({ "id": "hook" })).unwrap();
+        assert_eq!(webhook.request_url, None);
+    }
+
+    #[test]
+    fn an_invalid_url_fails_the_deserialization() {
+        let result: Result<Webhook, _> = serde_json::from_value(serde_json::json!({
+            "id": "hook",
+            "requestUrl": "not a url"
+        }));
+        assert!(result.is_err());
+    }
 }

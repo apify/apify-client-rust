@@ -40,7 +40,11 @@
 //!   [`http_client::ReqwestBackend`]. Swap it via
 //!   [`ApifyClientBuilder::http_backend`].
 //! - **Cross-cutting behaviour** (auth, `User-Agent`, retries with exponential backoff,
-//!   timeouts) lives in [`http_client::HttpClient`] and is applied to every request.
+//!   timeouts, request compression) lives in [`http_client::HttpClient`] and is applied to every
+//!   request.
+//! - **Timeouts**: every method uses a [`Timeout`] tier (`Short`, `Medium` or `Long`) whose
+//!   duration is configured on the [`ApifyClientBuilder`]. A resource client's `with_timeout`
+//!   overrides the tier of all its requests.
 //!
 //! ## Cancellation
 //!
@@ -49,7 +53,10 @@
 //! nothing until polled, so dropping one (e.g. via `tokio::select!`, or letting a
 //! `tokio::time::timeout` elapse) stops the underlying request without any API for it. This
 //! client therefore exposes no separate cancellation parameter — dropping the future returned
-//! by any method is the idiomatic equivalent.
+//! by any method is the idiomatic equivalent: the request in flight ends and no retry or further
+//! poll follows. The built-in waits, such as [`RunClient::wait_for_finish`], are futures too.
+//!
+//! [`RunClient::wait_for_finish`]: crate::clients::run::RunClient::wait_for_finish
 
 #![warn(missing_docs)]
 
@@ -58,13 +65,18 @@ pub mod clients;
 pub mod common;
 pub mod error;
 pub mod http_client;
+pub mod http_compressors;
 pub mod models;
+pub mod timeouts;
 mod version;
 
 pub use client::{ApifyClient, ApifyClientBuilder};
 pub use common::{ListOptions, PaginationList, QueryParams, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
-pub use http_client::RequestCompression;
+pub use http_compressors::{
+    BrotliHttpCompressor, GzipHttpCompressor, HttpCompressor, RequestCompression,
+};
+pub use timeouts::Timeout;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
 // Re-export the most commonly used option/parameter types for ergonomic access.

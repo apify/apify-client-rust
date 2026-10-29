@@ -18,6 +18,7 @@ use crate::common::{parse_data_envelope, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::{Actor, ActorRun, Build};
+use crate::timeouts::Timeout;
 
 /// How long to keep retrying a run start that the API rejects for lack of resources (see
 /// [`ActorStartOptions::wait_for_resources`]).
@@ -38,8 +39,9 @@ pub struct ActorStartOptions {
     pub build: Option<String>,
     /// Memory in megabytes allocated for the run.
     pub memory_mbytes: Option<i64>,
-    /// Timeout for the run in seconds (`0` means no timeout).
-    pub timeout_secs: Option<i64>,
+    /// Timeout of the run itself in seconds (`0` means no timeout). Not the timeout of the API
+    /// request, which is set with the client's `with_timeout`.
+    pub run_timeout_secs: Option<i64>,
     /// Maximum seconds to wait server-side for the run to finish (max 60).
     pub wait_for_finish: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
@@ -77,7 +79,7 @@ impl ActorStartOptions {
         params
             .add_str("build", self.build.clone())
             .add_int("memory", self.memory_mbytes)
-            .add_int("timeout", self.timeout_secs)
+            .add_int("timeout", self.run_timeout_secs)
             .add_int("waitForFinish", self.wait_for_finish)
             .add_int("maxItems", self.max_items)
             .add_float("maxTotalChargeUsd", self.max_total_charge_usd)
@@ -120,6 +122,8 @@ pub struct ActorClient {
     id: String,
 }
 
+crate::clients::base::impl_with_timeout!(ActorClient);
+
 impl ActorClient {
     pub(crate) fn new(root: ApifyClient, http: HttpClient, base_url: &str, id: &str) -> Self {
         Self {
@@ -132,17 +136,17 @@ impl ActorClient {
 
     /// Fetches the Actor object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<Actor>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the Actor with the given fields and returns the updated object.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<Actor> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the Actor.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Starts the Actor and returns immediately with the created run.
@@ -195,6 +199,9 @@ impl ActorClient {
             .content_type
             .clone()
             .unwrap_or_else(|| default_content_type.to_string());
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Medium, options.wait_for_finish);
         crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
             post_with_body(
                 &self.ctx,
@@ -202,6 +209,7 @@ impl ActorClient {
                 &params,
                 body.clone(),
                 &content_type,
+                timeout,
             )
         })
         .await
@@ -250,10 +258,21 @@ impl ActorClient {
         params
             .add_str("version", Some(version_number.to_string()))
             .add_bool("betaPackages", options.beta_packages)
-            .add_str("tag", options.tag)
+            .add_str("tag", options.tag.clone())
             .add_bool("useCache", options.use_cache)
             .add_int("waitForFinish", options.wait_for_finish);
-        post_with_body(&self.ctx, Some("builds"), &params, None, "application/json").await
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Medium, options.wait_for_finish);
+        post_with_body(
+            &self.ctx,
+            Some("builds"),
+            &params,
+            None,
+            "application/json",
+            timeout,
+        )
+        .await
     }
 
     /// Resolves the Actor's default build and returns a client for it.
@@ -267,16 +286,12 @@ impl ActorClient {
         let mut params = QueryParams::new();
         params.add_int("waitForFinish", wait_for_finish);
         let url = params.apply_to_url(&self.ctx.url(Some("builds/default")));
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Short, wait_for_finish);
         let response = self
             .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(crate::http_client::HttpMethod::Get, url, timeout)
             .await?;
         let build: Build = parse_data_envelope(&response.body)?;
         Ok(BuildClient::new(
@@ -316,6 +331,7 @@ impl ActorClient {
             &params,
             Some(body),
             Some("application/json"),
+            self.ctx.timeout(Timeout::Short),
         )
         .await
     }

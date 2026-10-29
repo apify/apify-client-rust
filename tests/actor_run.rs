@@ -68,7 +68,10 @@ async fn run_actor_and_read_outputs() {
     let raw_log = client
         .run(&run.id)
         .log()
-        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .get_with_options(apify_client::LogOptions {
+            raw: Some(true),
+            ..Default::default()
+        })
         .await
         .expect("get raw run log");
     assert!(raw_log.is_some(), "finished run should have a raw log");
@@ -201,4 +204,79 @@ async fn log_stream_of_missing_run_carries_structured_api_error() {
         .expect("error should be a structured ApiError, not a generic transport error");
     assert_eq!(api_error.status_code, 404);
     assert!(api_error.is_not_found());
+}
+
+/// A chained client cannot tell a missing run from a missing storage or log, so a `404` through it
+/// is an error, while a client that names its resource by id resolves it to `None`.
+#[tokio::test(flavor = "multi_thread")]
+async fn not_found_through_a_chained_client_is_an_error() {
+    let client = require_client!();
+    let run = client.run("nonexistent-run-id-xyz");
+
+    let err = run
+        .dataset()
+        .get()
+        .await
+        .expect_err("a chained client returns the 404");
+    assert!(err.as_api_error().expect("an API error").is_not_found());
+    let err = run
+        .log()
+        .get()
+        .await
+        .expect_err("a chained log client returns the 404");
+    assert!(err.as_api_error().expect("an API error").is_not_found());
+
+    assert!(client
+        .log("nonexistent-run-id-xyz")
+        .get()
+        .await
+        .expect("a log addressed by id resolves a 404")
+        .is_none());
+    assert!(client
+        .log("nonexistent-run-id-xyz")
+        .stream()
+        .await
+        .expect("a log stream addressed by id resolves a 404")
+        .is_none());
+    assert!(client
+        .dataset("nonexistent-dataset-id-xyz")
+        .get()
+        .await
+        .expect("a dataset addressed by id resolves a 404")
+        .is_none());
+}
+
+/// An id that cannot be placed in a URL path fails without a request.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invalid_id_is_rejected() {
+    let client = require_client!();
+    let err = client
+        .run("..")
+        .get()
+        .await
+        .expect_err("a dot segment is not a run id");
+    assert!(
+        matches!(err, apify_client::ApifyClientError::InvalidArgument(_)),
+        "{err:?}"
+    );
+}
+
+/// The `deployment` filter is accepted by the run listing, together with the non-terminal status
+/// it requires.
+#[tokio::test(flavor = "multi_thread")]
+async fn list_runs_filtered_by_deployment() {
+    let client = require_client!();
+    let page = client
+        .runs()
+        .list(
+            Default::default(),
+            apify_client::RunListOptions {
+                status: vec!["RUNNING".to_string()],
+                deployment: vec!["SINGLE_TENANT".to_string()],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("listing runs by deployment should succeed");
+    assert!(page.total >= 0);
 }

@@ -14,6 +14,7 @@ use crate::common::{to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorRun;
+use crate::timeouts::Timeout;
 
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
@@ -43,8 +44,9 @@ pub struct RunResurrectOptions {
     pub build: Option<String>,
     /// Memory in megabytes.
     pub memory_mbytes: Option<i64>,
-    /// Timeout in seconds.
-    pub timeout_secs: Option<i64>,
+    /// Timeout of the run itself in seconds. Not the timeout of the API request, which is set with
+    /// the client's `with_timeout`.
+    pub run_timeout_secs: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
     pub max_items: Option<i64>,
     /// Maximum total cost of the run in USD, across all pricing models.
@@ -94,6 +96,8 @@ pub struct RunClient {
     id: String,
 }
 
+crate::clients::base::impl_with_timeout!(RunClient);
+
 impl RunClient {
     pub(crate) fn new(
         _root: crate::client::ApifyClient,
@@ -118,17 +122,17 @@ impl RunClient {
 
     /// Fetches the run object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<ActorRun>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the run (e.g. its status message) and returns the updated object.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<ActorRun> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the run.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Aborts the run. `gracefully` is optional, matching the reference client's optional
@@ -138,7 +142,15 @@ impl RunClient {
     pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params.add_bool("gracefully", gracefully);
-        post_action(&self.ctx, Some("abort"), &params, None, None).await
+        post_action(
+            &self.ctx,
+            Some("abort"),
+            &params,
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Transforms the run into a run of another Actor (metamorph).
@@ -199,12 +211,28 @@ impl RunClient {
             .as_deref()
             .unwrap_or(default_content_type)
             .to_string();
-        post_with_body(&self.ctx, Some("metamorph"), &params, body, &content_type).await
+        post_with_body(
+            &self.ctx,
+            Some("metamorph"),
+            &params,
+            body,
+            &content_type,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Reboots the run (restarts its container, preserving the run ID and storages).
     pub async fn reboot(&self) -> ApifyClientResult<ActorRun> {
-        post_action(&self.ctx, Some("reboot"), &QueryParams::new(), None, None).await
+        post_action(
+            &self.ctx,
+            Some("reboot"),
+            &QueryParams::new(),
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Resurrects a finished run, starting it again with (optionally overridden) settings.
@@ -219,11 +247,19 @@ impl RunClient {
         params
             .add_str("build", options.build)
             .add_int("memory", options.memory_mbytes)
-            .add_int("timeout", options.timeout_secs)
+            .add_int("timeout", options.run_timeout_secs)
             .add_int("maxItems", options.max_items)
             .add_float("maxTotalChargeUsd", options.max_total_charge_usd)
             .add_bool("restartOnError", options.restart_on_error);
-        post_action(&self.ctx, Some("resurrect"), &params, None, None).await
+        post_action(
+            &self.ctx,
+            Some("resurrect"),
+            &params,
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Charges the run for a pay-per-event run, recording occurrences of a named event.
@@ -251,14 +287,13 @@ impl RunClient {
         // A successful `HttpClient::call` already guarantees a 2xx status; the (empty) body
         // is intentionally ignored rather than parsed as a `data` envelope.
         self.ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Post,
+            .send_with(
+                crate::http_client::HttpMethod::Post,
                 url,
                 headers,
-                body: Some(body_bytes),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body_bytes),
+                self.ctx.timeout(Timeout::Short),
+            )
             .await?;
         Ok(())
     }
@@ -316,11 +351,12 @@ impl RunClient {
     ///
     /// Convenience equivalent to `run.log().stream()` (mirrors the reference client's
     /// `getStreamedLog`): yields log chunks as they arrive, so callers can forward them to
-    /// their own logger/stdout while the run is in progress.
+    /// their own logger/stdout while the run is in progress. A run that does not exist is a
+    /// [`NotFound`](crate::ApiError::is_not_found) error.
     pub async fn get_streamed_log(
         &self,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream().await
+        self.log().stream_required(Default::default()).await
     }
 
     /// Opens a live stream of the run's log for redirection, applying the given
@@ -335,6 +371,6 @@ impl RunClient {
         &self,
         options: crate::clients::log::LogOptions,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream_with_options(options).await
+        self.log().stream_required(options).await
     }
 }

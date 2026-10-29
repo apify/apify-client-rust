@@ -71,15 +71,14 @@ and falls back to `name` (e.g. `actor.title.or(actor.name)`).
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<User>` | Account details (private for `me`, public otherwise). |
-| `monthly_usage()` | — | `Value` | Current account's monthly usage for the current billing cycle (`me` only). |
-| `monthly_usage_for_date(date)` | `Option<&str>` | `Value` | Monthly usage for the billing cycle containing the `YYYY-MM-DD` `date`; `None` == current month (`me` only). |
-| `limits()` | — | `Value` | Current account's limits (`me` only). |
-| `update_limits(limits)` | `&impl Serialize` | `()` | Updates the account's limits (`me` only). |
+| `monthly_usage()` | — | `Value` | The user's monthly usage for the current billing cycle. |
+| `monthly_usage_for_date(date)` | `Option<&str>` | `Value` | Monthly usage for the billing cycle containing the `YYYY-MM-DD` `date`; `None` == current month. |
+| `limits()` | — | `Value` | The user's account and usage limits. |
+| `update_limits(limits)` | `&impl Serialize` | `()` | Updates the user's limits. |
 
-The methods marked **(`me` only)** operate on the authenticated account and are only valid on the
-`client.me()` client. Calling any of them on a specific-user client (`client.user(id)`) returns
-`Err(ApifyClientError::InvalidArgument(..))` without making a network request; `get()` is the only
-method that works for both `me` and other users.
+`monthly_usage*`, `limits` and `update_limits` work for `client.me()` and for `client.user(id)`
+alike. For a user other than the current one, the API only allows your own account and the
+organization your API token belongs to. They return a `404` as an error.
 
 `get()` returns a `User` (from `apify_client::models`). Its fields — including the `user.id` and
 `user.username` the [`get_account`](../examples/get_account.rs) example reads:
@@ -143,12 +142,19 @@ Also reachable via `run.log()` and `build.log()`.
 | `get_with_options(options)` | `LogOptions` | `Option<String>` | As `get()`, with options (e.g. `raw`). |
 | `get_bytes()` | — | `Option<Vec<u8>>` | The entire log as raw bytes (e.g. if it is not valid UTF-8). |
 | `get_bytes_with_options(options)` | `LogOptions` | `Option<Vec<u8>>` | As `get_bytes()`, with options (e.g. `raw`). |
-| `stream()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Streams log chunks live (log redirection). |
-| `stream_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
+| `stream()` | — | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | Streams log chunks live (log redirection); `None` if the log does not exist. |
+| `stream_with_options(options)` | `LogOptions` | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | As `stream()`, with options (e.g. `raw`). |
 
-`LogOptions` has a single field, `raw: Option<bool>`. When `Some(true)`, the API returns the
-raw log content without server-side processing (e.g. without the per-line timestamps it adds by
-default); leaving it `None` uses the default processed format. Fetch a run's raw log as text:
+`get*` and `stream*` return `None` for a missing log only on a client that names its log by id
+(`client.log(id)`). A client chained from a run or build (`run.log()`, `build.log()`) has no id of
+its own, so it returns the `404` as an error: the response cannot tell a missing run from a missing
+log. `run.get_streamed_log()` returns the stream directly and fails for a missing run.
+
+`LogOptions` has two fields, `raw` and `download`, both `Option<bool>`. When `raw` is `Some(true)`,
+the API returns the raw log content without server-side processing (e.g. without the per-line
+timestamps it adds by default); leaving it `None` uses the default processed format. `download`
+asks a web browser to download the log as a file rather than open it in a tab. Fetch a run's raw
+log as text:
 
 ```rust,no_run
 use apify_client::{ApifyClient, LogOptions};
@@ -157,7 +163,7 @@ use apify_client::{ApifyClient, LogOptions};
 let raw_log = client
     .run(run_id)
     .log()
-    .get_with_options(LogOptions { raw: Some(true) })
+    .get_with_options(LogOptions { raw: Some(true), ..Default::default() })
     .await?;
 if let Some(text) = raw_log {
     print!("{text}");
@@ -166,11 +172,13 @@ if let Some(text) = raw_log {
 # }
 ```
 
-The streaming variant takes the same options — `client.run(run_id).log().stream_with_options(LogOptions { raw: Some(true) }).await?`
+The streaming variant takes the same options — `client.run(run_id).log().stream_with_options(LogOptions { raw: Some(true), ..Default::default() }).await?`
 yields the raw log chunks (this is what log redirection uses). A gap of more than 6 minutes
 between chunks (the run legitimately logging nothing for that long) ends the stream with an
 `ApifyClientError::Timeout`; this is an inactivity timeout, not a cap on the stream's total
-duration, so an actively (if slowly) logging run is never cut off.
+duration, so an actively (if slowly) logging run is never cut off. Set the window with the
+`Timeout::Long` tier (`ApifyClientBuilder::timeout_long`) or the log client's `with_timeout`, where
+`Timeout::NoTimeout` disables it.
 
 Consuming `stream()` requires the `futures_util::StreamExt` trait (from the `futures-util`
 crate) in scope to call `.next()` on the returned stream. Add it to your `Cargo.toml`:
@@ -187,7 +195,7 @@ use apify_client::ApifyClient;
 use futures_util::StreamExt;
 
 # async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-let mut stream = client.run(run_id).log().stream().await?;
+let mut stream = client.run(run_id).get_streamed_log().await?;
 while let Some(chunk) = stream.next().await {
     let chunk = chunk?;
     print!("{}", String::from_utf8_lossy(&chunk));

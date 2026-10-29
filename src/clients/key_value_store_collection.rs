@@ -6,12 +6,15 @@ use crate::common::{PaginationList, QueryParams, StorageListOptions};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::KeyValueStore;
+use crate::timeouts::Timeout;
 
 /// Client for listing key-value stores and getting-or-creating one by name.
 #[derive(Debug, Clone)]
 pub struct KeyValueStoreCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(KeyValueStoreCollectionClient);
 
 impl KeyValueStoreCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -28,7 +31,7 @@ impl KeyValueStoreCollectionClient {
     ) -> ApifyClientResult<PaginationList<KeyValueStore>> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all key-value stores matching `options`, fetching pages on demand.
@@ -43,6 +46,6 @@ impl KeyValueStoreCollectionClient {
 
     /// Gets the store with the given `name`, creating it if it does not exist.
     pub async fn get_or_create(&self, name: Option<&str>) -> ApifyClientResult<KeyValueStore> {
-        get_or_create_named(&self.ctx, name).await
+        get_or_create_named(&self.ctx, name, Timeout::Short).await
     }
 }

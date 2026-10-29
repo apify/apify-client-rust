@@ -281,7 +281,7 @@ async fn task_crud_flow() {
         .await
         .expect("update input");
     let input = task_client.get_input().await.expect("get input");
-    assert!(input.is_some());
+    assert_eq!(input["message"], "updated");
 
     // Update (rename + set description).
     let renamed = common::unique_name("task-renamed");
