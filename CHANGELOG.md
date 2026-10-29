@@ -10,14 +10,20 @@ Ports the `apify-client-js` v3 changes.
 
 ### Added
 - Timeout tiers: `Timeout` (`Short`, `Medium`, `Long`, `NoTimeout`, `Custom`), the builder options
-  `timeout_short`, `timeout_medium`, `timeout_long` and `timeout_max`, and `with_timeout` on every
-  resource client.
+  `timeout_short`, `timeout_medium`, `timeout_long` and `timeout_max`, `with_timeout` on every
+  resource client and `RequestQueueClient::with_timeout_cap`.
 - `HttpCompressor` with `BrotliHttpCompressor` and `GzipHttpCompressor` (configurable quality), set
   with `ApifyClientBuilder::http_compressor`.
 - `ApifyClientBuilder::default_header`.
-- `RunListOptions::deployment`, `StoreListOptions::include_input_schema` and
-  `LogOptions::download`.
-- Offline tests for the timeout tiers, the 404 handling, id validation and batch add.
+- `ApifyClient::stats`: the `Statistics` of the calls, requests and `429` responses.
+- `HttpClient::call_with_options` and `CallOptions::do_not_retry_timeouts`;
+  `KeyValueStoreClient::set_record_raw_with_options`, `set_record_json_with_options` and
+  `SetRecordOptions`.
+- `RunListOptions::deployment`, `StoreListOptions::include_input_schema` and `LogOptions::download`.
+- Typed, normalized URL fields: `ActorRun::console_url` and `output`, `Task::standby_url`,
+  `Dataset::console_url` and `items_public_url`, `KeyValueStore::console_url`, `keys_public_url` and
+  `records_public_url`, `KeyValueStoreKey::record_public_url`, `RequestQueue::console_url`,
+  `ActorStoreListItem::url` and `user_picture_url`, `User::profile`, `WebhookDispatch::webhook`.
 
 ### Changed
 - Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
@@ -25,26 +31,29 @@ Ports the `apify-client-js` v3 changes.
   timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish` has no timeout, and a
   `waitForFinish` request gets the server-side wait added to its tier.
 - **Breaking:** `HttpRequest::timeout` may be `timeouts::NO_TIMEOUT`, which a custom `HttpBackend`
-  must not abort.
-- **Breaking:** `RetryConfig` no longer has a `timeout` field.
+  must not abort. `RetryConfig` no longer has a `timeout` field.
 - **Breaking:** any `404` resolves to `None`, not only `record-not-found`, but only for a client that
   names its resource by id. `run.dataset()`, `run.log()` and the other chained clients return it as
   an error.
 - **Breaking:** `get_statistics`, `get_input`, `schedule.get_log` and `get_openapi_definition`
   return the `404` as an error and no longer wrap the result in `Option`.
-- **Breaking:** `LogClient::stream` and `stream_with_options` return `Option`, `None` for a missing log.
+- **Breaking:** `LogClient::stream`, `stream_with_options`, `RunClient::get_streamed_log` and
+  `get_streamed_log_with_options` return an `Option`: `None` for a missing log or run.
 - **Breaking:** `ActorStartOptions::timeout_secs` and `RunResurrectOptions::timeout_secs` are now
   `run_timeout_secs`.
-- **Breaking:** `ListRequestsOptions::exclusive_start_id` is removed; use `cursor`.
+- **Breaking:** `ListRequestsOptions::exclusive_start_id` is deprecated in favor of `cursor`.
 - **Breaking:** `LogOptions`, `RunListOptions` and `StoreListOptions` gained a public field.
 - **Breaking:** an id, record key or request id that is empty or a dot segment fails with
   `InvalidArgument`; ids are percent-encoded and every `/` of an id becomes `~`.
-- **Breaking:** `dataset.push_items` rejects anything but an object or an array of objects.
-- **Breaking:** `ActorRun::container_url` and `Webhook::request_url` are normalized URLs.
+- **Breaking:** `dataset.push_items` rejects anything but an object or an array of objects, and does
+  not retry a transport timeout.
+- **Breaking:** the URL fields listed above are normalized, and no longer in `extra`.
+- **Breaking:** `RequestCompression` moved to `http_compressors` (still re-exported at the crate
+  root).
 - `UserClient::limits`, `monthly_usage` and `update_limits` work for any user, not only `me`.
-- The default gzip quality is 9.
 - `batch_add_requests` serializes each request once and rejects an oversized one before sending.
-- The `list` integration tests wait out replica lag for 87 seconds.
+- Key-value store `update`, `record_exists` and the public URL methods, and
+  `DatasetClient::create_items_public_url`, use the `Long` tier.
 
 ## [0.14.1] - 2026-10-26
 

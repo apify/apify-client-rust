@@ -156,6 +156,7 @@ println!("streamed {total_bytes} bytes of JSONL");
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
 | `set_record_raw_with_content_encoding(key, bytes, content_type, content_encoding)` | `&str`, `Vec<u8>`, `&str`, `&str` | `()` | Like `set_record_raw`, for a value that is already compressed (`gzip`, `br`, `deflate`): sends `content_encoding` as the `Content-Encoding` header instead of compressing the bytes again. |
 | `set_record_json(key, value)` | `&str`, `&impl Serialize` | `()` | Stores a JSON record. |
+| `set_record_raw_with_options(key, bytes, content_type, options)` / `set_record_json_with_options(key, value, options)` | as above plus `SetRecordOptions { content_encoding, do_not_retry_timeouts }` | `()` | Like the methods above; `do_not_retry_timeouts` gives up on the first transport timeout instead of retrying it. `content_encoding` is for raw bytes only. |
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
 | `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
@@ -221,7 +222,7 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `LockedRequestQueueHead` | Locks head requests. |
 | `batch_add_requests(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `BatchRequestsOperationResult` | Batch add, with automatic chunking, bounded parallelism, and retries for rate-limited requests. |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `BatchRequestsOperationResult` | Batch delete (max 25 requests per call; larger inputs are rejected client-side). |
-| `list_requests(options)` | `ListRequestsOptions { limit, cursor, filter }` | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
+| `list_requests(options)` | `ListRequestsOptions { limit, cursor, filter }` (and the deprecated `exclusive_start_id`) | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `RequestLockInfo` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |

@@ -149,7 +149,7 @@ where
 
 /// Number of times [`iter_contains_eventually`] rebuilds the iterator and re-scans while waiting
 /// for a just-created resource to become visible in its collection LIST endpoint.
-pub const ITER_RETRY_ATTEMPTS: usize = 30;
+pub const ITER_RETRY_ATTEMPTS: usize = 32;
 
 /// Delay between the attempts made by [`iter_contains_eventually`].
 pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(3);
@@ -167,7 +167,7 @@ pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_se
 /// attempt and returns immediately with no sleeping — so it is a no-op in the common
 /// already-consistent case and only pays the backoff on the rare lagging run.
 ///
-/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = 87s of retrying before giving up,
+/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = 93s of retrying before giving up,
 /// which covers the 90-second staleness window. The cost lands only on lagging or
 /// genuinely-failing runs; a consistent account never sleeps.
 pub async fn iter_contains_eventually<T, F, Mk>(mut make_iter: Mk, mut pred: F) -> bool

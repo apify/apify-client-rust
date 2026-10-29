@@ -2,6 +2,21 @@
 
 use serde::Deserialize;
 
+/// HTTP status code of a request that failed validation.
+pub(crate) const BAD_REQUEST_STATUS_CODE: u16 = 400;
+/// HTTP status code of a missing or invalid token.
+pub(crate) const UNAUTHORIZED_STATUS_CODE: u16 = 401;
+/// HTTP status code of a token that lacks permission for the operation.
+pub(crate) const FORBIDDEN_STATUS_CODE: u16 = 403;
+/// HTTP status code of a resource that is not found.
+pub(crate) const NOT_FOUND_STATUS_CODE: u16 = 404;
+/// HTTP status code of a request that conflicts with the state of the resource.
+pub(crate) const CONFLICT_STATUS_CODE: u16 = 409;
+/// HTTP status code of an exceeded per-resource rate limit.
+pub(crate) const RATE_LIMIT_EXCEEDED_STATUS_CODE: u16 = 429;
+/// First HTTP status code of a server error.
+pub(crate) const MIN_SERVER_ERROR_STATUS_CODE: u16 = 500;
+
 /// The result type used throughout this crate.
 pub type ApifyClientResult<T> = Result<T, ApifyClientError>;
 
@@ -66,17 +81,17 @@ impl ApiError {
     /// since Rust has no exception hierarchy to mirror, these `is_*` predicates are the
     /// idiomatic equivalent classification on the one [`ApiError`] type.
     pub fn is_invalid_request(&self) -> bool {
-        self.status_code == 400
+        self.status_code == BAD_REQUEST_STATUS_CODE
     }
 
     /// `true` for HTTP 401 Unauthorized: the token is missing or invalid.
     pub fn is_unauthorized(&self) -> bool {
-        self.status_code == 401
+        self.status_code == UNAUTHORIZED_STATUS_CODE
     }
 
     /// `true` for HTTP 403 Forbidden: the token lacks permission for the operation.
     pub fn is_forbidden(&self) -> bool {
-        self.status_code == 403
+        self.status_code == FORBIDDEN_STATUS_CODE
     }
 
     /// `true` for HTTP 404 Not Found.
@@ -86,26 +101,26 @@ impl ApiError {
     /// that return other errors directly, e.g. [`crate::clients::actor::ActorClient::start`]
     /// with a nonexistent Actor ID.
     pub fn is_not_found(&self) -> bool {
-        self.status_code == 404
+        self.status_code == NOT_FOUND_STATUS_CODE
     }
 
     /// `true` for HTTP 409 Conflict.
     pub fn is_conflict(&self) -> bool {
-        self.status_code == 409
+        self.status_code == CONFLICT_STATUS_CODE
     }
 
     /// `true` for HTTP 429 Too Many Requests. The client already retries these internally (see
     /// [`crate::ApifyClientBuilder::max_retries`]), so this surfaces only once retries are
     /// exhausted.
     pub fn is_rate_limited(&self) -> bool {
-        self.status_code == 429
+        self.status_code == RATE_LIMIT_EXCEEDED_STATUS_CODE
     }
 
     /// `true` for an HTTP 5xx status. Like [`is_rate_limited`](Self::is_rate_limited), the
     /// client already retries these internally, so this surfaces only once retries are
     /// exhausted.
     pub fn is_server_error(&self) -> bool {
-        self.status_code >= 500
+        self.status_code >= MIN_SERVER_ERROR_STATUS_CODE
     }
 }
 

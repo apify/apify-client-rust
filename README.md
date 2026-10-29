@@ -126,7 +126,13 @@ applies to each attempt separately and doubles with every retry, up to the cap.
 A resource client's `with_timeout` replaces the tier of every request that client sends, with a
 tier, an exact duration, or `Timeout::NoTimeout` to let a request run for as long as it takes.
 With `NoTimeout` the client never aborts the request, so a connection that stalls is not retried
-either. Clients obtained from that client, such as `run.dataset()`, do not inherit the timeout.
+either. A zero duration is rejected: every request then fails with `InvalidArgument`. Clients
+obtained from that client, such as `run.dataset()`, do not inherit the timeout. A request queue
+client also has `with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
+
+A call that is not idempotent is not retried after a transport timeout, because the request may
+have reached the API: `dataset.push_items` never retries one, and the `set_record_*_with_options`
+methods of a key-value store do not either when `do_not_retry_timeouts` is set.
 
 ```rust,no_run
 use std::time::Duration;
@@ -155,7 +161,7 @@ matching `Content-Encoding` header. The default is Brotli (`br`); select
 (`use apify_client::RequestCompression;`). To tune the quality or use another algorithm, pass an
 `HttpCompressor` to `ApifyClientBuilder::http_compressor`: the built-in
 `BrotliHttpCompressor` (quality 0 to 11, default 6) and `GzipHttpCompressor` (quality 1 to 9,
-default 9), or your own implementation of the trait.
+default 6), or your own implementation of the trait.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -173,6 +179,12 @@ let client = ApifyClient::builder()
 The compressor is skipped for bodies under 1024 bytes, for content types that already carry their
 own compression (images, audio, video, archives, ...), and for a request that sets its own
 `Content-Encoding`.
+
+### Statistics
+
+`client.stats()` counts the calls made through the client and every resource client obtained from
+it: `calls()` (each call counts once), `requests()` (every attempt counts) and
+`rate_limit_errors()` (the `429` responses, indexed by attempt).
 
 ### User-Agent
 
@@ -362,8 +374,39 @@ built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom pro
 pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
 `HttpBackend` on your own type instead — just `async fn send`; `send_streaming` (used by
 `log().stream()` and `download_items_stream()`) has a default implementation that buffers the
-whole response via `send`, so it is optional unless you want true incremental streaming. The
-snippet below constructs a
+whole response via `send`, so it is optional unless you want true incremental streaming. A request
+whose `timeout` is `timeouts::NO_TIMEOUT` (see [Timeouts](#timeouts)) may run for as long as it
+takes, so a backend must check for it before it applies a timeout of its own:
+
+```rust,no_run
+use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
+use apify_client::timeouts::NO_TIMEOUT;
+use apify_client::ApifyClientError;
+use async_trait::async_trait;
+
+#[derive(Debug)]
+struct MyBackend;
+
+#[async_trait]
+impl HttpBackend for MyBackend {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ApifyClientError> {
+        let send = async {
+            // Send the request with your own HTTP stack.
+            let response: Result<HttpResponse, ApifyClientError> = todo!();
+            response
+        };
+        if request.timeout == NO_TIMEOUT {
+            send.await
+        } else {
+            tokio::time::timeout(request.timeout, send)
+                .await
+                .map_err(|_| ApifyClientError::Timeout)?
+        }
+    }
+}
+```
+
+The snippet below constructs a
 `reqwest::Client` directly, so it requires adding `reqwest = "0.12"` (matching this crate's
 `reqwest` version) as your own dependency — see [Installation](#installation):
 

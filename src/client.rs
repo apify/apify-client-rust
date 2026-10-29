@@ -223,6 +223,7 @@ impl ApifyClientBuilder {
             tiers: self.tiers,
             compressor: self.compressor,
             default_headers: self.default_headers,
+            stats: Arc::default(),
         });
 
         let base_url = to_api_base_url(&self.base_url);
@@ -264,6 +265,13 @@ impl ApifyClient {
 
     pub(crate) fn http(&self) -> HttpClient {
         self.http.clone()
+    }
+
+    /// Statistics of the API calls made through this client and every resource client obtained
+    /// from it: the number of calls, the number of requests (every attempt counts) and the number
+    /// of `429` rate-limit errors by attempt.
+    pub fn stats(&self) -> &crate::Statistics {
+        self.http.stats()
     }
 
     /// The `User-Agent` header value this client sends.

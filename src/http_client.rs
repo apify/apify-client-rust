@@ -17,14 +17,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::error::{ApiError, ApiErrorBody, ApifyClientError, ApifyClientResult};
+use crate::error::{
+    ApiError, ApiErrorBody, ApifyClientError, ApifyClientResult, MIN_SERVER_ERROR_STATUS_CODE,
+    RATE_LIMIT_EXCEEDED_STATUS_CODE,
+};
 use crate::http_compressors::{maybe_compress, HttpCompressor};
+use crate::statistics::Statistics;
 use crate::timeouts::{Timeout, TimeoutTiers, NO_TIMEOUT};
 
-/// HTTP status code returned by the API when the per-resource rate limit is exceeded.
-const RATE_LIMIT_EXCEEDED_STATUS_CODE: u16 = 429;
-/// Statuses `>= 500` are considered retryable internal server errors.
-const MIN_SERVER_ERROR_STATUS_CODE: u16 = 500;
 /// Responses with status `< 300` are treated as success.
 const MAX_SUCCESS_STATUS_CODE: u16 = 300;
 /// Multiplier applied to the inter-retry delay after each attempt (exponential backoff).
@@ -283,6 +283,17 @@ pub(crate) struct HttpClientConfig {
     /// Extra headers sent with every request. They win over the built-in `User-Agent` and
     /// `Authorization` headers, and a request's own headers win over them.
     pub(crate) default_headers: Vec<(String, String)>,
+    pub(crate) stats: Arc<Statistics>,
+}
+
+/// Options of a single [`HttpClient::call_with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallOptions {
+    /// Give up on the first transport timeout instead of retrying it. For a call that is not
+    /// idempotent, such as pushing dataset items, whose request may have reached the API before
+    /// the client gave up on it: a retry could then store the same data twice. Other errors are
+    /// retried as usual.
+    pub do_not_retry_timeouts: bool,
 }
 
 /// The orchestrating HTTP client shared by every resource client.
@@ -299,6 +310,7 @@ pub struct HttpClient {
     tiers: TimeoutTiers,
     compressor: Arc<dyn HttpCompressor>,
     default_headers: Vec<(String, String)>,
+    stats: Arc<Statistics>,
     /// Set when the resource client holding this handle was addressed with an invalid ID. Every
     /// call then fails with [`ApifyClientError::InvalidArgument`] before reaching the backend.
     /// The handle is cloned down to every client chained from that resource, so the failure
@@ -316,6 +328,7 @@ impl HttpClient {
             tiers: config.tiers,
             compressor: config.compressor,
             default_headers: config.default_headers,
+            stats: config.stats,
             poison: None,
         }
     }
@@ -371,10 +384,26 @@ impl HttpClient {
         request.headers = merged;
     }
 
+    /// The statistics of the calls made through this client.
+    pub(crate) fn stats(&self) -> &Statistics {
+        &self.stats
+    }
+
     /// Sends `request` with authentication, the user-agent header, and the retry policy
     /// applied. Returns the first successful response, or the final error.
-    pub async fn call(&self, mut request: HttpRequest) -> ApifyClientResult<HttpResponse> {
+    pub async fn call(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse> {
+        self.call_with_options(request, CallOptions::default())
+            .await
+    }
+
+    /// Like [`call`](Self::call), with the given per-call [`CallOptions`].
+    pub async fn call_with_options(
+        &self,
+        mut request: HttpRequest,
+        options: CallOptions,
+    ) -> ApifyClientResult<HttpResponse> {
         self.fail_if_poisoned()?;
+        self.stats.add_call();
         self.apply_headers(&mut request);
 
         // Compress the request body once (not per attempt) when it is large enough, mirroring the
@@ -399,21 +428,27 @@ impl HttpClient {
 
         let mut attempt = 1;
         loop {
-            // Grow per-attempt timeout with each attempt, capped at the overall budget.
+            // Grow the timeout of the attempt with each attempt, up to `timeout_max`.
             let mut attempt_request = request.clone();
             attempt_request.timeout = self.attempt_timeout(base_timeout, attempt);
 
+            self.stats.add_request();
             let outcome = match self.backend.send(attempt_request).await {
                 Ok(response) => {
                     if response.status < MAX_SUCCESS_STATUS_CODE {
                         return Ok(response);
+                    }
+                    if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+                        self.stats.add_rate_limit_error(attempt);
                     }
                     let api_error = build_api_error(&response, attempt, &method_str, &path);
                     let retryable = is_status_retryable(response.status);
                     (ApifyClientError::from(api_error), retryable)
                 }
                 Err(err) => {
-                    let retryable = is_error_retryable(&err);
+                    let retryable = is_error_retryable(&err)
+                        && !(options.do_not_retry_timeouts
+                            && matches!(err, ApifyClientError::Timeout));
                     (err, retryable)
                 }
             };
@@ -426,8 +461,7 @@ impl HttpClient {
 
             // Sleep with randomized exponential backoff before the next attempt. The backoff
             // doubles each retry (matching the reference client, which uses `async-retry` with
-            // a factor of 2) and is capped at the overall request timeout so a single backoff
-            // can never exceed the budget the whole request is allowed.
+            // a factor of 2) and is capped at `timeout_max`.
             sleep(randomized_delay(delay)).await;
             // `saturating_mul` mirrors the saturating arithmetic in `attempt_timeout`.
             delay = delay.saturating_mul(BACKOFF_FACTOR).min(self.tiers.max);
@@ -462,30 +496,25 @@ impl HttpClient {
     /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
     /// successful body below) and returns the same structured [`ApiError`] [`call`](Self::call)
     /// would. On success, returns the body as a stream whose `.next()` must resolve within the
-    /// client's overall timeout budget each time — bounding silence (a stalled connection)
-    /// without capping the stream's total duration, so a long-but-active stream (e.g. live log
-    /// redirection) is never cut off. That same budget also bounds the initial wait for the
-    /// response to start, mirroring the reference clients' streaming `timeoutSecs`.
+    /// request's resolved timeout each time — bounding silence (a stalled connection) without
+    /// capping the stream's total duration, so a long-but-active stream (e.g. live log
+    /// redirection) is never cut off. The same timeout also bounds the initial wait for the
+    /// response to start.
     pub(crate) async fn call_streaming(
         &self,
         mut request: HttpRequest,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
         self.fail_if_poisoned()?;
+        self.stats.add_call();
+        self.stats.add_request();
         self.apply_headers(&mut request);
 
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
-        // The caller-supplied `request.timeout` (the same tier-resolved base every buffered call
-        // uses — the `Long` tier for the streaming endpoints) is reused here as both the
-        // response-start wait and the per-chunk inactivity window: one configured duration, not
-        // a separate, larger one for inactivity. The JS reference client documents the same
-        // single-duration behavior ("it only limits inactivity"), though it gets there
-        // differently — via its HTTP library's socket-level idle timeout, not an explicit
-        // per-chunk reset like `with_inactivity_timeout` below — so this is a same-outcome,
-        // not same-mechanism, match. It carries the same tradeoff either way: a stream
-        // legitimately silent for the whole window (e.g. a long-running Actor logging nothing
-        // for the `Long` tier) times out; the escape hatch for that is `Timeout::NoTimeout`,
-        // set with a resource client's `with_timeout`.
+        // The request timeout is both the response-start wait and the per-chunk inactivity
+        // window, so a stream that stays silent for that long (e.g. a run that logs nothing for
+        // the `Long` tier) times out. `Timeout::NoTimeout`, set with a resource client's
+        // `with_timeout`, turns that off.
         let budget = request.timeout;
 
         let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
@@ -502,6 +531,9 @@ impl HttpClient {
         // body that fails to read (e.g. the connection drops mid-response) still surfaces the
         // status code, just without a parsed message.
         let body = collect_with_timeout(response.body, budget).await;
+        if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+            self.stats.add_rate_limit_error(1);
+        }
         let http_response = HttpResponse {
             status: response.status,
             headers: response.headers,

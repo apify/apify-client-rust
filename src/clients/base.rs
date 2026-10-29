@@ -15,7 +15,7 @@ use crate::common::{
     catch_not_found, parse_data_envelope, to_path_segment, to_safe_id, PaginationList, QueryParams,
 };
 use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
+use crate::http_client::{CallOptions, HttpClient, HttpMethod, HttpRequest, HttpResponse};
 use crate::timeouts::Timeout;
 
 /// How long to wait between polls while waiting for a run/build to finish.
@@ -33,6 +33,10 @@ const NOT_FOUND_GRACE_PERIOD: Duration = Duration::from_secs(3);
 /// Path segment standing in for an ID that failed validation. The URL is never requested:
 /// the [`HttpClient`] of such a context is poisoned and fails every call first.
 const INVALID_ID_PLACEHOLDER: &str = "invalid-id";
+
+/// Why a zero timeout is refused.
+const ZERO_TIMEOUT_MESSAGE: &str =
+    "a timeout must be longer than zero; use Timeout::NoTimeout to run without one";
 
 /// The resolved context for a resource client: its base URL and the shared HTTP client.
 #[derive(Debug, Clone)]
@@ -52,6 +56,8 @@ pub(crate) struct ResourceContext {
     pub(crate) has_id: bool,
     /// Timeout set with the client's `with_timeout`, replacing the tier a method defaults to.
     pub(crate) timeout: Option<Timeout>,
+    /// Cap set with the client's `with_timeout_cap`: a tier longer than it is lowered to it.
+    pub(crate) timeout_cap: Option<Duration>,
 }
 
 impl ResourceContext {
@@ -94,7 +100,21 @@ impl ResourceContext {
             api_origin,
             has_id,
             timeout: None,
+            timeout_cap: None,
         }
+    }
+
+    /// Replaces the tier of every request with `timeout`. A zero duration cannot be told apart
+    /// from an immediate failure of every attempt (`Timeout::NoTimeout` is the way to run without
+    /// a timeout), so it makes every request through this context fail with
+    /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument),
+    /// like an invalid id does.
+    pub(crate) fn with_timeout(mut self, timeout: Timeout) -> Self {
+        if timeout == Timeout::Custom(Duration::ZERO) {
+            self.http = self.http.poisoned(ZERO_TIMEOUT_MESSAGE.to_string());
+        }
+        self.timeout = Some(timeout);
+        self
     }
 
     /// Overrides the origin used when building public URLs.
@@ -134,7 +154,25 @@ impl ResourceContext {
     /// The timeout of a request that defaults to `tier`: the client's own override if it has one,
     /// resolved to the duration of the first attempt.
     pub(crate) fn timeout(&self, tier: Timeout) -> Duration {
-        self.http.resolve_timeout(self.timeout.unwrap_or(tier))
+        match self.timeout {
+            Some(timeout) => self.http.resolve_timeout(timeout),
+            None => self.cap(self.http.resolve_timeout(tier)),
+        }
+    }
+
+    /// Lowers the tier of every request to `cap` where it is longer. A zero cap is rejected like
+    /// a zero timeout (see [`with_timeout`](Self::with_timeout)).
+    pub(crate) fn with_timeout_cap(mut self, cap: Duration) -> Self {
+        if cap.is_zero() {
+            self.http = self.http.poisoned(ZERO_TIMEOUT_MESSAGE.to_string());
+        }
+        self.timeout_cap = Some(cap);
+        self
+    }
+
+    /// Lowers `timeout` to the cap of this context, if it has one.
+    fn cap(&self, timeout: Duration) -> Duration {
+        self.timeout_cap.map_or(timeout, |cap| timeout.min(cap))
     }
 
     /// Like [`timeout`](Self::timeout), for a request that asks the API to hold its response for
@@ -147,9 +185,10 @@ impl ResourceContext {
     ) -> Duration {
         match self.timeout {
             Some(timeout) => self.http.resolve_timeout(timeout),
-            None => self
-                .http
-                .resolve_timeout_with_wait_hold(tier, wait_for_finish_secs),
+            None => self.cap(
+                self.http
+                    .resolve_timeout_with_wait_hold(tier, wait_for_finish_secs),
+            ),
         }
     }
 
@@ -173,14 +212,31 @@ impl ResourceContext {
         body: Option<Vec<u8>>,
         timeout: Duration,
     ) -> ApifyClientResult<HttpResponse> {
+        self.send_with_options(method, url, headers, body, timeout, CallOptions::default())
+            .await
+    }
+
+    /// Like [`send_with`](Self::send_with), with per-call [`CallOptions`].
+    pub(crate) async fn send_with_options(
+        &self,
+        method: HttpMethod,
+        url: String,
+        headers: HashMap<String, String>,
+        body: Option<Vec<u8>>,
+        timeout: Duration,
+        options: CallOptions,
+    ) -> ApifyClientResult<HttpResponse> {
         self.http
-            .call(HttpRequest {
-                method,
-                url,
-                headers,
-                body,
-                timeout,
-            })
+            .call_with_options(
+                HttpRequest {
+                    method,
+                    url,
+                    headers,
+                    body,
+                    timeout,
+                },
+                options,
+            )
             .await
     }
 
@@ -199,11 +255,13 @@ macro_rules! impl_with_timeout {
             /// method defaults to (see [`Timeout`](crate::Timeout)).
             ///
             /// The timeout applies to each attempt of a request separately and doubles with every
-            /// retry, up to the client's `timeout_max`. A longer timeout is lowered to that cap.
+            /// retry, up to the client's `timeout_max`. A longer timeout is lowered to that cap. A
+            /// zero timeout is rejected: every request then fails with `InvalidArgument`, and
+            /// [`Timeout::NoTimeout`](crate::Timeout::NoTimeout) is the way to run without one.
             /// Clients obtained from this one, such as `run.dataset()`, do not inherit it.
             #[must_use]
             pub fn with_timeout(mut self, timeout: $crate::Timeout) -> Self {
-                self.ctx.timeout = Some(timeout);
+                self.ctx = self.ctx.with_timeout(timeout);
                 self
             }
         }
@@ -448,39 +506,42 @@ pub(crate) async fn head_exists(
 }
 
 /// A `PUT` with raw bytes and a content type (used for KVS record uploads).
+///
+/// `content_encoding`, when set, is sent as the `Content-Encoding` header for an
+/// already-compressed value; it makes [`HttpClient::call`]'s automatic request compression skip
+/// the body (it already refuses to double-encode a request that carries a `Content-Encoding`), so
+/// the bytes reach the API exactly as given. `options` are the per-call [`CallOptions`].
 pub(crate) async fn put_raw(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
     params: &QueryParams,
-    body: Vec<u8>,
-    content_type: &str,
-    tier: Timeout,
-) -> ApifyClientResult<()> {
-    put_raw_with_content_encoding(ctx, sub_path, params, body, content_type, None, tier).await
-}
-
-/// Like [`put_raw`], but can also set a `Content-Encoding` header (used for KVS record uploads
-/// of an already-compressed value). Setting it makes [`HttpClient::call`]'s automatic request
-/// compression skip the body (it already refuses to double-encode a request that carries a
-/// `Content-Encoding`), so the bytes reach the API exactly as given.
-pub(crate) async fn put_raw_with_content_encoding(
-    ctx: &ResourceContext,
-    sub_path: Option<&str>,
-    params: &QueryParams,
-    body: Vec<u8>,
-    content_type: &str,
-    content_encoding: Option<&str>,
+    upload: RawUpload<'_>,
+    options: CallOptions,
     tier: Timeout,
 ) -> ApifyClientResult<()> {
     let url = ctx.url_with_params(sub_path, params);
     let mut headers = HashMap::new();
-    headers.insert("Content-Type".to_string(), content_type.to_string());
-    if let Some(encoding) = content_encoding {
+    headers.insert("Content-Type".to_string(), upload.content_type.to_string());
+    if let Some(encoding) = upload.content_encoding {
         headers.insert("Content-Encoding".to_string(), encoding.to_string());
     }
-    ctx.send_with(HttpMethod::Put, url, headers, Some(body), ctx.timeout(tier))
-        .await?;
+    ctx.send_with_options(
+        HttpMethod::Put,
+        url,
+        headers,
+        Some(upload.body),
+        ctx.timeout(tier),
+        options,
+    )
+    .await?;
     Ok(())
+}
+
+/// The payload of a [`put_raw`] upload.
+pub(crate) struct RawUpload<'a> {
+    pub(crate) body: Vec<u8>,
+    pub(crate) content_type: &'a str,
+    pub(crate) content_encoding: Option<&'a str>,
 }
 
 /// Opens a streaming `GET` connection to `url` (already fully built, including query string),
@@ -597,7 +658,7 @@ where
                 }
             }
             Err(err) => {
-                let is_not_found = err.as_api_error().is_some_and(|e| e.status_code == 404);
+                let is_not_found = err.as_api_error().is_some_and(|e| e.is_not_found());
                 if !is_not_found {
                     return Err(err);
                 }

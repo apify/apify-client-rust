@@ -11,7 +11,7 @@ use crate::clients::base::{
 use crate::clients::pagination::ListIterator;
 use crate::common::{sign_storage_content, PaginationList, QueryParams};
 use crate::error::{ApifyClientError, ApifyClientResult};
-use crate::http_client::{HttpClient, HttpMethod};
+use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
 use crate::timeouts::Timeout;
 
@@ -405,6 +405,9 @@ impl DatasetClient {
     /// endpoint accepts. Anything else, such as a plain string or an array of strings, is
     /// rejected with [`ApifyClientError::InvalidArgument`]
     /// before a request is sent.
+    ///
+    /// A push that times out is not retried, because the request may have reached the API and a
+    /// retry could store the items twice; the other errors are retried as usual.
     pub async fn push_items<T: Serialize>(&self, items: &T) -> ApifyClientResult<()> {
         let body = serde_json::to_vec(items)?;
         check_items_shape(&body)?;
@@ -414,13 +417,18 @@ impl DatasetClient {
             "Content-Type".to_string(),
             "application/json; charset=utf-8".to_string(),
         );
+        // A push that timed out may have reached the API, so retrying it could store the items
+        // twice: the first transport timeout is final.
         self.ctx
-            .send_with(
+            .send_with_options(
                 HttpMethod::Post,
                 url,
                 headers,
                 Some(body),
                 self.ctx.timeout(Timeout::Medium),
+                CallOptions {
+                    do_not_retry_timeouts: true,
+                },
             )
             .await?;
         Ok(())
@@ -457,7 +465,10 @@ impl DatasetClient {
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
 
-        if let Some(dataset) = self.get().await? {
+        // Like the reference client, fetches the dataset with the `Long` tier of this method.
+        let dataset: Option<Dataset> =
+            get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Long).await?;
+        if let Some(dataset) = dataset {
             if let Some(secret) = dataset
                 .extra
                 .get("urlSigningSecretKey")

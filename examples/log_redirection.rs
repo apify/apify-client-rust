@@ -36,7 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `"{name} -> "` convention the JS reference uses for redirected Actor logs). The log is
     // streamed as raw byte chunks, so we buffer until a newline to emit whole, prefixed lines.
     let prefix = format!("{source_actor} -> ");
-    let mut stream = client.run(&run.id).get_streamed_log().await?;
+    let mut stream = client
+        .run(&run.id)
+        .get_streamed_log()
+        .await?
+        .ok_or("the run does not exist")?;
     let mut buf = String::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;

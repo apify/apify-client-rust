@@ -105,9 +105,7 @@ async fn a_log_is_none_for_a_client_with_an_id_and_an_error_when_chained() {
     assert!(is_not_found(
         client.run("r").log().stream().await.map(|_| ())
     ));
-    assert!(is_not_found(
-        client.run("r").get_streamed_log().await.map(|_| ())
-    ));
+    assert!(client.run("r").get_streamed_log().await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -332,11 +330,13 @@ async fn log_download_is_sent_when_set() {
 }
 
 #[tokio::test]
-async fn request_list_has_no_exclusive_start_id() {
+#[allow(deprecated)]
+async fn request_list_sends_the_deprecated_exclusive_start_id_only_when_set() {
     let backend = MockBackend::new(vec![ok_data(json!({ "items": [] }))]);
     let client = client_with(backend.clone(), 0);
-    client
-        .request_queue("q")
+    let queue = client.request_queue("q");
+
+    queue
         .list_requests(ListRequestsOptions {
             cursor: Some("c".to_string()),
             ..Default::default()
@@ -346,6 +346,18 @@ async fn request_list_has_no_exclusive_start_id() {
     let url = backend.last_url().unwrap();
     assert!(url.contains("cursor=c"));
     assert!(!url.contains("exclusiveStartId"));
+
+    queue
+        .list_requests(ListRequestsOptions {
+            exclusive_start_id: Some("request-id".to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(backend
+        .last_url()
+        .unwrap()
+        .contains("exclusiveStartId=request-id"));
 }
 
 /// The by-id user endpoints are not limited to the current user.

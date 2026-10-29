@@ -25,11 +25,11 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
-| `get_streamed_log()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Streams the run's log chunks live (log redirection). A run that does not exist is an error. |
-| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
+| `get_streamed_log()` | — | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | Streams the run's log chunks live (log redirection); `None` if the run does not exist. |
+| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
 
 `get_streamed_log()` / `get_streamed_log_with_options()` are `async` and yield the stream inside a
-`Result`, so `.await?` them to obtain it. Polling the returned stream with `.next()` requires the
+`Result` and an `Option`, so `.await?` them and handle the `None` of a missing run to obtain it. Polling the returned stream with `.next()` requires the
 `futures_util::StreamExt` trait (from the `futures-util` crate — add `futures-util = "0.3"` to your
 `Cargo.toml`) in scope; the [`raw_log`](../examples/raw_log.rs) example drives
 `get_streamed_log_with_options` exactly this way. See

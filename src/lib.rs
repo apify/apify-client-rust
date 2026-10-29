@@ -67,6 +67,7 @@ pub mod error;
 pub mod http_client;
 pub mod http_compressors;
 pub mod models;
+pub mod statistics;
 pub mod timeouts;
 mod version;
 
@@ -76,6 +77,7 @@ pub use error::{ApiError, ApifyClientError, ApifyClientResult};
 pub use http_compressors::{
     BrotliHttpCompressor, GzipHttpCompressor, HttpCompressor, RequestCompression,
 };
+pub use statistics::Statistics;
 pub use timeouts::Timeout;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 

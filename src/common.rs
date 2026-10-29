@@ -4,11 +4,8 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ApifyClientError, ApifyClientResult};
+use crate::error::{ApifyClientError, ApifyClientResult, NOT_FOUND_STATUS_CODE};
 use crate::version::CLIENT_VERSION;
-
-/// Status code returned when a resource is not found.
-const NOT_FOUND_STATUS_CODE: u16 = 404;
 
 /// Most Apify endpoints wrap their payload in a top-level `data` property.
 /// This envelope unwraps `{ "data": ... }` into the inner type.

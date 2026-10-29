@@ -1,4 +1,5 @@
-//! Offline unit tests for the timeout tiers, the default headers and the request-body compressors.
+//! Offline unit tests for the timeout tiers, the retry of timeouts, the default headers, the
+//! request-body compressors and the statistics.
 //!
 //! These use a mock [`HttpBackend`](apify_client::http_client::HttpBackend) and require no network
 //! access or `APIFY_TOKEN`.
@@ -8,6 +9,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use apify_client::clients::key_value_store::SetRecordOptions;
 use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, ReqwestBackend};
 use apify_client::timeouts::NO_TIMEOUT;
 use apify_client::{
@@ -421,4 +423,210 @@ fn a_quality_outside_the_range_of_the_algorithm_is_rejected() {
         GzipHttpCompressor::new(0),
         Err(ApifyClientError::InvalidArgument(_))
     ));
+}
+
+#[tokio::test]
+async fn a_zero_timeout_is_rejected_without_a_request() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "id": "a" }))]);
+    let client = client_with(backend.clone(), 0);
+    let error = client
+        .actor("a")
+        .with_timeout(Timeout::Custom(Duration::ZERO))
+        .get()
+        .await
+        .expect_err("a zero timeout fails every attempt at once");
+    assert!(
+        matches!(error, ApifyClientError::InvalidArgument(_)),
+        "{error:?}"
+    );
+    assert_eq!(backend.call_count(), 0);
+
+    let error = client
+        .request_queue("q")
+        .with_timeout_cap(Duration::ZERO)
+        .get()
+        .await
+        .expect_err("a zero cap fails every attempt at once");
+    assert!(matches!(error, ApifyClientError::InvalidArgument(_)));
+}
+
+/// A queue client with a cap lowers a longer tier to it and keeps a shorter one, while a timeout
+/// set with `with_timeout` is used as given.
+#[tokio::test]
+async fn a_request_queue_timeout_cap_only_lowers_a_tier() {
+    let backend = MockBackend::new(vec![ok_data(
+        json!({ "id": "q", "items": [], "unlockedCount": 0 }),
+    )]);
+    let client = client_with(backend.clone(), 0);
+    let queue = client
+        .request_queue("q")
+        .with_timeout_cap(Duration::from_secs(10));
+
+    queue.get().await.unwrap(); // Short: 5s stays.
+    queue.list_requests(Default::default()).await.unwrap(); // Medium: 30s is lowered to 10s.
+    queue.unlock_requests().await.unwrap(); // Long: 360s is lowered to 10s.
+    queue
+        .clone()
+        .with_timeout(Timeout::Custom(Duration::from_secs(20)))
+        .get()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        backend.timeouts(),
+        vec![
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            Duration::from_secs(20)
+        ]
+    );
+}
+
+/// A push that timed out may have reached the API, so it is not sent again; other errors are
+/// retried as usual.
+#[tokio::test]
+async fn push_items_does_not_retry_a_timeout() {
+    let backend = MockBackend::new(vec![MockOutcome::Timeout]);
+    let client = client_with(backend.clone(), 3);
+    let error = client
+        .dataset("d")
+        .push_items(&json!({ "a": 1 }))
+        .await
+        .expect_err("the push times out");
+    assert!(matches!(error, ApifyClientError::Timeout), "{error:?}");
+    assert_eq!(backend.call_count(), 1, "a timed-out push is not retried");
+
+    let backend = MockBackend::new(vec![MockOutcome::Status(500, b"{}".to_vec())]);
+    let client = client_with(backend.clone(), 3);
+    client
+        .dataset("d")
+        .push_items(&json!({ "a": 1 }))
+        .await
+        .expect_err("the push fails");
+    assert_eq!(backend.call_count(), 4, "a 500 is retried as usual");
+}
+
+#[tokio::test]
+async fn other_calls_retry_a_timeout() {
+    let backend = MockBackend::new(vec![MockOutcome::Timeout]);
+    let client = client_with(backend.clone(), 2);
+    client.actor("a").get().await.expect_err("always times out");
+    assert_eq!(backend.call_count(), 3);
+}
+
+#[tokio::test]
+async fn set_record_can_give_up_on_the_first_timeout() {
+    let store_of =
+        |backend: &Arc<MockBackend>| client_with(backend.clone(), 2).key_value_store("s");
+
+    let backend = MockBackend::new(vec![MockOutcome::Timeout]);
+    let error = store_of(&backend)
+        .set_record_raw("k", b"x".to_vec(), "text/plain")
+        .await
+        .expect_err("times out");
+    assert!(matches!(error, ApifyClientError::Timeout));
+    assert_eq!(backend.call_count(), 3, "retried by default");
+
+    let backend = MockBackend::new(vec![MockOutcome::Timeout]);
+    let options = SetRecordOptions {
+        do_not_retry_timeouts: true,
+        ..Default::default()
+    };
+    store_of(&backend)
+        .set_record_raw_with_options("k", b"x".to_vec(), "text/plain", options.clone())
+        .await
+        .expect_err("times out");
+    assert_eq!(backend.call_count(), 1);
+
+    let backend = MockBackend::new(vec![MockOutcome::Timeout]);
+    store_of(&backend)
+        .set_record_json_with_options("k", &json!({ "a": 1 }), options)
+        .await
+        .expect_err("times out");
+    assert_eq!(backend.call_count(), 1);
+}
+
+#[tokio::test]
+async fn set_record_with_options_sends_the_content_encoding() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, Vec::new())]);
+    let client = client_with(backend.clone(), 0);
+    let store = client.key_value_store("s");
+    store
+        .set_record_raw_with_options(
+            "k",
+            b"already compressed".to_vec(),
+            "text/plain",
+            SetRecordOptions {
+                content_encoding: Some("gzip".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("gzip")
+    );
+
+    let error = store
+        .set_record_json_with_options(
+            "k",
+            &json!({}),
+            SetRecordOptions {
+                content_encoding: Some("gzip".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a JSON value is never pre-compressed");
+    assert!(matches!(error, ApifyClientError::InvalidArgument(_)));
+}
+
+#[tokio::test]
+async fn statistics_count_calls_requests_and_rate_limit_errors_by_attempt() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(429, b"{}".to_vec()),
+        MockOutcome::Status(429, b"{}".to_vec()),
+        ok_data(json!({ "id": "a" })),
+    ]);
+    let client = client_with(backend.clone(), 5);
+    assert_eq!(client.stats().calls(), 0);
+
+    client.actor("a").get().await.unwrap();
+    client.actor("a").get().await.unwrap();
+
+    let stats = client.stats();
+    assert_eq!(stats.calls(), 2);
+    assert_eq!(stats.requests(), 4, "three attempts, then one");
+    assert_eq!(stats.rate_limit_errors(), vec![1, 1]);
+    assert_eq!(
+        client.clone().stats().calls(),
+        2,
+        "a clone shares the counters"
+    );
+}
+
+/// Methods that read or write whole stores and datasets, or build a public URL from one, use the
+/// `Long` tier, like the reference client.
+#[tokio::test]
+async fn key_value_store_writes_and_public_urls_use_the_long_tier() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        json!({ "data": { "id": "s" } }).to_string().into_bytes(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+    let store = client.key_value_store("s");
+
+    store.update(&json!({ "title": "t" })).await.unwrap();
+    store.record_exists("k").await.unwrap();
+    store.get_record_public_url("k").await.unwrap();
+    store.create_keys_public_url(None).await.unwrap();
+    client
+        .dataset("d")
+        .create_items_public_url(Default::default(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(backend.timeouts(), vec![Duration::from_secs(360); 5]);
 }
