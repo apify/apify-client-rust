@@ -8,12 +8,18 @@ use crate::clients::base::{
     delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
     put_raw_with_content_encoding, update_resource, ResourceContext,
 };
-use crate::common::{
-    create_hmac_signature, encode_path_segment, sign_storage_content, QueryParams,
-};
+use crate::common::{create_hmac_signature, sign_storage_content, to_path_segment, QueryParams};
 use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
+use crate::http_client::{HttpClient, HttpMethod};
 use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
+use crate::timeouts::Timeout;
+
+/// The path of the record with the given key, relative to the store. A key that is empty or a dot
+/// segment cannot be placed in the path, so it is rejected with
+/// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument).
+fn record_path(key: &str) -> ApifyClientResult<String> {
+    Ok(format!("records/{}", to_path_segment(key)?))
+}
 
 /// Options for listing keys in a key-value store.
 #[derive(Debug, Default, Clone)]
@@ -52,6 +58,8 @@ pub struct KeyValueStoreClient {
     ctx: ResourceContext,
 }
 
+crate::clients::base::impl_with_timeout!(KeyValueStoreClient);
+
 impl KeyValueStoreClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
         Self {
@@ -74,17 +82,17 @@ impl KeyValueStoreClient {
 
     /// Fetches the store metadata, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<KeyValueStore>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the store metadata (e.g. `name`, `title`).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<KeyValueStore> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the store.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Lists the keys in the store (key-based pagination).
@@ -99,7 +107,7 @@ impl KeyValueStoreClient {
             .add_str("prefix", options.prefix)
             .add_str("collection", options.collection)
             .add_str("signature", options.signature);
-        get_resource_required(&self.ctx, Some("keys"), &params).await
+        get_resource_required(&self.ctx, Some("keys"), &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over every key in the store, fetching pages on demand.
@@ -137,13 +145,18 @@ impl KeyValueStoreClient {
     pub async fn record_exists(&self, key: &str) -> ApifyClientResult<bool> {
         head_exists(
             &self.ctx,
-            Some(&format!("records/{}", encode_path_segment(key))),
+            Some(&record_path(key)?),
             &QueryParams::new(),
+            Timeout::Short,
         )
         .await
     }
 
     /// Gets a record's raw value (and content type), or `None` if it does not exist.
+    ///
+    /// The value is returned as the bytes the API sent: unlike the reference client's
+    /// `getRecord`, it is never parsed according to its content type, so a malformed JSON body
+    /// is not an error here. Use [`KeyValueStoreRecord::as_text`] or `serde_json` to decode it.
     ///
     /// Like the reference client's `getRecord`, this sends `attachment=true`. Use
     /// [`get_record_with_options`](Self::get_record_with_options) to override the attachment
@@ -168,12 +181,7 @@ impl KeyValueStoreClient {
         params
             .add_bool("attachment", Some(options.attachment.unwrap_or(true)))
             .add_str("signature", options.signature);
-        let response = get_raw(
-            &self.ctx,
-            Some(&format!("records/{}", encode_path_segment(key))),
-            &params,
-        )
-        .await?;
+        let response = get_raw(&self.ctx, Some(&record_path(key)?), &params, Timeout::Long).await?;
         Ok(response.map(|r| {
             let content_type = r.header("content-type").map(|s| s.to_string());
             KeyValueStoreRecord {
@@ -185,6 +193,10 @@ impl KeyValueStoreClient {
     }
 
     /// Stores a record with raw bytes and an explicit content type.
+    ///
+    /// The bytes are sent as they are, whatever the content type: under `application/json` they
+    /// have to be valid JSON already. To serialize a value, use
+    /// [`set_record_json`](Self::set_record_json).
     pub async fn set_record_raw(
         &self,
         key: &str,
@@ -193,10 +205,11 @@ impl KeyValueStoreClient {
     ) -> ApifyClientResult<()> {
         put_raw(
             &self.ctx,
-            Some(&format!("records/{}", encode_path_segment(key))),
+            Some(&record_path(key)?),
             &QueryParams::new(),
             value,
             content_type,
+            Timeout::Long,
         )
         .await
     }
@@ -222,11 +235,12 @@ impl KeyValueStoreClient {
     ) -> ApifyClientResult<()> {
         put_raw_with_content_encoding(
             &self.ctx,
-            Some(&format!("records/{}", encode_path_segment(key))),
+            Some(&record_path(key)?),
             &QueryParams::new(),
             value,
             content_type,
             Some(content_encoding),
+            Timeout::Long,
         )
         .await
     }
@@ -249,6 +263,7 @@ impl KeyValueStoreClient {
     /// `signature` over the record key so the URL works without an API token. The URL is
     /// built from the configured public base URL.
     pub async fn get_record_public_url(&self, key: &str) -> ApifyClientResult<String> {
+        let path = record_path(key)?;
         let mut params = QueryParams::new();
         if let Some(store) = self.get().await? {
             if let Some(secret) = store
@@ -259,11 +274,7 @@ impl KeyValueStoreClient {
                 params.add_str("signature", Some(create_hmac_signature(secret, key)));
             }
         }
-        Ok(params.apply_to_url(
-            &self
-                .ctx
-                .public_url(Some(&format!("records/{}", encode_path_segment(key)))),
-        ))
+        Ok(params.apply_to_url(&self.ctx.public_url(Some(&path))))
     }
 
     /// Builds a public URL for listing this store's keys.
@@ -291,18 +302,9 @@ impl KeyValueStoreClient {
 
     /// Deletes the record with the given key.
     pub async fn delete_record(&self, key: &str) -> ApifyClientResult<()> {
-        let url = self
-            .ctx
-            .url(Some(&format!("records/{}", encode_path_segment(key))));
+        let url = self.ctx.url(Some(&record_path(key)?));
         self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Delete,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;
         Ok(())
     }

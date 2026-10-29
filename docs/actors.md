@@ -43,7 +43,7 @@ All fields are optional. Used by both `start` and `call` here, and by the identi
 |---|---|---|
 | `build` | `Option<String>` | Tag or number of the build to run (e.g. `latest`, `0.1.2`). |
 | `memory_mbytes` | `Option<i64>` | Memory in megabytes allocated for the run. |
-| `timeout_secs` | `Option<i64>` | Timeout for the run in seconds (`0` means no timeout). |
+| `run_timeout_secs` | `Option<i64>` | Timeout of the run itself in seconds (`0` means no timeout). The timeout of the API request is set with the client's `with_timeout`. |
 | `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
 | `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
 | `max_total_charge_usd` | `Option<f64>` | Maximum total cost of the run in USD, across all pricing models. |

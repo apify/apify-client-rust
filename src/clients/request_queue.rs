@@ -10,14 +10,15 @@ use crate::clients::base::{
     delete_resource, delete_with_body, get_resource, get_resource_required, post_action,
     post_with_body, update_resource, ResourceContext,
 };
-use crate::common::{encode_path_segment, QueryParams};
+use crate::common::{catch_not_found, to_path_segment, QueryParams};
 use crate::error::{ApifyClientError, ApifyClientResult};
-use crate::http_client::{sleep_public, HttpClient, HttpMethod, HttpRequest};
+use crate::http_client::{sleep_public, HttpClient, HttpMethod};
 use crate::models::{
     BatchRequestsOperationResult, LockedRequestQueueHead, RequestLockInfo, RequestQueue,
     RequestQueueHead, RequestQueueOperationInfo, RequestQueueRequest, RequestQueueRequestsPage,
     UnlockRequestsResult, UnprocessedRequest,
 };
+use crate::timeouts::Timeout;
 
 /// Maximum number of requests the API accepts in a single `requests/batch` call. Larger
 /// `batch_add_requests` inputs are split into chunks of at most this size (matching the
@@ -28,6 +29,8 @@ const MAX_REQUESTS_PER_BATCH_OPERATION: usize = 25;
 /// `MAX_PAYLOAD_SIZE_BYTES` (9 MiB) that the reference client chunks `batch_add_requests` calls
 /// against, on top of the per-call request-count limit.
 const MAX_PAYLOAD_SIZE_BYTES: usize = 9_437_184;
+/// Bytes of the `[` and `]` around a JSON array.
+const ARRAY_BRACKETS_BYTES: usize = 2;
 /// Fraction of [`MAX_PAYLOAD_SIZE_BYTES`] held back as a safety margin (0.01%), matching the
 /// reference client's `SAFETY_BUFFER_PERCENT`.
 const SAFETY_BUFFER_PERCENT: f64 = 0.0001;
@@ -42,6 +45,13 @@ const DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES: u32 = 3;
 /// each subsequent retry, matching the reference client's
 /// `DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES_MILLIS`.
 const DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES: Duration = Duration::from_millis(500);
+
+/// The path of the request with the given ID, relative to the queue. An ID that is empty or a dot
+/// segment cannot be placed in the path, so it is rejected with
+/// [`ApifyClientError::InvalidArgument`].
+fn request_path(id: &str) -> ApifyClientResult<String> {
+    Ok(format!("requests/{}", to_path_segment(id)?))
+}
 
 /// Options for [`RequestQueueClient::batch_add_requests`].
 ///
@@ -66,23 +76,54 @@ pub struct BatchAddRequestsOptions {
     pub min_delay_between_unprocessed_requests_retries: Option<Duration>,
 }
 
-/// Returns the key used to correlate a request across the batch-add retry loop: its explicit
-/// `unique_key` if set, otherwise its `url` — matching the API's own fallback (a request added
-/// without a `unique_key` is deduplicated by its raw `url`).
-fn dedup_key(request: &RequestQueueRequest) -> &str {
-    request.unique_key.as_deref().unwrap_or(&request.url)
+/// A request of a batch add with its JSON serialized once, up front. The same string measures the
+/// request against the payload limit and is joined into the batch body that is sent, so a request
+/// is never serialized twice, whichever chunk or retry it ends up in.
+struct SerializedRequest {
+    /// Key correlating the request across the retry loop: its explicit `unique_key` if set,
+    /// otherwise its `url` — matching the API's own fallback (a request added without a
+    /// `unique_key` is deduplicated by its raw `url`).
+    dedup_key: String,
+    url: String,
+    method: Option<String>,
+    json: String,
 }
 
-/// Returns the JSON-serialized byte length of `value`.
-fn json_byte_len<T: Serialize + ?Sized>(value: &T) -> ApifyClientResult<usize> {
-    Ok(serde_json::to_vec(value)?.len())
+impl SerializedRequest {
+    fn new(request: &RequestQueueRequest) -> ApifyClientResult<Self> {
+        Ok(Self {
+            dedup_key: request
+                .unique_key
+                .as_deref()
+                .unwrap_or(&request.url)
+                .to_string(),
+            url: request.url.clone(),
+            method: request.method.clone(),
+            json: serde_json::to_string(request)?,
+        })
+    }
+
+    /// This request as the API reports it back when it could not process it.
+    fn to_unprocessed(&self) -> UnprocessedRequest {
+        UnprocessedRequest {
+            unique_key: self.dedup_key.clone(),
+            url: self.url.clone(),
+            method: self.method.clone(),
+        }
+    }
 }
 
-/// Slices `requests` down to a byte-limited prefix, mirroring the reference client's
-/// `sliceArrayByByteLength`: if the whole slice already fits under `max_bytes` it is returned
-/// unchanged; otherwise items are accumulated one at a time until the next one would exceed the
-/// budget. `start_index` is only used to name the offending item in the error message, so it
-/// should be the slice's absolute position within the caller's full input.
+/// Joins already-serialized requests into the JSON array a batch add sends.
+fn batch_body(requests: &[SerializedRequest]) -> Vec<u8> {
+    let json: Vec<&str> = requests.iter().map(|r| r.json.as_str()).collect();
+    format!("[{}]", json.join(",")).into_bytes()
+}
+
+/// Returns how many of the leading `requests` fit in one batch under `max_bytes`, counting the
+/// brackets and commas of the JSON array: all of them if the whole slice already fits, otherwise
+/// items are accumulated one at a time until the next one would exceed the budget. `start_index`
+/// is only used to name the offending item in the error message, so it should be the slice's
+/// absolute position within the caller's full input.
 ///
 /// The first item is always included regardless of size (once its own size has been checked
 /// against `max_bytes`), guaranteeing a non-empty result for a non-empty input — unlike the
@@ -91,18 +132,21 @@ fn json_byte_len<T: Serialize + ?Sized>(value: &T) -> ApifyClientResult<usize> {
 ///
 /// Returns [`ApifyClientError::InvalidArgument`] if a single request's JSON exceeds `max_bytes`
 /// on its own (mirroring the reference client's thrown error).
-fn slice_requests_by_byte_length(
-    requests: &[RequestQueueRequest],
+fn count_requests_fitting_byte_length(
+    requests: &[SerializedRequest],
     max_bytes: usize,
     start_index: usize,
-) -> ApifyClientResult<Vec<RequestQueueRequest>> {
-    if json_byte_len(requests)? < max_bytes {
-        return Ok(requests.to_vec());
+) -> ApifyClientResult<usize> {
+    let whole_bytes = ARRAY_BRACKETS_BYTES
+        + requests.iter().map(|r| r.json.len()).sum::<usize>()
+        + requests.len().saturating_sub(1);
+    if whole_bytes < max_bytes {
+        return Ok(requests.len());
     }
-    let mut out = Vec::new();
-    let mut byte_length = 2usize; // 2 bytes for the empty array `[]`.
+    let mut taken = 0;
+    let mut byte_length = ARRAY_BRACKETS_BYTES;
     for (offset, request) in requests.iter().enumerate() {
-        let item_bytes = json_byte_len(request)?;
+        let item_bytes = request.json.len();
         if item_bytes > max_bytes {
             return Err(ApifyClientError::InvalidArgument(format!(
                 "RequestQueueClient::batch_add_requests: the request at index {} exceeds the \
@@ -110,31 +154,35 @@ fn slice_requests_by_byte_length(
                 start_index + offset
             )));
         }
-        if !out.is_empty() && byte_length + item_bytes >= max_bytes {
+        let added_bytes = item_bytes + usize::from(taken > 0);
+        if taken > 0 && byte_length + added_bytes >= max_bytes {
             break;
         }
-        byte_length += item_bytes;
-        out.push(request.clone());
+        byte_length += added_bytes;
+        taken += 1;
     }
-    Ok(out)
+    Ok(taken)
 }
 
 /// Splits `requests` into chunks that each satisfy both the per-call count limit
 /// ([`MAX_REQUESTS_PER_BATCH_OPERATION`]) and the payload byte-size limit
 /// (`max_bytes`), mirroring the reference client's chunking loop in `batchAddRequests`.
 fn chunk_requests_for_batch_add(
-    requests: &[RequestQueueRequest],
+    requests: Vec<SerializedRequest>,
     max_bytes: usize,
-) -> ApifyClientResult<Vec<Vec<RequestQueueRequest>>> {
+) -> ApifyClientResult<Vec<Vec<SerializedRequest>>> {
     let mut chunks = Vec::new();
-    let mut i = 0;
-    while i < requests.len() {
-        let group_end = (i + MAX_REQUESTS_PER_BATCH_OPERATION).min(requests.len());
-        let chunk = slice_requests_by_byte_length(&requests[i..group_end], max_bytes, i)?;
-        // `slice_requests_by_byte_length` always returns at least one item for a non-empty
+    let mut start = 0;
+    let mut remaining = requests;
+    while !remaining.is_empty() {
+        let group_len = MAX_REQUESTS_PER_BATCH_OPERATION.min(remaining.len());
+        // `count_requests_fitting_byte_length` always returns at least one item for a non-empty
         // input, so this advances on every iteration.
-        i += chunk.len();
-        chunks.push(chunk);
+        let take = count_requests_fitting_byte_length(&remaining[..group_len], max_bytes, start)?;
+        let rest = remaining.split_off(take);
+        start += take;
+        chunks.push(remaining);
+        remaining = rest;
     }
     Ok(chunks)
 }
@@ -146,8 +194,6 @@ fn chunk_requests_for_batch_add(
 pub struct ListRequestsOptions {
     /// Maximum number of requests to return.
     pub limit: Option<i64>,
-    /// Start listing after this request ID (exclusive).
-    pub exclusive_start_id: Option<String>,
     /// Opaque pagination cursor returned by a previous call.
     pub cursor: Option<String>,
     /// Restrict the returned requests to the given states. The spec defines this as an array of
@@ -162,6 +208,8 @@ pub struct RequestQueueClient {
     ctx: ResourceContext,
     client_key: Option<String>,
 }
+
+crate::clients::base::impl_with_timeout!(RequestQueueClient);
 
 impl RequestQueueClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
@@ -193,24 +241,24 @@ impl RequestQueueClient {
 
     /// Fetches the queue metadata, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<RequestQueue>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the queue metadata (e.g. `name`, `title`).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<RequestQueue> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the queue.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Lists requests from the head of the queue (without locking them).
     pub async fn list_head(&self, limit: Option<i64>) -> ApifyClientResult<RequestQueueHead> {
         let mut params = self.base_params();
         params.add_int("limit", limit);
-        get_resource_required(&self.ctx, Some("head"), &params).await
+        get_resource_required(&self.ctx, Some("head"), &params, Timeout::Short).await
     }
 
     /// Adds a single request to the queue. If `forefront` is true, adds it to the front.
@@ -228,18 +276,24 @@ impl RequestQueueClient {
             &params,
             Some(body),
             "application/json",
+            self.ctx.timeout(Timeout::Short),
         )
         .await
     }
 
     /// Gets a request by ID, or `None` if it does not exist.
     pub async fn get_request(&self, id: &str) -> ApifyClientResult<Option<RequestQueueRequest>> {
-        get_resource(
-            &self.ctx,
-            Some(&format!("requests/{}", encode_path_segment(id))),
-            &self.base_params(),
+        // Unlike the other `get`s, a missing request is `None` even on a queue chained from a run:
+        // the request ID is part of the path, so a `404` means that request does not exist.
+        catch_not_found(
+            get_resource_required(
+                &self.ctx,
+                Some(&request_path(id)?),
+                &self.base_params(),
+                Timeout::Short,
+            )
+            .await,
         )
-        .await
     }
 
     /// Updates a request (which must include its `id`).
@@ -255,24 +309,19 @@ impl RequestQueueClient {
         })?;
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(
-            &self
-                .ctx
-                .url(Some(&format!("requests/{}", encode_path_segment(&id)))),
-        );
+        let url = params.apply_to_url(&self.ctx.url(Some(&request_path(&id)?)));
         let body = serde_json::to_vec(request)?;
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         let response = self
             .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Put,
+            .send_with(
+                HttpMethod::Put,
                 url,
                 headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body),
+                self.ctx.timeout(Timeout::Medium),
+            )
             .await?;
         crate::common::parse_data_envelope(&response.body)
     }
@@ -280,20 +329,9 @@ impl RequestQueueClient {
     /// Deletes a request by ID.
     pub async fn delete_request(&self, id: &str) -> ApifyClientResult<()> {
         let params = self.base_params();
-        let url = params.apply_to_url(
-            &self
-                .ctx
-                .url(Some(&format!("requests/{}", encode_path_segment(id)))),
-        );
+        let url = params.apply_to_url(&self.ctx.url(Some(&request_path(id)?)));
         self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Delete,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;
         Ok(())
     }
@@ -308,7 +346,15 @@ impl RequestQueueClient {
         params
             .add_int("lockSecs", Some(lock_secs))
             .add_int("limit", limit);
-        post_action(&self.ctx, Some("head/lock"), &params, None, None).await
+        post_action(
+            &self.ctx,
+            Some("head/lock"),
+            &params,
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Adds multiple requests to the queue in a single logical operation.
@@ -348,7 +394,13 @@ impl RequestQueueClient {
             .max(1);
         let payload_limit_bytes = MAX_PAYLOAD_SIZE_BYTES
             - (MAX_PAYLOAD_SIZE_BYTES as f64 * SAFETY_BUFFER_PERCENT).ceil() as usize;
-        let chunks = chunk_requests_for_batch_add(requests, payload_limit_bytes)?;
+        // Each request is serialized exactly once, here, before anything is sent: a request too
+        // large for the payload limit is rejected before any batch is in flight.
+        let serialized = requests
+            .iter()
+            .map(SerializedRequest::new)
+            .collect::<ApifyClientResult<Vec<_>>>()?;
+        let chunks = chunk_requests_for_batch_add(serialized, payload_limit_bytes)?;
 
         let merged = stream::iter(chunks)
             .map(|chunk| {
@@ -383,7 +435,7 @@ impl RequestQueueClient {
     /// so a single bad chunk cannot fail the whole (possibly-parallel) `batch_add_requests` call.
     async fn batch_add_requests_chunk_with_retries(
         &self,
-        chunk: Vec<RequestQueueRequest>,
+        chunk: Vec<SerializedRequest>,
         options: BatchAddRequestsOptions,
     ) -> BatchRequestsOperationResult {
         let max_retries = options
@@ -407,7 +459,7 @@ impl RequestQueueClient {
                         .iter()
                         .filter_map(|p| p.unique_key.as_deref())
                         .collect();
-                    remaining.retain(|r| !processed_keys.contains(dedup_key(r)));
+                    remaining.retain(|r| !processed_keys.contains(r.dedup_key.as_str()));
                     processed.extend(result.processed_requests);
                     if remaining.is_empty() {
                         return BatchRequestsOperationResult {
@@ -430,11 +482,7 @@ impl RequestQueueClient {
                         processed_requests: processed,
                         unprocessed_requests: remaining
                             .iter()
-                            .map(|r| UnprocessedRequest {
-                                unique_key: dedup_key(r).to_string(),
-                                url: r.url.clone(),
-                                method: r.method.clone(),
-                            })
+                            .map(SerializedRequest::to_unprocessed)
                             .collect(),
                     };
                 }
@@ -453,11 +501,7 @@ impl RequestQueueClient {
             processed_requests: processed,
             unprocessed_requests: remaining
                 .iter()
-                .map(|r| UnprocessedRequest {
-                    unique_key: dedup_key(r).to_string(),
-                    url: r.url.clone(),
-                    method: r.method.clone(),
-                })
+                .map(SerializedRequest::to_unprocessed)
                 .collect(),
         }
     }
@@ -466,18 +510,18 @@ impl RequestQueueClient {
     /// requests, and within the byte-size budget already enforced by the caller).
     async fn batch_add_requests_raw(
         &self,
-        requests: &[RequestQueueRequest],
+        requests: &[SerializedRequest],
         forefront: bool,
     ) -> ApifyClientResult<BatchRequestsOperationResult> {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let body = serde_json::to_vec(requests)?;
         post_with_body(
             &self.ctx,
             Some("requests/batch"),
             &params,
-            Some(body),
+            Some(batch_body(requests)),
             "application/json",
+            self.ctx.timeout(Timeout::Medium),
         )
         .await
     }
@@ -503,14 +547,15 @@ impl RequestQueueClient {
             Some("requests/batch"),
             &self.base_params(),
             &requests,
+            Timeout::Short,
         )
         .await
     }
 
     /// Lists requests in the queue.
     ///
-    /// Supports pagination via `limit`/`exclusive_start_id` and the spec's `cursor`/`filter`
-    /// parameters (see [`ListRequestsOptions`]).
+    /// Supports pagination via `limit` and `cursor`, and the spec's `filter` parameter (see
+    /// [`ListRequestsOptions`]).
     pub async fn list_requests(
         &self,
         options: ListRequestsOptions,
@@ -518,10 +563,9 @@ impl RequestQueueClient {
         let mut params = self.base_params();
         params
             .add_int("limit", options.limit)
-            .add_str("exclusiveStartId", options.exclusive_start_id)
             .add_str("cursor", options.cursor)
             .add_csv("filter", options.filter.as_deref());
-        get_resource_required(&self.ctx, Some("requests"), &params).await
+        get_resource_required(&self.ctx, Some("requests"), &params, Timeout::Medium).await
     }
 
     /// Prolongs the lock on a request for another `lock_secs` seconds.
@@ -538,21 +582,10 @@ impl RequestQueueClient {
         params
             .add_int("lockSecs", Some(lock_secs))
             .add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(
-            &self
-                .ctx
-                .url(Some(&format!("requests/{}/lock", encode_path_segment(id)))),
-        );
+        let url = params.apply_to_url(&self.ctx.url(Some(&format!("{}/lock", request_path(id)?))));
         let response = self
             .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Put,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::MEDIUM_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Put, url, self.ctx.timeout(Timeout::Medium))
             .await?;
         crate::common::parse_data_envelope(&response.body)
     }
@@ -563,20 +596,9 @@ impl RequestQueueClient {
     pub async fn delete_request_lock(&self, id: &str, forefront: bool) -> ApifyClientResult<()> {
         let mut params = self.base_params();
         params.add_bool("forefront", Some(forefront));
-        let url = params.apply_to_url(
-            &self
-                .ctx
-                .url(Some(&format!("requests/{}/lock", encode_path_segment(id)))),
-        );
+        let url = params.apply_to_url(&self.ctx.url(Some(&format!("{}/lock", request_path(id)?))));
         self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Delete,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::SMALL_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;
         Ok(())
     }
@@ -584,9 +606,8 @@ impl RequestQueueClient {
     /// Lazily paginates over all requests in the queue, fetching pages on demand.
     ///
     /// Returns a [`RequestQueueRequestsIterator`]; call its `next()` to get one request at a
-    /// time. Pagination uses the API's opaque `nextCursor` token: the first page may be
-    /// anchored with `exclusiveStartId`, but every subsequent page is fetched with `cursor`
-    /// (matching the JS reference). `cursor` and `exclusiveStartId` are mutually exclusive.
+    /// time. Pagination uses the API's opaque `nextCursor` token: every page after the first is
+    /// fetched with `cursor` (matching the JS reference).
     pub fn paginate_requests(&self, page_limit: Option<i64>) -> RequestQueueRequestsIterator {
         RequestQueueRequestsIterator {
             client: self.clone(),
@@ -605,6 +626,7 @@ impl RequestQueueClient {
             &self.base_params(),
             None,
             None,
+            self.ctx.timeout(Timeout::Long),
         )
         .await
     }
@@ -634,10 +656,8 @@ impl RequestQueueRequestsIterator {
             return Ok(None);
         }
 
-        // The first page may be anchored by exclusiveStartId; every later page is fetched
-        // with the opaque `cursor` token (mutually exclusive with exclusiveStartId), matching
-        // the JS reference. Here we only ever paginate from the queue head, so the first page
-        // uses neither and subsequent pages use `cursor`.
+        // Every page after the first is fetched with the opaque `cursor` token, matching the JS
+        // reference. Here we only ever paginate from the queue head, so the first page has none.
         let page = self
             .client
             .list_requests(ListRequestsOptions {
@@ -666,8 +686,8 @@ impl RequestQueueRequestsIterator {
 #[cfg(test)]
 mod batch_add_tests {
     use super::{
-        chunk_requests_for_batch_add, dedup_key, slice_requests_by_byte_length,
-        MAX_REQUESTS_PER_BATCH_OPERATION,
+        batch_body, chunk_requests_for_batch_add, count_requests_fitting_byte_length,
+        SerializedRequest, MAX_REQUESTS_PER_BATCH_OPERATION,
     };
     use crate::models::RequestQueueRequest;
 
@@ -682,25 +702,50 @@ mod batch_add_tests {
         }
     }
 
+    fn serialized(requests: &[RequestQueueRequest]) -> Vec<SerializedRequest> {
+        requests
+            .iter()
+            .map(|r| SerializedRequest::new(r).unwrap())
+            .collect()
+    }
+
     /// A request without an explicit `unique_key` is correlated by `url`, matching the API's own
     /// deduplication fallback.
     #[test]
     fn dedup_key_falls_back_to_url() {
-        let with_key = request("https://example.com", Some("k1"));
-        assert_eq!(dedup_key(&with_key), "k1");
+        let with_key = SerializedRequest::new(&request("https://example.com", Some("k1"))).unwrap();
+        assert_eq!(with_key.dedup_key, "k1");
 
-        let without_key = request("https://example.com/no-key", None);
-        assert_eq!(dedup_key(&without_key), "https://example.com/no-key");
+        let without_key =
+            SerializedRequest::new(&request("https://example.com/no-key", None)).unwrap();
+        assert_eq!(without_key.dedup_key, "https://example.com/no-key");
     }
 
-    /// A slice that already fits under the byte budget is returned unchanged.
+    /// The batch body is the JSON array of the strings serialized up front, so it parses back to
+    /// the original requests.
+    #[test]
+    fn batch_body_is_the_json_array_of_the_serialized_requests() {
+        let requests = vec![
+            request("https://example.com/1", Some("a")),
+            request("https://example.com/2", None),
+        ];
+        let body = batch_body(&serialized(&requests));
+        let parsed: Vec<RequestQueueRequest> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].unique_key.as_deref(), Some("a"));
+        assert_eq!(parsed[1].url, "https://example.com/2");
+        assert_eq!(body, serde_json::to_vec(&requests).unwrap());
+    }
+
+    /// A slice that already fits under the byte budget is taken whole.
     #[test]
     fn byte_slice_returns_everything_when_under_budget() {
         let requests: Vec<_> = (0..5)
             .map(|i| request(&format!("https://example.com/{i}"), None))
             .collect();
-        let sliced = slice_requests_by_byte_length(&requests, 1_000_000, 0).unwrap();
-        assert_eq!(sliced.len(), 5);
+        let taken =
+            count_requests_fitting_byte_length(&serialized(&requests), 1_000_000, 0).unwrap();
+        assert_eq!(taken, 5);
     }
 
     /// When the whole slice exceeds the byte budget, only a byte-limited prefix is taken — but
@@ -712,12 +757,28 @@ mod batch_add_tests {
             .collect();
         // Each request serializes to roughly 30 bytes; a budget of 50 fits one comfortably but
         // never two.
-        let sliced = slice_requests_by_byte_length(&requests, 50, 0).unwrap();
+        let taken = count_requests_fitting_byte_length(&serialized(&requests), 50, 0).unwrap();
         assert_eq!(
-            sliced.len(),
-            1,
+            taken, 1,
             "budget of 50 bytes should admit exactly one ~30-byte request"
         );
+    }
+
+    /// The brackets and commas of the JSON array count against the budget, so the batch body that
+    /// is actually sent never reaches the limit.
+    #[test]
+    fn byte_slice_counts_brackets_and_commas() {
+        let requests: Vec<_> = (0..4)
+            .map(|i| request(&format!("https://example.com/{i}"), None))
+            .collect();
+        let entries = serialized(&requests);
+        let item_bytes = entries[0].json.len();
+        // Three items need 2 brackets + 2 commas on top of their own bytes, which leaves a
+        // body of exactly `limit` bytes: not below it, so only two items are taken.
+        let limit = 3 * item_bytes + 4;
+        let taken = count_requests_fitting_byte_length(&entries, limit, 0).unwrap();
+        assert_eq!(taken, 2);
+        assert!(batch_body(&entries[..taken]).len() < limit);
     }
 
     /// A single request whose own JSON exceeds the byte budget is a hard error, not a silently
@@ -726,7 +787,7 @@ mod batch_add_tests {
     fn byte_slice_errors_on_oversized_single_request() {
         let huge_url = format!("https://example.com/{}", "x".repeat(1000));
         let requests = vec![request(&huge_url, None)];
-        let err = slice_requests_by_byte_length(&requests, 100, 3).unwrap_err();
+        let err = count_requests_fitting_byte_length(&serialized(&requests), 100, 3).unwrap_err();
         let message = err.to_string();
         assert!(
             message.contains("index 3"),
@@ -741,7 +802,7 @@ mod batch_add_tests {
         let requests: Vec<_> = (0..(MAX_REQUESTS_PER_BATCH_OPERATION * 2 + 3))
             .map(|i| request(&format!("https://example.com/{i}"), None))
             .collect();
-        let chunks = chunk_requests_for_batch_add(&requests, 10_000_000).unwrap();
+        let chunks = chunk_requests_for_batch_add(serialized(&requests), 10_000_000).unwrap();
         let sizes: Vec<usize> = chunks.iter().map(Vec::len).collect();
         assert_eq!(
             sizes,
@@ -763,7 +824,7 @@ mod batch_add_tests {
             .map(|i| request(&format!("https://example.com/{i}"), None))
             .collect();
         // ~30 bytes/request; a 100-byte budget forces multiple chunks well under the 25-item cap.
-        let chunks = chunk_requests_for_batch_add(&requests, 100).unwrap();
+        let chunks = chunk_requests_for_batch_add(serialized(&requests), 100).unwrap();
         assert!(
             chunks.len() > 1,
             "a tight byte budget must force more than one chunk, got {}",
@@ -775,5 +836,8 @@ mod batch_add_tests {
             requests.len(),
             "every request must end up in exactly one chunk"
         );
+        for chunk in &chunks {
+            assert!(batch_body(chunk).len() < 100 || chunk.len() == 1);
+        }
     }
 }

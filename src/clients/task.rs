@@ -15,6 +15,7 @@ use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::{ActorRun, Task};
+use crate::timeouts::Timeout;
 
 /// Client for a specific Actor task.
 #[derive(Debug, Clone)]
@@ -22,6 +23,8 @@ pub struct TaskClient {
     root: ApifyClient,
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(TaskClient);
 
 impl TaskClient {
     pub(crate) fn new(root: ApifyClient, http: HttpClient, base_url: &str, id: &str) -> Self {
@@ -33,17 +36,17 @@ impl TaskClient {
 
     /// Fetches the task object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<Task>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the task with the given fields.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<Task> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the task.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Publishes the task on its public landing page, by setting `isPublic: true` through
@@ -84,6 +87,9 @@ impl TaskClient {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Medium, options.wait_for_finish);
         crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
             post_with_body(
                 &self.ctx,
@@ -91,6 +97,7 @@ impl TaskClient {
                 &params,
                 body.clone(),
                 "application/json",
+                timeout,
             )
         })
         .await
@@ -116,14 +123,20 @@ impl TaskClient {
         self.root.run(run.id).wait_for_finish(wait_secs).await
     }
 
-    /// Fetches the task's saved input, or `None` if not set.
-    pub async fn get_input(&self) -> ApifyClientResult<Option<Value>> {
-        let response =
-            crate::clients::base::get_raw(&self.ctx, Some("input"), &QueryParams::new()).await?;
-        match response {
-            Some(r) => Ok(Some(serde_json::from_slice(&r.body)?)),
-            None => Ok(None),
-        }
+    /// Fetches the task's saved input.
+    ///
+    /// A task that does not exist is a [`NotFound`](crate::ApiError::is_not_found) error: the
+    /// input is a fixed sub-path of the task, so a `404` cannot be told apart from a missing
+    /// input.
+    pub async fn get_input(&self) -> ApifyClientResult<Value> {
+        let response = crate::clients::base::get_raw_required(
+            &self.ctx,
+            Some("input"),
+            &QueryParams::new(),
+            Timeout::Short,
+        )
+        .await?;
+        Ok(serde_json::from_slice(&response.body)?)
     }
 
     /// Updates the task's saved input.
@@ -134,14 +147,13 @@ impl TaskClient {
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         let response = self
             .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Put,
+            .send_with(
+                crate::http_client::HttpMethod::Put,
                 url,
                 headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body),
+                self.ctx.timeout(Timeout::Short),
+            )
             .await?;
         Ok(serde_json::from_slice(&response.body)?)
     }

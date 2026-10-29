@@ -6,12 +6,15 @@ use crate::common::{PaginationList, QueryParams, StorageListOptions};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Dataset;
+use crate::timeouts::Timeout;
 
 /// Client for listing datasets and getting-or-creating a dataset by name.
 #[derive(Debug, Clone)]
 pub struct DatasetCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(DatasetCollectionClient);
 
 impl DatasetCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -27,7 +30,7 @@ impl DatasetCollectionClient {
     ) -> ApifyClientResult<PaginationList<Dataset>> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all datasets matching `options`, fetching pages on demand.
@@ -44,6 +47,6 @@ impl DatasetCollectionClient {
     ///
     /// Passing `None` for `name` creates an unnamed dataset.
     pub async fn get_or_create(&self, name: Option<&str>) -> ApifyClientResult<Dataset> {
-        get_or_create_named(&self.ctx, name).await
+        get_or_create_named(&self.ctx, name, Timeout::Short).await
     }
 }

@@ -8,12 +8,15 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Webhook;
+use crate::timeouts::Timeout;
 
 /// Client for listing and creating webhooks.
 #[derive(Debug, Clone)]
 pub struct WebhookCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(WebhookCollectionClient);
 
 impl WebhookCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -36,7 +39,7 @@ impl WebhookCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all webhooks matching `options`, fetching pages on demand.
@@ -51,6 +54,6 @@ impl WebhookCollectionClient {
 
     /// Creates a new webhook from the given definition.
     pub async fn create<T: Serialize>(&self, webhook: &T) -> ApifyClientResult<Webhook> {
-        create_resource(&self.ctx, &QueryParams::new(), webhook).await
+        create_resource(&self.ctx, &QueryParams::new(), webhook, Timeout::Short).await
     }
 }

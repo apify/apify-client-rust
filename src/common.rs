@@ -4,13 +4,11 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::error::ApifyClientResult;
+use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::version::CLIENT_VERSION;
 
 /// Status code returned when a resource is not found.
 const NOT_FOUND_STATUS_CODE: u16 = 404;
-const RECORD_NOT_FOUND_TYPE: &str = "record-not-found";
-const RECORD_OR_TOKEN_NOT_FOUND_TYPE: &str = "record-or-token-not-found";
 
 /// Most Apify endpoints wrap their payload in a top-level `data` property.
 /// This envelope unwraps `{ "data": ... }` into the inner type.
@@ -28,23 +26,13 @@ pub(crate) fn parse_data_envelope<T: DeserializeOwned>(body: &[u8]) -> ApifyClie
 /// Translates a "not found" API error into `Ok(None)`, re-raising any other error.
 ///
 /// This mirrors `catchNotFoundOrThrow` in the reference clients: a `get`/`delete` on a
-/// missing resource resolves to `None` rather than raising.
+/// missing resource resolves to `None` rather than raising, whatever the error `type` of the
+/// `404` response.
 pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientResult<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(err) => {
-            if let Some(api_error) = err.as_api_error() {
-                let is_not_found_status = api_error.status_code == NOT_FOUND_STATUS_CODE;
-                let is_not_found_type = matches!(
-                    api_error.error_type.as_deref(),
-                    Some(RECORD_NOT_FOUND_TYPE) | Some(RECORD_OR_TOKEN_NOT_FOUND_TYPE)
-                ) || api_error.http_method.as_deref() == Some("HEAD");
-                if is_not_found_status && is_not_found_type {
-                    return Ok(None);
-                }
-            }
-            Err(err)
-        }
+        Err(err) if err.status_code() == Some(NOT_FOUND_STATUS_CODE) => Ok(None),
+        Err(err) => Err(err),
     }
 }
 
@@ -155,10 +143,30 @@ fn url_encode(input: &str) -> String {
 /// Encodes everything except the RFC 3986 "unreserved" characters. Notably `/`, `?`, `#`,
 /// space and any non-ASCII bytes are escaped — unlike a raw `format!(".../{key}")`, which
 /// would leave them intact and produce a malformed or wrong-endpoint URL.
+///
+/// This does not reject a segment that is empty or a dot segment (`.` or `..`), which a URL
+/// parser resolves to another endpoint even when percent-encoded; the client methods that take
+/// such a value validate it with `to_path_segment` instead.
 pub fn encode_path_segment(input: &str) -> String {
     // Path segments and query components share the same unreserved set here, so reuse the
     // query encoder. (`url_encode` already escapes `/`, `?`, `#`, space and non-ASCII.)
     url_encode(input)
+}
+
+/// Validates and percent-encodes a caller-supplied URL path segment so it cannot restructure
+/// the request path.
+///
+/// An empty value is rejected because it would address the collection instead of a resource, and
+/// so is `.` or `..`: URL parsers resolve dot segments after percent-decoding, so
+/// `records/%2E%2E` collapses to the parent endpoint just like `records/..`. The error is
+/// [`ApifyClientError::InvalidArgument`].
+pub(crate) fn to_path_segment(input: &str) -> ApifyClientResult<String> {
+    if input.is_empty() || input == "." || input == ".." {
+        return Err(ApifyClientError::InvalidArgument(format!(
+            "URL path segment must be non-empty and must not be a dot segment, got `{input}`"
+        )));
+    }
+    Ok(encode_path_segment(input))
 }
 
 /// Standard offset/limit pagination options shared by most list endpoints.
@@ -293,9 +301,9 @@ fn map_os_to_node_platform(os: &str) -> &str {
 }
 
 /// Encodes a resource id so it is safe to embed in a URL path. Apify uses the
-/// `username~resourcename` form, so the first `/` of an id is replaced with `~`.
+/// `username~resourcename` form, so every `/` of an id is replaced with `~`.
 pub fn to_safe_id(id: &str) -> String {
-    id.replacen('/', "~", 1)
+    id.replace('/', "~")
 }
 
 /// Version tag embedded in storage-content signatures. Matches the upstream library default

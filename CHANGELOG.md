@@ -4,6 +4,48 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] - 2026-10-29
+
+Ports the `apify-client-js` v3 changes.
+
+### Added
+- Timeout tiers: `Timeout` (`Short`, `Medium`, `Long`, `NoTimeout`, `Custom`), the builder options
+  `timeout_short`, `timeout_medium`, `timeout_long` and `timeout_max`, and `with_timeout` on every
+  resource client.
+- `HttpCompressor` with `BrotliHttpCompressor` and `GzipHttpCompressor` (configurable quality), set
+  with `ApifyClientBuilder::http_compressor`.
+- `ApifyClientBuilder::default_header`.
+- `RunListOptions::deployment`, `StoreListOptions::include_input_schema` and
+  `LogOptions::download`.
+- Offline tests for the timeout tiers, the 404 handling, id validation and batch add.
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
+- **Breaking:** every method has a timeout tier (5s, 30s or 360s by default) instead of one 360s
+  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish` has no timeout, and a
+  `waitForFinish` request gets the server-side wait added to its tier.
+- **Breaking:** `HttpRequest::timeout` may be `timeouts::NO_TIMEOUT`, which a custom `HttpBackend`
+  must not abort.
+- **Breaking:** `RetryConfig` no longer has a `timeout` field.
+- **Breaking:** any `404` resolves to `None`, not only `record-not-found`, but only for a client that
+  names its resource by id. `run.dataset()`, `run.log()` and the other chained clients return it as
+  an error.
+- **Breaking:** `get_statistics`, `get_input`, `schedule.get_log` and `get_openapi_definition`
+  return the `404` as an error and no longer wrap the result in `Option`.
+- **Breaking:** `LogClient::stream` and `stream_with_options` return `Option`, `None` for a missing log.
+- **Breaking:** `ActorStartOptions::timeout_secs` and `RunResurrectOptions::timeout_secs` are now
+  `run_timeout_secs`.
+- **Breaking:** `ListRequestsOptions::exclusive_start_id` is removed; use `cursor`.
+- **Breaking:** `LogOptions`, `RunListOptions` and `StoreListOptions` gained a public field.
+- **Breaking:** an id, record key or request id that is empty or a dot segment fails with
+  `InvalidArgument`; ids are percent-encoded and every `/` of an id becomes `~`.
+- **Breaking:** `dataset.push_items` rejects anything but an object or an array of objects.
+- **Breaking:** `ActorRun::container_url` and `Webhook::request_url` are normalized URLs.
+- `UserClient::limits`, `monthly_usage` and `update_limits` work for any user, not only `me`.
+- The default gzip quality is 9.
+- `batch_add_requests` serializes each request once and rejects an oversized one before sending.
+- The `list` integration tests wait out replica lag for 87 seconds.
+
 ## [0.14.1] - 2026-10-26
 
 ### Changed

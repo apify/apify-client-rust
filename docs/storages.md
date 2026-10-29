@@ -63,7 +63,7 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `list_items::<T>(options)` | `DatasetListItemsOptions` | `PaginationList<T>` | Reads items (pagination via response headers). |
 | `iterate_items::<T>(options)` | `DatasetListItemsOptions` | `ListIterator<T>` | Lazily iterates all items across pages (auto-pagination). |
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
-| `get_statistics()` | — | `Option<Value>` | Field statistics. |
+| `get_statistics()` | — | `Value` | Field statistics. A `404` is an error. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
 | `download_items_stream(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Like `download_items`, but streams the export instead of buffering it, for constant-memory processing of a large export. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
@@ -221,7 +221,7 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `LockedRequestQueueHead` | Locks head requests. |
 | `batch_add_requests(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `BatchRequestsOperationResult` | Batch add, with automatic chunking, bounded parallelism, and retries for rate-limited requests. |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `BatchRequestsOperationResult` | Batch delete (max 25 requests per call; larger inputs are rejected client-side). |
-| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
+| `list_requests(options)` | `ListRequestsOptions { limit, cursor, filter }` | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `RequestLockInfo` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
