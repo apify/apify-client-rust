@@ -340,7 +340,7 @@ impl KeyValueStoreClient {
                 params.add_str("signature", Some(create_hmac_signature(secret, key)));
             }
         }
-        Ok(params.apply_to_url(&self.ctx.public_url(Some(&path))))
+        Ok(self.ctx.public_url_with_params(Some(&path), &params))
     }
 
     /// Builds a public URL for listing this store's keys.
@@ -363,7 +363,7 @@ impl KeyValueStoreClient {
                 params.add_str("signature", Some(signature));
             }
         }
-        Ok(params.apply_to_url(&self.ctx.public_url(Some("keys"))))
+        Ok(self.ctx.public_url_with_params(Some("keys"), &params))
     }
 
     /// Deletes the record with the given key.

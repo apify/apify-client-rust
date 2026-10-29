@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::clients::dataset::{DatasetClient, DatasetListItemsOptions};
 use crate::clients::run::RunClient;
-use crate::error::ApifyClientResult;
+use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::models::ActorRun;
 use crate::timeouts::Timeout;
 
@@ -145,6 +145,14 @@ impl<T: DeserializeOwned> RunDatasetItemsIterator<T> {
 
     /// Fetches the run, and pins the walk to it and to its default dataset.
     async fn resolve(&mut self) -> ApifyClientResult<()> {
+        // The rows are counted from the oldest, since the end of a dataset that is still growing is
+        // not known, and `desc` would count them from the newest.
+        if self.options.desc == Some(true) {
+            return Err(ApifyClientError::InvalidArgument(
+                "iterate_dataset_items reads the rows oldest first and does not support `desc`"
+                    .to_string(),
+            ));
+        }
         let timeout = self.run_client.timeout().unwrap_or(Timeout::Long);
         let run_client = self.run_client.clone().with_timeout(timeout);
         let run = run_client.get().await?;

@@ -482,7 +482,7 @@ impl DatasetClient {
                 params.add_str("signature", Some(signature));
             }
         }
-        Ok(params.apply_to_url(&self.ctx.public_url(Some("items"))))
+        Ok(self.ctx.public_url_with_params(Some("items"), &params))
     }
 
     /// Returns statistical information about the dataset.

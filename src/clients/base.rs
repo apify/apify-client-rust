@@ -163,6 +163,16 @@ impl ResourceContext {
         }
     }
 
+    /// Like [`url_with_params`](Self::url_with_params), for the public (shareable) form of the URL.
+    pub(crate) fn public_url_with_params(
+        &self,
+        sub_path: Option<&str>,
+        params: &QueryParams,
+    ) -> String {
+        self.merged_params(params)
+            .apply_to_url(&self.public_url(sub_path))
+    }
+
     /// Merges the inherited base params with per-call params into a final query string.
     pub(crate) fn merged_params(&self, params: &QueryParams) -> QueryParams {
         let mut merged = self.base_params.clone();

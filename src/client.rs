@@ -131,14 +131,16 @@ impl ApifyClientBuilder {
     }
 
     /// Sets the duration of the [`Timeout::Medium`](crate::Timeout::Medium) tier, used by
-    /// listing, batch and trigger operations (default `30s`).
+    /// listing, batch and trigger operations (default `30s`). A zero duration is rejected: a client
+    /// built with one fails every request with `InvalidArgument`.
     pub fn timeout_medium(mut self, timeout: Duration) -> Self {
         self.tiers.medium = timeout;
         self
     }
 
     /// Sets the duration of the [`Timeout::Long`](crate::Timeout::Long) tier, used by downloads,
-    /// uploads and streaming (default `360s`).
+    /// uploads and streaming (default `360s`). A zero duration is rejected: a client built with one
+    /// fails every request with `InvalidArgument`.
     pub fn timeout_long(mut self, timeout: Duration) -> Self {
         self.tiers.long = timeout;
         self
@@ -146,14 +148,16 @@ impl ApifyClientBuilder {
 
     /// Caps the timeout of a single request attempt (default `360s`). A tier or an explicit
     /// timeout above the cap is lowered to it. The timeout of each attempt doubles with every
-    /// retry, up to this cap.
+    /// retry, up to this cap. A zero duration is rejected: a client built with one fails every
+    /// request with `InvalidArgument`.
     pub fn timeout_max(mut self, timeout: Duration) -> Self {
         self.tiers.max = timeout;
         self
     }
 
     /// Caps the timeout of a single request attempt (default `360s`). Equivalent to
-    /// [`timeout_max`](Self::timeout_max), kept under its original name.
+    /// [`timeout_max`](Self::timeout_max), kept under its original name, and a zero duration is
+    /// rejected the same way.
     pub fn timeout(self, timeout: Duration) -> Self {
         self.timeout_max(timeout)
     }

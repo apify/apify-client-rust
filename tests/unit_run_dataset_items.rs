@@ -270,3 +270,27 @@ async fn every_request_uses_the_long_tier_unless_overridden() {
         .iter()
         .all(|timeout| timeout.as_secs() == 9));
 }
+
+/// The rows are counted from the oldest, so `desc` would mix up the offsets of a dataset that is
+/// still growing.
+#[tokio::test]
+async fn descending_order_is_rejected_without_a_request() {
+    let backend = MockBackend::new(vec![run("SUCCEEDED")]);
+    let client = client_with(backend.clone(), 0);
+
+    let error = client
+        .run("r")
+        .iterate_dataset_items::<Value>(DatasetListItemsOptions {
+            desc: Some(true),
+            ..Default::default()
+        })
+        .next()
+        .await
+        .expect_err("`desc` is not supported");
+
+    assert!(
+        matches!(error, apify_client::ApifyClientError::InvalidArgument(_)),
+        "{error:?}"
+    );
+    assert_eq!(backend.call_count(), 0);
+}
