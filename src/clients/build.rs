@@ -78,6 +78,11 @@ impl BuildClient {
 
     /// Returns a client for the build's log.
     pub fn log(&self) -> LogClient {
-        LogClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "log")
+        LogClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "log",
+            &QueryParams::new(),
+        )
     }
 }

@@ -15,6 +15,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<ActorRun>` | Fetches the run. |
+| `iterate_dataset_items::<T>(options)` | `DatasetListItemsOptions` | `RunDatasetItemsIterator<T>` | Lazily iterates the items of the run's default dataset while the run is still producing them, until it finishes. `with_chunk_size(n)` sets the rows per request (default 1000) and `with_poll_interval(d)` the wait for the run between polls (default 5s). `offset` and `limit` of the options bound the rows that are read; `desc` is not supported. A `last_run()` client sticks to the run its first request resolves to. |
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
@@ -80,7 +81,9 @@ Leave a field as `None` to omit it.
 | `default_dataset_id` | `Option<String>` | Default dataset ID — pass to `client.dataset(..)` to read results. |
 | `default_key_value_store_id` | `Option<String>` | Default key-value store ID for the run. |
 | `default_request_queue_id` | `Option<String>` | Default request queue ID for the run. |
-| `container_url` | `Option<String>` | URL of the run's container, while running. |
+| `container_url` | `Option<String>` | URL of the run's container, while running. Normalized to its WHATWG URL serialization, like every URL field below. |
+| `console_url` | `Option<String>` | URL of the run in Apify Console. |
+| `output` | `Option<HashMap<String, String>>` | Output links of the run, generated from the output schema of the Actor build (present only if the build defines one). |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 The three `default_*_id` fields are `Option<String>` because they are only populated once the

@@ -630,3 +630,68 @@ async fn key_value_store_writes_and_public_urls_use_the_long_tier() {
 
     assert_eq!(backend.timeouts(), vec![Duration::from_secs(360); 5]);
 }
+
+/// A zero timeout belongs to the client it was set on: a client chained from it does not inherit
+/// it, and a later `with_timeout` replaces it.
+#[tokio::test]
+async fn a_zero_timeout_is_neither_inherited_nor_sticky() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "id": "d" }))]);
+    let client = client_with(backend.clone(), 0);
+    let run = client
+        .run("r")
+        .with_timeout(Timeout::Custom(Duration::ZERO));
+
+    assert!(matches!(
+        run.get().await,
+        Err(ApifyClientError::InvalidArgument(_))
+    ));
+    run.dataset()
+        .get()
+        .await
+        .expect("a chained client has its own timeout");
+    assert_eq!(backend.call_count(), 1);
+
+    run.with_timeout(Timeout::Short)
+        .get()
+        .await
+        .expect("a later timeout replaces the zero one");
+    assert_eq!(backend.call_count(), 2);
+}
+
+/// An invalid id is reported as such, not hidden by a zero timeout set on the same client.
+#[tokio::test]
+async fn an_invalid_id_keeps_its_own_error_next_to_a_zero_timeout() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "id": "x" }))]);
+    let client = client_with(backend, 0);
+    let error = client
+        .actor("..")
+        .with_timeout(Timeout::Custom(Duration::ZERO))
+        .get()
+        .await
+        .expect_err("the id is invalid");
+    assert!(error.to_string().contains("dot segment"), "{error}");
+}
+
+#[tokio::test]
+async fn a_zero_tier_or_cap_fails_every_request() {
+    for builder in [
+        builder_with(MockBackend::new(vec![ok_data(json!({ "id": "a" }))]))
+            .timeout_short(Duration::ZERO),
+        builder_with(MockBackend::new(vec![ok_data(json!({ "id": "a" }))]))
+            .timeout_medium(Duration::ZERO),
+        builder_with(MockBackend::new(vec![ok_data(json!({ "id": "a" }))]))
+            .timeout_long(Duration::ZERO),
+        builder_with(MockBackend::new(vec![ok_data(json!({ "id": "a" }))]))
+            .timeout_max(Duration::ZERO),
+        builder_with(MockBackend::new(vec![ok_data(json!({ "id": "a" }))])).timeout(Duration::ZERO),
+    ] {
+        let client = builder.build();
+        let error = client.actor("a").get().await.expect_err("a zero timeout");
+        assert!(
+            matches!(error, ApifyClientError::InvalidArgument(_)),
+            "{error:?}"
+        );
+        // The failure follows the clients chained from it.
+        assert!(client.run("r").dataset().get().await.is_err());
+    }
+}

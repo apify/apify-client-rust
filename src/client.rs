@@ -123,7 +123,8 @@ impl ApifyClientBuilder {
     }
 
     /// Sets the duration of the [`Timeout::Short`](crate::Timeout::Short) tier, used by simple
-    /// metadata reads and writes (default `5s`).
+    /// metadata reads and writes (default `5s`). Like the other timeout options, it must be longer
+    /// than zero: a client built with a zero one fails every request with `InvalidArgument`.
     pub fn timeout_short(mut self, timeout: Duration) -> Self {
         self.tiers.short = timeout;
         self
@@ -215,6 +216,15 @@ impl ApifyClientBuilder {
             min_delay_between_retries: self.min_delay_between_retries,
         };
 
+        let zero_tier = [
+            ("timeout_short", self.tiers.short),
+            ("timeout_medium", self.tiers.medium),
+            ("timeout_long", self.tiers.long),
+            ("timeout_max", self.tiers.max),
+        ]
+        .into_iter()
+        .find(|(_, duration)| duration.is_zero());
+
         let http = HttpClient::new(HttpClientConfig {
             backend,
             token: self.token,
@@ -225,6 +235,12 @@ impl ApifyClientBuilder {
             default_headers: self.default_headers,
             stats: Arc::default(),
         });
+        // A zero timeout fails every attempt at once, and `Timeout::NoTimeout` is the way to run
+        // without one, so the client fails every request with `InvalidArgument` instead.
+        let http = match zero_tier {
+            Some((option, _)) => http.poisoned(format!("{option} must be longer than zero")),
+            None => http,
+        };
 
         let base_url = to_api_base_url(&self.base_url);
         let public_base_url =

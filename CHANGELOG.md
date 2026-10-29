@@ -16,10 +16,12 @@ Ports the `apify-client-js` v3 changes.
   with `ApifyClientBuilder::http_compressor`.
 - `ApifyClientBuilder::default_header`.
 - `ApifyClient::stats`: the `Statistics` of the calls, requests and `429` responses.
-- `HttpClient::call_with_options` and `CallOptions::do_not_retry_timeouts`;
-  `KeyValueStoreClient::set_record_raw_with_options`, `set_record_json_with_options` and
-  `SetRecordOptions`.
+- `KeyValueStoreClient::set_record_raw_with_options`, `set_record_json_with_options` and
+  `SetRecordOptions`, with `do_not_retry_timeouts`.
 - `RunListOptions::deployment`, `StoreListOptions::include_input_schema` and `LogOptions::download`.
+- `RunClient::iterate_dataset_items`, `RunDatasetItemsIterator`: iterate the items of a run's
+  default dataset while the run is still producing them, like the reference client's
+  `iterateDatasetItems`.
 - Typed, normalized URL fields: `ActorRun::console_url` and `output`, `Task::standby_url`,
   `Dataset::console_url` and `items_public_url`, `KeyValueStore::console_url`, `keys_public_url` and
   `records_public_url`, `KeyValueStoreKey::record_public_url`, `RequestQueue::console_url`,
@@ -41,7 +43,6 @@ Ports the `apify-client-js` v3 changes.
   `get_streamed_log_with_options` return an `Option`: `None` for a missing log or run.
 - **Breaking:** `ActorStartOptions::timeout_secs` and `RunResurrectOptions::timeout_secs` are now
   `run_timeout_secs`.
-- **Breaking:** `ListRequestsOptions::exclusive_start_id` is deprecated in favor of `cursor`.
 - **Breaking:** `LogOptions`, `RunListOptions` and `StoreListOptions` gained a public field.
 - **Breaking:** an id, record key or request id that is empty or a dot segment fails with
   `InvalidArgument`; ids are percent-encoded and every `/` of an id becomes `~`.
@@ -50,6 +51,10 @@ Ports the `apify-client-js` v3 changes.
 - **Breaking:** the URL fields listed above are normalized, and no longer in `extra`.
 - **Breaking:** `RequestCompression` moved to `http_compressors` (still re-exported at the crate
   root).
+- `ListRequestsOptions::exclusive_start_id` is deprecated in favor of `cursor`.
+- The storages and the log chained from a `last_run()` with a `status` or `origin` filter now
+  belong to the filtered run.
+- A zero `timeout_*` option or `with_timeout` fails the requests with `InvalidArgument`.
 - `UserClient::limits`, `monthly_usage` and `update_limits` work for any user, not only `me`.
 - `batch_add_requests` serializes each request once and rejects an oversized one before sending.
 - Key-value store `update`, `record_exists` and the public URL methods, and

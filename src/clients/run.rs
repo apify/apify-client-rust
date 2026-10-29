@@ -6,10 +6,11 @@ use crate::clients::base::{
     delete_resource, get_resource, post_action, post_with_body, update_resource, wait_for_finish,
     ResourceContext,
 };
-use crate::clients::dataset::DatasetClient;
+use crate::clients::dataset::{DatasetClient, DatasetListItemsOptions};
 use crate::clients::key_value_store::KeyValueStoreClient;
 use crate::clients::log::LogClient;
 use crate::clients::request_queue::RequestQueueClient;
+use crate::clients::run_dataset_items::RunDatasetItemsIterator;
 use crate::common::{catch_not_found, to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -91,6 +92,7 @@ pub struct RunChargeOptions {
 /// run's default dataset, key-value store, request queue and log.
 #[derive(Debug, Clone)]
 pub struct RunClient {
+    root: crate::client::ApifyClient,
     ctx: ResourceContext,
     /// The run ID, retained so `charge` can build a per-run idempotency key.
     id: String,
@@ -100,16 +102,35 @@ crate::clients::base::impl_with_timeout!(RunClient);
 
 impl RunClient {
     pub(crate) fn new(
-        _root: crate::client::ApifyClient,
+        root: crate::client::ApifyClient,
         http: HttpClient,
         base_url: &str,
         resource_path: &str,
         id: &str,
     ) -> Self {
         Self {
+            root,
             ctx: ResourceContext::single(http, base_url, resource_path, id),
             id: id.to_string(),
         }
+    }
+
+    /// The run ID this client addresses; `last` for the client of a `last_run()`.
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The timeout set with `with_timeout`, if any.
+    pub(crate) fn timeout(&self) -> Option<Timeout> {
+        self.ctx.timeout
+    }
+
+    /// A client for the run with the given ID, with the timeout of this client.
+    pub(crate) fn pinned_to(&self, run_id: &str) -> RunClient {
+        let mut client = self.root.run(run_id);
+        client.ctx.timeout = self.ctx.timeout;
+        client.ctx.timeout_cap = self.ctx.timeout_cap;
+        client
     }
 
     /// Adds a base query parameter to this run client, inherited by its requests (used by
@@ -280,7 +301,9 @@ impl RunClient {
             body["requestId"] = serde_json::Value::String(request_id);
         }
         let body_bytes = serde_json::to_vec(&body)?;
-        let url = self.ctx.url(Some("charge"));
+        let url = self
+            .ctx
+            .url_with_params(Some("charge"), &QueryParams::new());
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         headers.insert(CHARGE_IDEMPOTENCY_HEADER.to_string(), idempotency_key);
@@ -325,7 +348,12 @@ impl RunClient {
 
     /// Returns a client for the run's default dataset.
     pub fn dataset(&self) -> DatasetClient {
-        DatasetClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "dataset")
+        DatasetClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "dataset",
+            &self.ctx.base_params,
+        )
     }
 
     /// Returns a client for the run's default key-value store.
@@ -334,17 +362,63 @@ impl RunClient {
             self.ctx.http.clone(),
             &self.ctx.url(None),
             "key-value-store",
+            &self.ctx.base_params,
         )
     }
 
     /// Returns a client for the run's default request queue.
     pub fn request_queue(&self) -> RequestQueueClient {
-        RequestQueueClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "request-queue")
+        RequestQueueClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "request-queue",
+            &self.ctx.base_params,
+        )
     }
 
     /// Returns a client for the run's log.
     pub fn log(&self) -> LogClient {
-        LogClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "log")
+        LogClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "log",
+            &self.ctx.base_params,
+        )
+    }
+
+    /// Iterates over the items of the run's default dataset while the run is still producing them.
+    ///
+    /// Returns a [`RunDatasetItemsIterator`]; call its `next()` to get one item at a time. Unlike
+    /// [`DatasetClient::iterate_items`], which stops at the end of the dataset as it is, this keeps
+    /// polling until the run finishes, so a consumer can process the items of a long-running Actor
+    /// as they appear. See [`RunDatasetItemsIterator`] for how the rows are read, and its
+    /// `with_chunk_size` and `with_poll_interval` for the page size and the polling interval.
+    ///
+    /// `options` filters and projects the items exactly like
+    /// [`DatasetClient::list_items`]: `offset` is the number of dataset rows to skip and `limit`
+    /// the maximum number of rows to scan. `desc` is not supported, since the end of a dataset that
+    /// is still growing is not known: the rows are always read oldest first.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use apify_client::ApifyClient;
+    ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = ApifyClient::new("my-api-token");
+    /// let mut items = client
+    ///     .run("my-run-id")
+    ///     .iterate_dataset_items::<serde_json::Value>(Default::default());
+    /// while let Some(item) = items.next().await? {
+    ///     println!("{item}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn iterate_dataset_items<T: serde::de::DeserializeOwned>(
+        &self,
+        options: DatasetListItemsOptions,
+    ) -> RunDatasetItemsIterator<T> {
+        RunDatasetItemsIterator::new(self.clone(), options)
     }
 
     /// Opens a live stream of the run's log for redirection, or `None` if the run does not exist.

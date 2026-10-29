@@ -280,3 +280,38 @@ async fn list_runs_filtered_by_deployment() {
         .expect("listing runs by deployment should succeed");
     assert!(page.total >= 0);
 }
+
+/// Iterating the default dataset of a run reads the items pushed to it, including those past the
+/// dataset's `itemCount`, which lags a few seconds behind the pushed items.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_run_dataset_items_reads_the_items_of_a_finished_run() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call hello-world actor");
+    let dataset_id = run
+        .default_dataset_id
+        .clone()
+        .expect("a run has a default dataset");
+    client
+        .dataset(&dataset_id)
+        .push_items(&serde_json::json!([{ "n": 1 }, { "n": 2 }, { "n": 3 }]))
+        .await
+        .expect("push items to the run's dataset");
+
+    let items = client
+        .run(&run.id)
+        .iterate_dataset_items::<serde_json::Value>(Default::default())
+        .with_chunk_size(2)
+        .collect_all()
+        .await
+        .expect("iterate the run's dataset items");
+
+    // The Actor may have written items of its own before the three that were pushed.
+    assert!(items.len() >= 3, "{items:?}");
+    let pushed = &items[items.len() - 3..];
+    assert_eq!(pushed[0]["n"], 1);
+    assert_eq!(pushed[2]["n"], 3);
+}

@@ -39,7 +39,7 @@ Unknown fields returned by the API are preserved in `extra`.
 |---|---|---|
 | `id` | `String` | Unique webhook ID (always present); used to build a `client.webhook(&webhook.id)` client. |
 | `user_id` | `Option<String>` | ID of the user who owns the webhook. |
-| `request_url` | `Option<String>` | The URL that receives the webhook POST request. |
+| `request_url` | `Option<String>` | The URL that receives the webhook POST request, normalized to its WHATWG URL serialization. |
 | `event_types` | `Vec<String>` | Event types that trigger this webhook (e.g. `ACTOR.RUN.SUCCEEDED`). |
 | `extra` | `Extra` | Any other fields returned by the API (e.g. `condition`, `isAdHoc`, `payloadTemplate`). |
 
@@ -53,4 +53,5 @@ returned by the API are preserved in `extra`.
 |---|---|---|
 | `id` | `String` | Unique dispatch ID (always present). |
 | `webhook_id` | `Option<String>` | ID of the webhook that produced this dispatch. |
+| `webhook` | `Option<WebhookDispatchWebhookSummary>` | The webhook as it was when the dispatch was made: `request_url` (normalized) and the other fields in `extra`. |
 | `extra` | `Extra` | Any other fields returned by the API (e.g. `status`, `attempts`, `eventType`). |

@@ -46,9 +46,15 @@ impl LogClient {
     }
 
     /// Creates a log client nested under a run or build (path `.../log`).
-    pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
+    pub(crate) fn nested(
+        http: HttpClient,
+        base_url: &str,
+        sub_path: &str,
+        base_params: &QueryParams,
+    ) -> Self {
         Self {
-            ctx: ResourceContext::collection(http, base_url, sub_path),
+            ctx: ResourceContext::collection(http, base_url, sub_path)
+                .with_base_params(base_params),
         }
     }
 
@@ -144,7 +150,7 @@ impl LogClient {
         params
             .add_bool("raw", options.raw)
             .add_bool("download", options.download);
-        let url = params.apply_to_url(&self.ctx.url(None));
+        let url = self.ctx.url_with_params(None, &params);
         get_byte_stream(&self.ctx, url, Timeout::Long).await
     }
 }

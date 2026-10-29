@@ -82,9 +82,15 @@ impl KeyValueStoreClient {
     }
 
     /// Creates a KVS client for a run's default store (nested path, no ID).
-    pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
+    pub(crate) fn nested(
+        http: HttpClient,
+        base_url: &str,
+        sub_path: &str,
+        base_params: &QueryParams,
+    ) -> Self {
         Self {
-            ctx: ResourceContext::collection(http, base_url, sub_path),
+            ctx: ResourceContext::collection(http, base_url, sub_path)
+                .with_base_params(base_params),
         }
     }
 
@@ -362,7 +368,9 @@ impl KeyValueStoreClient {
 
     /// Deletes the record with the given key.
     pub async fn delete_record(&self, key: &str) -> ApifyClientResult<()> {
-        let url = self.ctx.url(Some(&record_path(key)?));
+        let url = self
+            .ctx
+            .url_with_params(Some(&record_path(key)?), &QueryParams::new());
         self.ctx
             .send(HttpMethod::Delete, url, self.ctx.timeout(Timeout::Short))
             .await?;

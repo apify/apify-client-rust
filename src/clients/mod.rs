@@ -24,6 +24,7 @@ pub mod request_queue;
 pub mod request_queue_collection;
 pub mod run;
 pub mod run_collection;
+pub mod run_dataset_items;
 pub mod schedule;
 pub mod schedule_collection;
 pub mod store_collection;
