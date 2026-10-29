@@ -556,3 +556,35 @@ async fn the_log_chained_from_a_task_last_run_carries_its_filters() {
     assert!(url.contains("/actor-tasks/t/runs/last/log"), "{url}");
     assert!(url.contains("status=FAILED"), "{url}");
 }
+
+/// The public URLs of a storage chained from a filtered `last_run` name the same run as the
+/// storage they were signed for.
+#[tokio::test]
+async fn public_urls_of_storages_chained_from_a_filtered_last_run_carry_its_filters() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "id": "s" }))]);
+    let client = client_with(backend, 0);
+    let last_run = client.actor("a").last_run(Some("SUCCEEDED"));
+
+    let urls = [
+        last_run
+            .dataset()
+            .create_items_public_url(Default::default(), None)
+            .await
+            .unwrap(),
+        last_run
+            .key_value_store()
+            .get_record_public_url("OUTPUT")
+            .await
+            .unwrap(),
+        last_run
+            .key_value_store()
+            .create_keys_public_url(None)
+            .await
+            .unwrap(),
+    ];
+
+    for url in urls {
+        assert!(url.contains("/runs/last/"), "{url}");
+        assert!(url.contains("status=SUCCEEDED"), "{url}");
+    }
+}

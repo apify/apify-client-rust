@@ -125,12 +125,9 @@ impl RunClient {
         self.ctx.timeout
     }
 
-    /// A client for the run with the given ID, with the timeout of this client.
+    /// A client for the run with the given ID.
     pub(crate) fn pinned_to(&self, run_id: &str) -> RunClient {
-        let mut client = self.root.run(run_id);
-        client.ctx.timeout = self.ctx.timeout;
-        client.ctx.timeout_cap = self.ctx.timeout_cap;
-        client
+        self.root.run(run_id)
     }
 
     /// Adds a base query parameter to this run client, inherited by its requests (used by
@@ -396,8 +393,10 @@ impl RunClient {
     ///
     /// `options` filters and projects the items exactly like
     /// [`DatasetClient::list_items`]: `offset` is the number of dataset rows to skip and `limit`
-    /// the maximum number of rows to scan. `desc` is not supported, since the end of a dataset that
-    /// is still growing is not known: the rows are always read oldest first.
+    /// the maximum number of rows to scan. `desc: Some(true)` is rejected with
+    /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument), since
+    /// the end of a dataset that is still growing is not known: the rows are always read oldest
+    /// first.
     ///
     /// # Example
     /// ```no_run

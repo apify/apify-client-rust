@@ -15,7 +15,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<ActorRun>` | Fetches the run. |
-| `iterate_dataset_items::<T>(options)` | `DatasetListItemsOptions` | `RunDatasetItemsIterator<T>` | Lazily iterates the items of the run's default dataset while the run is still producing them, until it finishes. `with_chunk_size(n)` sets the rows per request (default 1000) and `with_poll_interval(d)` the wait for the run between polls (default 5s). `offset` and `limit` of the options bound the rows that are read; `desc` is not supported. A `last_run()` client sticks to the run its first request resolves to. |
+| `iterate_dataset_items::<T>(options)` | `DatasetListItemsOptions` | `RunDatasetItemsIterator<T>` | Lazily iterates the items of the run's default dataset while the run is still producing them, until it finishes. `with_chunk_size(n)` sets the rows per request (default 1000) and `with_poll_interval(d)` the wait for the run between polls (default 5s). `offset` and `limit` of the options bound the rows that are read; `desc: Some(true)` is rejected with `InvalidArgument`. A `last_run()` client sticks to the run its first request resolves to. |
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |

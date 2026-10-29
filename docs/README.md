@@ -140,7 +140,7 @@ Builder options:
 | `public_base_url(u)` | = `base_url` | Origin used when building public/shareable URLs. |
 | `max_retries(n)` | `8` | Maximum retries for `429`/`5xx`/network errors. |
 | `min_delay_between_retries(d)` | `500ms` | Base backoff delay (doubled each retry, with jitter). |
-| `timeout_short(d)` | `5s` | Duration of the `Timeout::Short` tier (simple metadata reads and writes). |
+| `timeout_short(d)` | `5s` | Duration of the `Timeout::Short` tier (simple metadata reads and writes). Like the other timeout options, a zero duration makes every request of the client fail with `InvalidArgument`. |
 | `timeout_medium(d)` | `30s` | Duration of the `Timeout::Medium` tier (listing, batch and trigger calls). |
 | `timeout_long(d)` | `360s` | Duration of the `Timeout::Long` tier (downloads, uploads and streaming). |
 | `timeout_max(d)` | `360s` | Cap on the timeout of a single attempt. `timeout(d)` is the same option under its original name. |
@@ -183,7 +183,9 @@ retry, up to the same cap.
 Every resource client has a `with_timeout(Timeout)` method that replaces the tier of all the
 requests it sends with a tier, `Timeout::Custom(duration)`, or `Timeout::NoTimeout` (the client
 never aborts the request, so a stalled connection is not retried either). A zero duration is
-rejected: every request then fails with `InvalidArgument`. Clients obtained from it, such as
+rejected: every request then fails with `InvalidArgument`, and so does every request of a client
+built with a zero `timeout_short`, `timeout_medium`, `timeout_long` or `timeout_max`. Clients
+obtained from it, such as
 `run.dataset()`, do not inherit the timeout. A request queue client also has
 `with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
 

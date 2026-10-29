@@ -126,7 +126,9 @@ applies to each attempt separately and doubles with every retry, up to the cap.
 A resource client's `with_timeout` replaces the tier of every request that client sends, with a
 tier, an exact duration, or `Timeout::NoTimeout` to let a request run for as long as it takes.
 With `NoTimeout` the client never aborts the request, so a connection that stalls is not retried
-either. A zero duration is rejected: every request then fails with `InvalidArgument`. Clients
+either. A zero duration is rejected: every request then fails with `InvalidArgument`, and so does
+every request of a client built with a zero `timeout_short`, `timeout_medium`, `timeout_long` or
+`timeout_max`. Clients
 obtained from that client, such as `run.dataset()`, do not inherit the timeout. A request queue
 client also has `with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
 
