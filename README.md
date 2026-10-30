@@ -117,7 +117,8 @@ let client = ApifyClient::builder()
 Every method picks the timeout tier that fits its request: `Timeout::Short` for simple metadata
 reads and writes, `Timeout::Medium` for listing, batch and trigger calls, and `Timeout::Long` for
 downloads, uploads and streaming. Polling that waits for a job to finish (`wait_for_finish`) has no
-client-side timeout. The duration of each tier is set on the builder, and `timeout_max` caps the
+client-side timeout when it waits indefinitely (`None`); a bounded wait (`Some(n)`) gives each poll
+the `Medium` tier plus the server-side hold it asks for. The duration of each tier is set on the builder, and `timeout_max` caps the
 timeout of a single attempt: a tier or an explicit timeout above it is lowered to it. The timeout
 applies to each attempt separately and doubles with every retry, up to the cap.
 

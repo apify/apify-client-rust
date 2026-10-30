@@ -24,9 +24,9 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
 | `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a run in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`). To continue a run that reached its cost limit, pass a higher `max_total_charge_usd`; the limit covers the whole run, including the cost before the resurrection. |
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
-| `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
+| `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely, without a client-side timeout on the polls; `Some(n)` bounds the wait, gives each poll the `Medium` tier plus the hold it asks the API for, and may return a still-running (non-terminal) run if `n` elapses first. A timeout set with `with_timeout` replaces both. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
-| `get_streamed_log(options)` | `StreamedLogOptions { to_log, from_start }` | `Result<Option<StreamedLog>>` (async — `.await` it) | The [redirection](#log-redirection) of the run's log; `None` if the run does not exist or `to_log` is `LogRedirect::Disabled`. |
+| `get_streamed_log(options)` | `StreamedLogOptions { to_log, from_start }` | `Result<Option<StreamedLog>>` (async — `.await` it) | The [redirection](#log-redirection) of the run's log; `None` if `to_log` is `LogRedirect::Disabled`, or, for `LogRedirect::Default`, if the run does not exist. A custom sink makes no request, so a missing run shows up as the error of `stop()`. |
 
 ### Log redirection
 

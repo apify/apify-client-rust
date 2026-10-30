@@ -36,10 +36,10 @@ Ports the `apify-client-js` v3 changes.
 ### Changed
 - Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
 - **Breaking:** every method has a timeout tier (5s, 30s or 360s by default) instead of one 360s
-  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish` has no timeout, and a
+  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish(None)` has no timeout, and a
   `waitForFinish` request gets the server-side wait added to its tier.
 - **Breaking:** `HttpRequest::timeout` may be `timeouts::NO_TIMEOUT`, which a custom `HttpBackend`
-  must not abort. `RetryConfig` no longer has a `timeout` field.
+  must not abort.
 - **Breaking:** any `404` resolves to `None`, not only `record-not-found`, but only for a client that
   names its resource by id. `run.dataset()`, `run.log()` and the other chained clients return it as
   an error.
@@ -48,7 +48,7 @@ Ports the `apify-client-js` v3 changes.
 - **Breaking:** `LogClient::stream` and `stream_with_options` return an `Option`: `None` for a
   missing log.
 - **Breaking:** `RunClient::get_streamed_log` takes `StreamedLogOptions` and returns a
-  `StreamedLog` (`None` for a missing run), and `get_streamed_log_with_options` is removed. For the
+  `StreamedLog` (`None` for a missing run when redirecting by default), and `get_streamed_log_with_options` is removed. For the
   raw chunks of the log, use `run.log().stream_with_options(..)`.
 - **Breaking:** `ActorClient::call` and `call_raw` take `ActorCallOptions` (the start options, the
   wait budget `wait_secs` and the `log` option) instead of `ActorStartOptions` and `wait_secs`.
@@ -60,7 +60,7 @@ Ports the `apify-client-js` v3 changes.
   `TaskClient::start` do not retry a transport timeout either.
 - **Breaking:** the internals `QueryParams`, `common::{encode_path_segment, build_user_agent,
   to_safe_id, create_hmac_signature, sign_storage_content}`, `http_client::HttpClient` and
-  `http_client::RetryConfig` are no longer public.
+  `http_client::RetryConfig` (which also lost its `timeout` field) are no longer public.
 - `wait_for_finish(Some(n))` gives each poll the `Medium` tier plus the hold it asks for, so a
   stalled connection cannot hang it.
 - `WaitForResources::ForSecs` with an infinite or huge value waits without a limit, and `NaN`

@@ -165,6 +165,11 @@ impl From<TaskStartOptions> for ActorStartOptions {
     }
 }
 
+/// Reports a log redirection that failed, without failing the call that waits for the run.
+fn warn_log_redirection(error: &crate::error::ApifyClientError) {
+    eprintln!("Log redirection stopped due to error: {error}");
+}
+
 /// Options for building an Actor.
 #[derive(Debug, Default, Clone)]
 pub struct ActorBuildOptions {
@@ -294,13 +299,14 @@ impl ActorClient {
     /// the run while it waits.
     ///
     /// See [`ActorCallOptions`] for the wait budget and the log redirection. The log goes to the
-    /// standard output unless `options.log` says otherwise. A redirection that cannot be set up
-    /// does not fail the call, and neither does one that ends early.
+    /// standard output unless `options.log` says otherwise. A redirection that cannot be set up,
+    /// or that ends early on an error, does not fail the call; a warning goes to the standard
+    /// error instead, like the reference client's log.
     ///
     /// Like the reference client, the start request has no client-side timeout, because an
     /// aborted start would be retried and could create a second run; set a timeout with the
     /// client's `with_timeout` to change that, and it applies to the polls as well. Without one,
-    /// a poll is bounded as [`RunClient::wait_for_finish`] describes.
+    /// the polls are bounded by `wait_secs` as [`RunClient::wait_for_finish`] describes.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
@@ -349,14 +355,20 @@ impl ActorClient {
                 from_start: true,
             })
             .await
-            .ok()
-            .flatten();
+            .unwrap_or_else(|error| {
+                warn_log_redirection(&error);
+                None
+            });
         if let Some(streamed_log) = streamed_log.as_mut() {
-            let _ = streamed_log.start();
+            if let Err(error) = streamed_log.start() {
+                warn_log_redirection(&error);
+            }
         }
         let finished = run_client.wait_for_finish(wait_secs).await;
         if let Some(streamed_log) = streamed_log.as_mut() {
-            let _ = streamed_log.stop().await;
+            if let Err(error) = streamed_log.stop().await {
+                warn_log_redirection(&error);
+            }
         }
         finished
     }

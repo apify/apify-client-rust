@@ -17,7 +17,7 @@ collections are available via `actor.builds()`.
 | `get()` | — | `Option<Build>` | Fetches the build. |
 | `abort()` | — | `Build` | Aborts the build. |
 | `delete()` | — | `()` | Deletes the build. |
-| `wait_for_finish(wait_secs)` | `Option<i64>` | `Build` | Polls until the build is terminal. A build ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
+| `wait_for_finish(wait_secs)` | `Option<i64>` | `Build` | Polls until the build is terminal. `None` waits indefinitely, without a client-side timeout on the polls; `Some(n)` bounds the wait and gives each poll the `Medium` tier plus the hold it asks the API for. A build ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `get_openapi_definition()` | — | `serde_json::Value` | Fetches the OpenAPI definition generated for the build (raw JSON, endpoint `.../openapi.json`). A `404` is an error. |
 | `log()` | — | `LogClient` | Access the build's log. |
 

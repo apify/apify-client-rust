@@ -55,6 +55,10 @@ impl BuildClient {
     /// - `Some(n)` bounds the wait to roughly `n` seconds; if the build has not finished by
     ///   then, the **last fetched (still non-terminal) build is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    ///
+    /// With `None`, the polls have no client-side timeout. With `Some(n)`, each poll is allowed the
+    /// `Medium` tier plus the hold (up to a minute) it asks the API for, so a stalled connection
+    /// cannot hang the wait. A timeout set with `with_timeout` is used as given instead.
     pub async fn wait_for_finish(&self, wait_secs: Option<i64>) -> ApifyClientResult<Build> {
         wait_for_finish(&self.ctx, wait_secs, |b: &Build| b.is_terminal()).await
     }

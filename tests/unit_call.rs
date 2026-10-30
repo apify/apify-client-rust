@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apify_client::clients::actor::WaitForResources;
-use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, HttpResponse};
+use apify_client::http_client::{
+    HttpBackend, HttpMethod, HttpRequest, HttpResponse, StreamingHttpResponse,
+};
 use apify_client::timeouts::NO_TIMEOUT;
 use apify_client::{
     ActorBuildOptions, ActorCallOptions, ActorStartOptions, ApifyClient, ApifyClientError,
@@ -40,6 +42,8 @@ type Route = dyn Fn(&HttpRequest, usize) -> Result<HttpResponse, ApifyClientErro
 struct RouteBackend {
     requests: Mutex<Vec<HttpRequest>>,
     route: Box<Route>,
+    /// Makes every log stream deliver its first line and then fail.
+    failing_log_stream: bool,
 }
 
 impl std::fmt::Debug for RouteBackend {
@@ -58,6 +62,20 @@ impl RouteBackend {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             route: Box::new(route),
+            failing_log_stream: false,
+        })
+    }
+
+    fn with_failing_log_stream(
+        route: impl Fn(&HttpRequest, usize) -> Result<HttpResponse, ApifyClientError>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            route: Box::new(route),
+            failing_log_stream: true,
         })
     }
 
@@ -82,6 +100,30 @@ impl HttpBackend for RouteBackend {
             requests.len() - 1
         };
         (self.route)(&request, index)
+    }
+
+    async fn send_streaming(
+        &self,
+        request: HttpRequest,
+    ) -> Result<StreamingHttpResponse, ApifyClientError> {
+        if !(self.failing_log_stream && request.url.contains("stream=1")) {
+            let response = self.send(request).await?;
+            return Ok(StreamingHttpResponse {
+                status: response.status,
+                headers: response.headers,
+                body: Box::pin(futures_util::stream::once(async move { Ok(response.body) })),
+            });
+        }
+        self.requests.lock().unwrap().push(request);
+        let chunks: Vec<Result<Vec<u8>, ApifyClientError>> = vec![
+            Ok(b"2024-01-01T00:00:00.000Z first\n".to_vec()),
+            Err(ApifyClientError::Http("the stream broke".to_string())),
+        ];
+        Ok(StreamingHttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: Box::pin(futures_util::stream::iter(chunks)),
+        })
     }
 }
 
@@ -514,4 +556,51 @@ async fn a_streamed_log_of_a_missing_run_is_none() {
         .await
         .unwrap()
         .is_none());
+}
+
+fn run_route(request: &HttpRequest, _: usize) -> Result<HttpResponse, ApifyClientError> {
+    if request.method == HttpMethod::Post {
+        return response(201, RUN_READY);
+    }
+    response(200, RUN_DONE)
+}
+
+/// A redirection that ends on a stream error reports it from `stop()`, after it passed on the
+/// messages it had. `call` does not fail because of it.
+#[tokio::test]
+async fn a_failing_log_stream_is_reported_by_stop_and_does_not_fail_call() {
+    let backend = RouteBackend::with_failing_log_stream(run_route);
+    let client = client_on(backend.clone(), 0);
+    let (messages, to_log) = collecting_sink();
+    let mut streamed = client
+        .run("r1")
+        .get_streamed_log(StreamedLogOptions {
+            to_log,
+            from_start: true,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    streamed.start().unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let error = streamed.stop().await.expect_err("the stream broke");
+    assert!(matches!(error, ApifyClientError::Http(_)), "{error:?}");
+    assert_eq!(
+        *messages.lock().unwrap(),
+        vec!["2024-01-01T00:00:00.000Z first".to_string()]
+    );
+
+    let (_, log) = collecting_sink();
+    let run = client
+        .actor("a1")
+        .call::<Value>(
+            None,
+            ActorCallOptions {
+                log,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("a failing redirection does not fail the call");
+    assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
 }
