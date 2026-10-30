@@ -37,9 +37,9 @@ const TIMESTAMP_SHAPE: &[u8; TIMESTAMP_LEN] = b"dddd-dd-ddTdd:dd:dd.dddZ";
 /// A destination of redirected log messages, such as the terminal or a logging framework.
 ///
 /// Every message of the log arrives complete (a multi-line message, such as a stack trace, in one
-/// piece) and with the prefix of the redirection already added. The one message that does not
-/// carry the prefix is the `Log redirection stopped due to error: ..` notice of a redirection that
-/// ended early. A closure taking `&str` is a sink too:
+/// piece). With [`LogRedirect::Default`] the prefix is added to it, while a sink of your own gets
+/// the message as it is. The `Log redirection stopped due to error: ..` notice of a redirection
+/// that ended early never carries a prefix. A closure taking `&str` is a sink too:
 ///
 /// ```
 /// use apify_client::clients::streamed_log::{LogRedirect, LogSink};

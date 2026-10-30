@@ -298,8 +298,8 @@ impl ActorClient {
     /// See [`ActorCallOptions`] for the wait budget and the log redirection. The log goes to the
     /// standard output unless `options.log` says otherwise. A redirection that ends early on an
     /// error does not fail the call; a `Log redirection stopped due to error: ..` message goes
-    /// to the log sink instead (without the `{actor} runId:{id} -> ` prefix of the log). One that cannot be set up is reported on the
-    /// standard error.
+    /// to the log sink instead (without the `"{actor name} runId:{run id} -> "` prefix of the
+    /// default redirection). One that cannot be set up is reported on the standard error.
     ///
     /// Like the reference client, the start request has no client-side timeout, because an
     /// aborted start would be retried and could create a second run; set a timeout with the
