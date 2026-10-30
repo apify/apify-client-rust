@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apify_client::{
-    ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions, RequestCompression,
-    WaitForResources,
+    ActorCallOptions, ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions,
+    LogRedirect, RequestCompression, TaskStartOptions, WaitForResources,
 };
 use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use futures_util::StreamExt;
@@ -1422,7 +1422,7 @@ async fn task_wait_for_resources_retries_until_success() {
         .task("some-task")
         .start::<serde_json::Value>(
             None,
-            ActorStartOptions {
+            TaskStartOptions {
                 wait_for_resources: Some(WaitForResources::Forever),
                 ..Default::default()
             },
@@ -1455,11 +1455,14 @@ async fn call_wait_for_resources_does_not_count_toward_wait_secs() {
         .actor("some-actor")
         .call::<serde_json::Value>(
             None,
-            ActorStartOptions {
-                wait_for_resources: Some(WaitForResources::Forever),
-                ..Default::default()
+            ActorCallOptions {
+                start: ActorStartOptions {
+                    wait_for_resources: Some(WaitForResources::Forever),
+                    ..Default::default()
+                },
+                wait_secs: Some(1),
+                log: LogRedirect::Disabled,
             },
-            Some(1),
         )
         .await
         .expect("the resource-limit retry must not eat into the wait_for_finish budget");

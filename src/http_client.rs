@@ -6,7 +6,7 @@
 //! backend (e.g. for testing or for a different runtime) can be plugged in via
 //! [`ApifyClientBuilder::http_backend`](crate::ApifyClientBuilder::http_backend).
 //!
-//! [`HttpClient`] wraps a backend and adds the cross-cutting concerns shared by every
+//! The client wraps a backend in an internal `HttpClient` that adds the cross-cutting concerns shared by every
 //! endpoint: authentication, the `User-Agent` header, query-parameter serialization,
 //! timeouts and retries with exponential backoff (mirroring the JavaScript and Python
 //! reference clients).
@@ -62,7 +62,7 @@ impl HttpMethod {
 /// A fully-resolved HTTP request, ready to be sent by an [`HttpBackend`].
 ///
 /// All cross-cutting concerns (auth header, user agent, retry policy) are applied by
-/// [`HttpClient`] before the request reaches the backend.
+/// the client before the request reaches the backend.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     /// The HTTP method.
@@ -117,7 +117,7 @@ pub struct StreamingHttpResponse {
 ///
 /// Implementors are responsible only for sending a single request and returning the
 /// raw response. Retries, authentication and serialization are handled by
-/// [`HttpClient`], so a backend only needs to perform one network round-trip.
+/// the client, so a backend only needs to perform one network round-trip.
 #[async_trait]
 pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// Sends a single HTTP request and returns the response.
@@ -265,7 +265,7 @@ impl HttpBackend for ReqwestBackend {
 
 /// Configuration for the retry behaviour of the [`HttpClient`].
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub(crate) struct RetryConfig {
     /// Maximum number of *retries* (i.e. the request is attempted up to `max_retries + 1` times).
     pub max_retries: u32,
     /// Minimum delay between retries; doubled on each subsequent retry (exponential backoff).
@@ -302,7 +302,7 @@ pub(crate) struct CallOptions {
 /// It is cheap to clone (everything is reference-counted) so each resource client can
 /// hold its own handle.
 #[derive(Debug, Clone)]
-pub struct HttpClient {
+pub(crate) struct HttpClient {
     backend: Arc<dyn HttpBackend>,
     token: Option<String>,
     user_agent: String,
@@ -390,13 +390,8 @@ impl HttpClient {
     }
 
     /// Sends `request` with authentication, the user-agent header, and the retry policy
-    /// applied. Returns the first successful response, or the final error.
-    pub async fn call(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse> {
-        self.call_with_options(request, CallOptions::default())
-            .await
-    }
-
-    /// Like [`call`](Self::call), with the given per-call [`CallOptions`].
+    /// applied, as `options` adjust it. Returns the first successful response, or the final
+    /// error.
     pub(crate) async fn call_with_options(
         &self,
         mut request: HttpRequest,
@@ -488,13 +483,13 @@ impl HttpClient {
     }
 
     /// Sends `request` through the configured [`HttpBackend`]'s [`HttpBackend::send_streaming`],
-    /// with authentication and the user-agent header applied like [`call`](Self::call), but with
+    /// with authentication and the user-agent header applied like [`call_with_options`](Self::call_with_options), but with
     /// no retries and no request compression: matches the reference clients, which do not retry
     /// an open stream (a log redirection or a large export already in flight can't be safely
     /// replayed from the start).
     ///
     /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
-    /// successful body below) and returns the same structured [`ApiError`] [`call`](Self::call)
+    /// successful body below) and returns the same structured [`ApiError`] [`call_with_options`](Self::call_with_options)
     /// would. On success, returns the body as a stream whose `.next()` must resolve within the
     /// request's resolved timeout each time — bounding silence (a stalled connection) without
     /// capping the stream's total duration, so a long-but-active stream (e.g. live log

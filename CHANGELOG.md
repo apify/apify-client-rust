@@ -27,6 +27,12 @@ Ports the `apify-client-js` v3 changes.
   `records_public_url`, `KeyValueStoreKey::record_public_url`, `RequestQueue::console_url`,
   `ActorStoreListItem::url` and `user_picture_url`, `User::profile`, `WebhookDispatch::webhook`.
 
+- Log redirection like the reference client's `StreamedLog`: `StreamedLog` with `start` and `stop`,
+  `StreamedLogOptions`, and the `LogSink` trait (`StdoutLogSink`, or any `Fn(&str)` closure) behind
+  `LogRedirect`. `ActorClient::call` and `call_raw` redirect the log of the run to the standard
+  output by default, with the `ActorCallOptions::log` option to change or disable it.
+- `ActorCallOptions` and `TaskStartOptions`.
+
 ### Changed
 - Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
 - **Breaking:** every method has a timeout tier (5s, 30s or 360s by default) instead of one 360s
@@ -39,8 +45,27 @@ Ports the `apify-client-js` v3 changes.
   an error.
 - **Breaking:** `get_statistics`, `get_input`, `schedule.get_log` and `get_openapi_definition`
   return the `404` as an error and no longer wrap the result in `Option`.
-- **Breaking:** `LogClient::stream`, `stream_with_options`, `RunClient::get_streamed_log` and
-  `get_streamed_log_with_options` return an `Option`: `None` for a missing log or run.
+- **Breaking:** `LogClient::stream` and `stream_with_options` return an `Option`: `None` for a
+  missing log.
+- **Breaking:** `RunClient::get_streamed_log` takes `StreamedLogOptions` and returns a
+  `StreamedLog` (`None` for a missing run), and `get_streamed_log_with_options` is removed. For the
+  raw chunks of the log, use `run.log().stream_with_options(..)`.
+- **Breaking:** `ActorClient::call` and `call_raw` take `ActorCallOptions` (the start options, the
+  wait budget `wait_secs` and the `log` option) instead of `ActorStartOptions` and `wait_secs`.
+  `TaskClient::start` and `call` take `TaskStartOptions`, which has no `content_type` and no
+  `force_permission_level`, because `POST /actor-tasks/{id}/runs` does not document them.
+- **Breaking:** `call` starts the run, and `TaskClient::call` too, without a client-side timeout
+  unless the client has `with_timeout`, which then applies to the polls too. A start that outlives
+  a tier is no longer aborted and retried into a second run. `start`, `start_raw`, `build` and
+  `TaskClient::start` do not retry a transport timeout either.
+- **Breaking:** the internals `QueryParams`, `common::{encode_path_segment, build_user_agent,
+  to_safe_id, create_hmac_signature, sign_storage_content}`, `http_client::HttpClient` and
+  `http_client::RetryConfig` are no longer public.
+- `wait_for_finish(Some(n))` gives each poll the `Medium` tier plus the hold it asks for, so a
+  stalled connection cannot hang it.
+- `WaitForResources::ForSecs` with an infinite or huge value waits without a limit, and `NaN`
+  fails with `InvalidArgument`, instead of panicking.
+- `RequestQueueClient::get_request` no longer sends `clientKey`.
 - **Breaking:** `ActorStartOptions::timeout_secs` and `RunResurrectOptions::timeout_secs` are now
   `run_timeout_secs`.
 - **Breaking:** `LogOptions`, `RunListOptions` and `StoreListOptions` gained a public field.
@@ -57,8 +82,6 @@ Ports the `apify-client-js` v3 changes.
 - A zero `timeout_*` option or `with_timeout` fails the requests with `InvalidArgument`.
 - `UserClient::limits`, `monthly_usage` and `update_limits` work for any user, not only `me`.
 - `batch_add_requests` serializes each request once and rejects an oversized one before sending.
-- Key-value store `update`, `record_exists` and the public URL methods, and
-  `DatasetClient::create_items_public_url`, use the `Long` tier.
 
 ## [0.14.1] - 2026-10-26
 

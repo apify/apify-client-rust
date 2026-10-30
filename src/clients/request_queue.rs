@@ -306,12 +306,13 @@ impl RequestQueueClient {
     /// Gets a request by ID, or `None` if it does not exist.
     pub async fn get_request(&self, id: &str) -> ApifyClientResult<Option<RequestQueueRequest>> {
         // Unlike the other `get`s, a missing request is `None` even on a queue chained from a run:
-        // the request ID is part of the path, so a `404` means that request does not exist.
+        // the request ID is part of the path, so a `404` means that request does not exist. The
+        // endpoint takes no `clientKey`, so none is sent.
         catch_not_found(
             get_resource_required(
                 &self.ctx,
                 Some(&request_path(id)?),
-                &self.base_params(),
+                &QueryParams::new(),
                 Timeout::Short,
             )
             .await,

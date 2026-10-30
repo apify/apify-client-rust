@@ -36,7 +36,7 @@ pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientRes
 /// A mutable collection of query parameters that serializes booleans as `0`/`1` and
 /// omits `None` values, matching the Apify API conventions.
 #[derive(Debug, Default, Clone)]
-pub struct QueryParams {
+pub(crate) struct QueryParams {
     pairs: Vec<(String, String)>,
 }
 
@@ -89,11 +89,6 @@ impl QueryParams {
         self
     }
 
-    /// Returns `true` if no parameters were added.
-    pub fn is_empty(&self) -> bool {
-        self.pairs.is_empty()
-    }
-
     /// Internal: read access to the raw pairs (used when merging parent params).
     pub(crate) fn pairs_ref(&self) -> &[(String, String)] {
         &self.pairs
@@ -144,7 +139,7 @@ fn url_encode(input: &str) -> String {
 /// This does not reject a segment that is empty or a dot segment (`.` or `..`), which a URL
 /// parser resolves to another endpoint even when percent-encoded; the client methods that take
 /// such a value validate it with `to_path_segment` instead.
-pub fn encode_path_segment(input: &str) -> String {
+pub(crate) fn encode_path_segment(input: &str) -> String {
     // Path segments and query components share the same unreserved set here, so reuse the
     // query encoder. (`url_encode` already escapes `/`, `?`, `#`, space and non-ASCII.)
     url_encode(input)
@@ -249,7 +244,7 @@ fn env_var_set(name: &str) -> bool {
 
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
-pub fn build_user_agent(suffix: Option<&str>) -> String {
+pub(crate) fn build_user_agent(suffix: Option<&str>) -> String {
     // The OS token must be byte-for-byte identical across all Apify clients, which means it must
     // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
     // own spellings (`macos`, `windows`, `solaris`, `illumos`), so map those to the Node
@@ -299,7 +294,7 @@ fn map_os_to_node_platform(os: &str) -> &str {
 
 /// Encodes a resource id so it is safe to embed in a URL path. Apify uses the
 /// `username~resourcename` form, so every `/` of an id is replaced with `~`.
-pub fn to_safe_id(id: &str) -> String {
+pub(crate) fn to_safe_id(id: &str) -> String {
     id.replace('/', "~")
 }
 
@@ -318,7 +313,7 @@ const BASE62_ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJK
 /// The algorithm is: `HMAC-SHA256(secret_key, message)` as lowercase hex, take the first 30
 /// hex characters, interpret them as a big integer, then base62-encode (alphabet `0-9a-zA-Z`).
 /// Used to sign key-value-store record keys for public access.
-pub fn create_hmac_signature(secret_key: &str, message: &str) -> String {
+pub(crate) fn create_hmac_signature(secret_key: &str, message: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
@@ -353,6 +348,9 @@ fn to_base62(mut value: u128) -> String {
     String::from_utf8(digits).expect("base62 alphabet is valid ASCII")
 }
 
+/// Milliseconds in a second.
+const MILLIS_PER_SECOND: i64 = 1000;
+
 /// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
 /// with the platform's `@apify/utilities` `createStorageContentSignature`.
 ///
@@ -360,7 +358,7 @@ fn to_base62(mut value: u128) -> String {
 /// is the absolute expiry in milliseconds, or `0` for a non-expiring URL) with
 /// [`create_hmac_signature`], then returns the base64url (no padding) encoding of
 /// `"{version}.{expiresAtMillis}.{hmac}"`. Used for dataset-items and key-list public URLs.
-pub fn sign_storage_content(
+pub(crate) fn sign_storage_content(
     secret_key: &str,
     resource_id: &str,
     expires_in_secs: Option<i64>,
@@ -368,7 +366,7 @@ pub fn sign_storage_content(
     use base64::Engine;
 
     let expires_at_millis = match expires_in_secs {
-        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * 1000,
+        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
         None => 0,
     };
     let version = STORAGE_CONTENT_SIGNATURE_VERSION;

@@ -106,7 +106,12 @@ async fn a_log_is_none_for_a_client_with_an_id_and_an_error_when_chained() {
     assert!(is_not_found(
         client.run("r").log().stream().await.map(|_| ())
     ));
-    assert!(client.run("r").get_streamed_log().await.unwrap().is_none());
+    assert!(client
+        .run("r")
+        .get_streamed_log(Default::default())
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -203,7 +208,6 @@ async fn every_slash_of_an_id_becomes_a_tilde() {
         .last_url()
         .unwrap()
         .ends_with("/v2/actors/user~name~extra"));
-    assert_eq!(apify_client::common::to_safe_id("a/b/c"), "a~b~c");
 }
 
 /// An id is percent-encoded, so it cannot add a path segment or a query string.

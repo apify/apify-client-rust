@@ -4,9 +4,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::client::ApifyClient;
-use crate::clients::actor::ActorStartOptions;
+use crate::clients::actor::{ActorStartOptions, TaskStartOptions};
 use crate::clients::base::{
-    delete_resource, get_resource, post_with_body, update_resource, ResourceContext,
+    delete_resource, get_resource, post_creating, update_resource, ResourceContext,
 };
 use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
@@ -74,13 +74,25 @@ impl TaskClient {
     /// Starts the task and returns immediately with the created run.
     ///
     /// `input` overrides the task's saved input (or `None` to use the saved input). Set
-    /// [`ActorStartOptions::wait_for_resources`] to retry the start while the account lacks the
+    /// [`TaskStartOptions::wait_for_resources`] to retry the start while the account lacks the
     /// memory or a concurrent-run slot for it.
     pub async fn start<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
+        options: TaskStartOptions,
     ) -> ApifyClientResult<ActorRun> {
+        self.start_with_tier(input, options, Timeout::Medium).await
+    }
+
+    /// Starts the task with `tier` as the timeout of the request (unless the client was given
+    /// one with `with_timeout`).
+    async fn start_with_tier<T: Serialize>(
+        &self,
+        input: Option<&T>,
+        options: TaskStartOptions,
+        tier: Timeout,
+    ) -> ApifyClientResult<ActorRun> {
+        let options = ActorStartOptions::from(options);
         let mut params = QueryParams::new();
         options.apply(&mut params);
         let body = match input {
@@ -89,9 +101,9 @@ impl TaskClient {
         };
         let timeout = self
             .ctx
-            .timeout_with_wait_hold(Timeout::Medium, options.wait_for_finish);
+            .timeout_with_wait_hold(tier, options.wait_for_finish);
         crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
-            post_with_body(
+            post_creating(
                 &self.ctx,
                 Some("runs"),
                 &params,
@@ -111,16 +123,26 @@ impl TaskClient {
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
     ///
-    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count
+    /// Time spent retrying under [`TaskStartOptions::wait_for_resources`] does not count
     /// toward `wait_secs`, since that budget only starts once the run has actually started.
+    ///
+    /// Like [`ActorClient::call`](crate::clients::actor::ActorClient::call), the start request
+    /// has no client-side timeout unless the client was given one with `with_timeout`, which
+    /// then applies to the polls as well. The log of the run is not redirected.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
+        options: TaskStartOptions,
         wait_secs: Option<i64>,
     ) -> ApifyClientResult<ActorRun> {
-        let run = self.start(input, options).await?;
-        self.root.run(run.id).wait_for_finish(wait_secs).await
+        let run = self
+            .start_with_tier(input, options, Timeout::NoTimeout)
+            .await?;
+        let mut run_client = self.root.run(run.id);
+        if let Some(timeout) = self.ctx.timeout {
+            run_client = run_client.with_timeout(timeout);
+        }
+        run_client.wait_for_finish(wait_secs).await
     }
 
     /// Fetches the task's saved input.

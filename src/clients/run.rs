@@ -11,14 +11,20 @@ use crate::clients::key_value_store::KeyValueStoreClient;
 use crate::clients::log::LogClient;
 use crate::clients::request_queue::RequestQueueClient;
 use crate::clients::run_dataset_items::RunDatasetItemsIterator;
-use crate::common::{catch_not_found, to_safe_id, QueryParams};
+use crate::clients::streamed_log::{
+    LogRedirect, LogSink, StdoutLogSink, StreamedLog, StreamedLogOptions,
+};
+use crate::common::{to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorRun;
 use crate::timeouts::Timeout;
+use std::sync::Arc;
 
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
+/// Nanoseconds in a millisecond: the sub-millisecond part of a timestamp is below it.
+const NANOS_PER_MILLI: u32 = 1_000_000;
 
 /// Options for fetching an Actor's or task's last run
 /// ([`crate::clients::actor::ActorClient::last_run_with_options`] /
@@ -328,7 +334,7 @@ impl RunClient {
             .unwrap_or_default();
         let millis = now.as_millis();
         // Sub-millisecond nanos give a cheap, non-crypto "random" suffix (cf. JS Math.random()).
-        let random_suffix = now.subsec_nanos() % 1_000_000;
+        let random_suffix = now.subsec_nanos() % NANOS_PER_MILLI;
         format!("{}-{event_name}-{millis}-{random_suffix}", self.id)
     }
 
@@ -420,33 +426,50 @@ impl RunClient {
         RunDatasetItemsIterator::new(self.clone(), options)
     }
 
-    /// Opens a live stream of the run's log for redirection, or `None` if the run does not exist.
+    /// Returns the redirection of the run's log, or `None` if the run does not exist or
+    /// `options.to_log` is [`LogRedirect::Disabled`]. Call [`StreamedLog::start`] to begin
+    /// redirecting and [`StreamedLog::stop`] to end it. Mirrors the reference client's
+    /// `getStreamedLog`.
     ///
-    /// Convenience equivalent to `run.log().stream()` (mirrors the reference client's
-    /// `getStreamedLog`): yields log chunks as they arrive, so callers can forward them to
-    /// their own logger/stdout while the run is in progress. Unlike `run.log().stream()`, whose
-    /// chained client cannot tell a missing run from a missing log, a missing run is `None` here,
-    /// because the run is the resource this client names.
+    /// With [`LogRedirect::Default`], the messages go to the standard output prefixed with
+    /// `"{actor name} runId:{run id} -> "`, which costs a request for the run and one for its
+    /// Actor. With [`LogRedirect::Sink`], they go to the sink as they are, and nothing is
+    /// requested. To read the log as raw chunks instead, use
+    /// [`LogClient::stream_with_options`](crate::clients::log::LogClient::stream_with_options) of
+    /// [`RunClient::log`].
     pub async fn get_streamed_log(
         &self,
-    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
-    {
-        self.get_streamed_log_with_options(Default::default()).await
-    }
-
-    /// Opens a live stream of the run's log for redirection, applying the given
-    /// [`LogOptions`](crate::LogOptions) (e.g. [`LogOptions::raw`](crate::LogOptions::raw) to
-    /// stream the unprocessed log, which is the form the JS reference's log redirection consumes
-    /// internally). `None` if the run does not exist.
-    ///
-    /// This is a Rust-specific convenience that simply forwards `LogOptions` to the log stream;
-    /// it is not a 1:1 mirror of the JS `getStreamedLog` method's signature (which takes redirect
-    /// options and returns a `StreamedLog` object).
-    pub async fn get_streamed_log_with_options(
-        &self,
-        options: crate::clients::log::LogOptions,
-    ) -> ApifyClientResult<Option<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>>>
-    {
-        catch_not_found(self.log().stream_required(options).await)
+        options: StreamedLogOptions,
+    ) -> ApifyClientResult<Option<StreamedLog>> {
+        let StreamedLogOptions { to_log, from_start } = options;
+        let (sink, prefix): (Arc<dyn LogSink>, String) = match to_log {
+            LogRedirect::Disabled => return Ok(None),
+            LogRedirect::Sink(sink) => (sink, String::new()),
+            LogRedirect::Default => {
+                let Some(run) =
+                    get_resource::<ActorRun>(&self.ctx, None, &QueryParams::new(), Timeout::Long)
+                        .await?
+                else {
+                    return Ok(None);
+                };
+                let actor_name = match run.act_id.as_deref().filter(|id| !id.is_empty()) {
+                    Some(actor_id) => self
+                        .root
+                        .actor(actor_id)
+                        .with_timeout(Timeout::Long)
+                        .get()
+                        .await?
+                        .and_then(|actor| actor.name),
+                    None => None,
+                };
+                let name = [actor_name, Some(format!("runId:{}", run.id))]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (Arc::new(StdoutLogSink), format!("{name} -> "))
+            }
+        };
+        Ok(Some(StreamedLog::new(self.log(), sink, prefix, from_start)))
     }
 }

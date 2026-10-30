@@ -448,7 +448,43 @@ pub(crate) async fn post_action<T: DeserializeOwned>(
     content_type: Option<&str>,
     timeout: Duration,
 ) -> ApifyClientResult<T> {
-    let response = post_send(ctx, sub_path, params, body, content_type, timeout).await?;
+    let response = post_send(
+        ctx,
+        sub_path,
+        params,
+        body,
+        content_type,
+        timeout,
+        CallOptions::default(),
+    )
+    .await?;
+    parse_data_envelope(&response.body)
+}
+
+/// Like [`post_with_body`], for a `POST` that creates something (a run or a build). A request
+/// that timed out may have reached the API, so it is not retried: a retry could create a second
+/// paid resource.
+pub(crate) async fn post_creating<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    sub_path: Option<&str>,
+    params: &QueryParams,
+    body: Option<Vec<u8>>,
+    content_type: &str,
+    timeout: Duration,
+) -> ApifyClientResult<T> {
+    let options = CallOptions {
+        do_not_retry_timeouts: true,
+    };
+    let response = post_send(
+        ctx,
+        sub_path,
+        params,
+        body,
+        Some(content_type),
+        timeout,
+        options,
+    )
+    .await?;
     parse_data_envelope(&response.body)
 }
 
@@ -464,7 +500,16 @@ pub(crate) async fn post_action_raw<T: DeserializeOwned>(
     content_type: Option<&str>,
     timeout: Duration,
 ) -> ApifyClientResult<T> {
-    let response = post_send(ctx, sub_path, params, body, content_type, timeout).await?;
+    let response = post_send(
+        ctx,
+        sub_path,
+        params,
+        body,
+        content_type,
+        timeout,
+        CallOptions::default(),
+    )
+    .await?;
     Ok(serde_json::from_slice(&response.body)?)
 }
 
@@ -477,13 +522,14 @@ async fn post_send(
     body: Option<Vec<u8>>,
     content_type: Option<&str>,
     timeout: Duration,
+    options: CallOptions,
 ) -> ApifyClientResult<HttpResponse> {
     let url = ctx.url_with_params(sub_path, params);
     let mut headers = HashMap::new();
     if let Some(ct) = content_type {
         headers.insert("Content-Type".to_string(), ct.to_string());
     }
-    ctx.send_with(HttpMethod::Post, url, headers, body, timeout)
+    ctx.send_with_options(HttpMethod::Post, url, headers, body, timeout, options)
         .await
 }
 
@@ -536,7 +582,7 @@ pub(crate) async fn head_exists(
 /// A `PUT` with raw bytes and a content type (used for KVS record uploads).
 ///
 /// `content_encoding`, when set, is sent as the `Content-Encoding` header for an
-/// already-compressed value; it makes [`HttpClient::call`]'s automatic request compression skip
+/// already-compressed value; it makes [`HttpClient::call_with_options`]'s automatic request compression skip
 /// the body (it already refuses to double-encode a request that carries a `Content-Encoding`), so
 /// the bytes reach the API exactly as given.
 pub(crate) async fn put_raw(
@@ -574,7 +620,7 @@ pub(crate) struct RawUpload<'a> {
 
 /// Opens a streaming `GET` connection to `url` (already fully built, including query string),
 /// for a caller that wants to process a large body (a log or a dataset export) incrementally
-/// instead of waiting for [`HttpClient::call`] to buffer the whole response. Delegates to
+/// instead of waiting for [`HttpClient::call_with_options`] to buffer the whole response. Delegates to
 /// [`HttpClient::call_streaming`], which — unlike a one-off raw `reqwest` call — goes through
 /// the configured [`HttpBackend`](crate::http_client::HttpBackend), so a custom backend (or a
 /// `ReqwestBackend` wrapping a caller-provided, proxy/TLS-configured `reqwest::Client`) is
@@ -636,9 +682,10 @@ pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
 /// `is_terminal` extracts whether the fetched resource is finished. Returns the latest
 /// resource (finished, or still running if the wait budget was exhausted).
 ///
-/// Each poll has no client-side timeout unless the client was given one with `with_timeout`: the
-/// API holds a poll for up to a minute, and a poll that is aborted and retried loses nothing but
-/// time, yet an arbitrary tier would cut the hold short.
+/// With `wait_secs: None`, a poll has no client-side timeout unless the client was given one with
+/// `with_timeout`, like the reference client. With `Some`, a poll is allowed the `Medium` tier plus
+/// the hold it asks the API for, so a stalled connection cannot outlast the wait budget by more
+/// than that. A timeout set with `with_timeout` always wins.
 pub(crate) async fn wait_for_finish<T, F>(
     ctx: &ResourceContext,
     wait_secs: Option<i64>,
@@ -660,9 +707,7 @@ where
                 let elapsed = start.elapsed();
                 if elapsed >= budget {
                     // Budget exhausted: do one final immediate fetch and return it.
-                    let mut params = QueryParams::new();
-                    params.add_int("waitForFinish", Some(0));
-                    return get_resource_required(ctx, None, &params, Timeout::NoTimeout).await;
+                    return poll(ctx, wait_secs, 0).await;
                 }
                 let remaining = (budget - elapsed).as_secs() as i64;
                 remaining.min(WAIT_FOR_FINISH_REQUEST_SECS)
@@ -670,10 +715,7 @@ where
             None => WAIT_FOR_FINISH_REQUEST_SECS,
         };
 
-        let mut params = QueryParams::new();
-        params.add_int("waitForFinish", Some(remaining_request_secs));
-
-        match get_resource_required::<T>(ctx, None, &params, Timeout::NoTimeout).await {
+        match poll::<T>(ctx, wait_secs, remaining_request_secs).await {
             Ok(resource) => {
                 not_found_since = None;
                 if is_terminal(&resource) {
@@ -707,6 +749,23 @@ where
     }
 }
 
+/// One `waitForFinish` poll that asks the API to hold its response for `hold_secs`.
+async fn poll<T: DeserializeOwned>(
+    ctx: &ResourceContext,
+    wait_secs: Option<i64>,
+    hold_secs: i64,
+) -> ApifyClientResult<T> {
+    let mut params = QueryParams::new();
+    params.add_int("waitForFinish", Some(hold_secs));
+    let timeout = match wait_secs {
+        Some(_) => ctx.timeout_with_wait_hold(Timeout::Medium, Some(hold_secs)),
+        None => ctx.timeout(Timeout::NoTimeout),
+    };
+    let url = ctx.url_with_params(None, &params);
+    let response = ctx.send(HttpMethod::Get, url, timeout).await?;
+    parse_data_envelope(&response.body)
+}
+
 /// Cooldown between retries of a run start the API rejected for lack of resources, matching the
 /// reference clients.
 const WAIT_FOR_RESOURCES_COOLDOWN: Duration = Duration::from_secs(10);
@@ -738,9 +797,15 @@ where
     };
     let deadline = match wait {
         WaitForResources::Forever => None,
-        WaitForResources::ForSecs(secs) => {
-            Some(tokio::time::Instant::now() + Duration::from_secs_f64(secs.max(0.0)))
+        WaitForResources::ForSecs(secs) if secs.is_nan() => {
+            return Err(ApifyClientError::InvalidArgument(
+                "WaitForResources::ForSecs must be a number of seconds, not NaN".to_string(),
+            ));
         }
+        // A wait too long to represent never ends in practice, so it is a wait without a limit.
+        WaitForResources::ForSecs(secs) => Duration::try_from_secs_f64(secs.max(0.0))
+            .ok()
+            .and_then(|wait| tokio::time::Instant::now().checked_add(wait)),
     };
 
     loop {

@@ -97,6 +97,9 @@ impl TimeoutTiers {
         let hold = wait_for_finish_secs
             .filter(|&secs| secs > 0)
             .map(|secs| Duration::from_secs(secs as u64).min(MAX_WAIT_FOR_FINISH_HOLD));
+        if tier == Timeout::NoTimeout {
+            return tier;
+        }
         match hold {
             Some(hold) => Timeout::Custom(self.resolve(tier).saturating_add(hold)),
             None => tier,

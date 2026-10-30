@@ -3,7 +3,7 @@
 //! By default the API adds a per-line timestamp prefix to log lines. Passing
 //! `LogOptions { raw: Some(true), ..Default::default() }` requests the unprocessed log instead.
 //! The example fetches it as a whole with `get_with_options`, and streams it with
-//! `get_streamed_log_with_options`.
+//! the log client's `stream_with_options`.
 //!
 //! Run with: `APIFY_TOKEN=... cargo run --example raw_log`
 
@@ -18,7 +18,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run a short public Actor and wait for it to finish so it has a complete log.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                log: apify_client::LogRedirect::Disabled,
+                ..Default::default()
+            },
+        )
         .await?;
     println!("Run {} finished with status {:?}", run.id, run.status);
 
@@ -38,12 +45,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Streaming raw log: stream the same unprocessed log chunk by chunk.
     let mut stream = client
         .run(&run.id)
-        .get_streamed_log_with_options(LogOptions {
+        .log()
+        .stream_with_options(LogOptions {
             raw: Some(true),
             ..Default::default()
         })
         .await?
-        .ok_or("the run does not exist")?;
+        .ok_or("the log does not exist")?;
     let mut streamed_bytes = 0usize;
     while let Some(chunk) = stream.next().await {
         streamed_bytes += chunk?.len();

@@ -496,10 +496,16 @@ fn to_api_base_url(url: &str) -> String {
     }
 }
 
+/// What separates the scheme of a URL from its authority.
+const SCHEME_SEPARATOR: &str = "://";
+
 /// Splits a URL into its authority (`scheme://host[:port]`, or the whole string if there is no
 /// path) and its path (starting with `/`, or empty if there is none).
 fn split_authority(url: &str) -> (&str, &str) {
-    let search_from = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let search_from = url
+        .find(SCHEME_SEPARATOR)
+        .map(|i| i + SCHEME_SEPARATOR.len())
+        .unwrap_or(0);
     match url[search_from..].find('/') {
         Some(rel_idx) => url.split_at(search_from + rel_idx),
         None => (url, ""),

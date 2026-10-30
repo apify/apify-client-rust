@@ -13,8 +13,7 @@ It provides a resource-oriented, async interface that mirrors the official
 - Transparent authentication, retries with exponential backoff, and timeouts.
 - Resource clients for Actors, runs, builds, tasks, datasets, key-value stores, request
   queues, schedules, webhooks, the Apify Store, users and logs.
-- Convenience helpers: run/wait, log streaming (redirection; needs the `futures-util` crate —
-  see [Installation](#installation)), lazy Store iteration, and `set_status_message` for
+- Convenience helpers: run/wait, log redirection, lazy Store iteration, and `set_status_message` for
   updating the current Actor run's status (see [`docs/README.md`](docs/README.md#convenience-methods)).
 - A replaceable HTTP transport for testing or custom runtimes.
 
@@ -30,12 +29,11 @@ serde_json = "1"          # for the `serde_json::Value` responses used in the Qu
 The Quick start below reads dynamically-typed records with `serde_json::Value`, so a fresh
 project needs `serde_json`. Two more dependencies are needed only for specific features:
 
-- `futures-util = "0.3"` — to consume any of the log streams (`LogClient::stream()` /
-  `stream_with_options()` and the run shortcuts `RunClient::get_streamed_log()` /
-  `get_streamed_log_with_options()`); it provides the `StreamExt` trait used to poll the returned
-  stream. Both the [`log_redirection`](examples/log_redirection.rs) and
-  [`raw_log`](examples/raw_log.rs) examples import `futures_util::StreamExt` for this. See
-  [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
+- `futures-util = "0.3"` — to consume the raw log streams (`LogClient::stream()` /
+  `stream_with_options()`); it provides the `StreamExt` trait used to poll the returned stream.
+  The [`raw_log`](examples/raw_log.rs) example imports `futures_util::StreamExt` for this. See
+  [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id). Log redirection
+  (`ActorClient::call`, `RunClient::get_streamed_log`) needs no extra dependency.
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
   fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `Option<chrono::DateTime<Utc>>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the
@@ -69,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start an Actor and wait for it to finish.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), None)
+        .call::<serde_json::Value>(None, Default::default())
         .await?;
     println!("Run finished with status {:?}", run.status);
 
@@ -215,6 +213,10 @@ Every request carries a `User-Agent` of the form
 | `client.me()` / `client.user(id)` | single | User accounts |
 | `client.log(build_or_run_id)` | single | Build/run logs |
 
+`client.api_base_url()` returns the API base URL the client targets, including `/v2` and any
+`base_url` override. The iterators returned by `iterate(..)` (and by `RunClient::iterate_dataset_items`)
+yield one item per `next().await?`; `collect_all().await?` drains the remaining items into a `Vec`.
+
 ## Versioning
 
 ```rust
@@ -281,6 +283,15 @@ step, replacing the `git push origin :refs/tags/...` command above rather than a
 If `cargo publish` itself already succeeded, that version is permanent on crates.io; bump the
 `version` in `Cargo.toml` for the next release instead of re-running.
 
+## Testing
+
+The integration tests in `tests/` run against the live API and need `APIFY_TOKEN`; the `unit_*`
+tests run offline against a scripted HTTP backend. The
+[`Rust integration tests`](.github/workflows/rust-integration-tests.yml) workflow runs them on pull
+requests, with a limited thread count to be gentle on the shared test account. Its `Test examples`
+step runs the programs in `examples/` through the `example_*` tests in `tests/examples.rs`, and the
+code snippets in this README and `docs/` as doctests (`cargo test --doc`).
+
 ## Examples
 
 Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN` and can be
@@ -292,7 +303,7 @@ run with `cargo run --example <name>`:
 - `create_build_run_actor` — create an Actor, build it, run it, fetch the run log.
 - `run_and_last_run_storages` — run an Actor, then access the last run and its storages.
 - `iterate_store` — lazily iterate Actors in the Apify Store.
-- `log_redirection` — run a separate Actor and redirect its run log into your output live, with each line prefixed by the source Actor's name.
+- `log_redirection` — run a separate Actor and redirect its run log into your output live, with each message prefixed by the source Actor's name, and to a custom sink.
 - `raw_log` — fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true), ..Default::default() }`.
 
 See [`docs/`](docs) for the full API documentation.
@@ -356,8 +367,9 @@ returns the `404` as an error: the response cannot tell a missing run from a mis
 same goes for methods that address a fixed sub-path of a resource (`get_statistics`, `get_input`,
 `get_log`, `get_openapi_definition`, `limits`, `monthly_usage`): they return the `404` as an error.
 
-`ApiError` also exposes `is_not_found()`, `is_rate_limited()`, `is_server_error()` and similar
-`is_*` predicates classifying it by HTTP status — the idiomatic equivalent of the reference
+`ApiError` also exposes the `is_invalid_request()` (400), `is_unauthorized()` (401),
+`is_forbidden()` (403), `is_not_found()` (404), `is_conflict()` (409), `is_rate_limited()` (429) and
+`is_server_error()` (5xx) predicates classifying it by HTTP status — the idiomatic equivalent of the reference
 clients' `NotFoundError`/`RateLimitError`/... error subclasses, since Rust has no exception
 hierarchy to mirror them with.
 

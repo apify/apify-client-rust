@@ -1,19 +1,6 @@
 name: Publish Rust client to crates.io
 
-# Language-specific publish workflow for the Rust client. It is triggered manually only
-# (workflow_dispatch) so a maintainer deliberately decides when a release is cut. Publishing
-# to the crates.io registry is the language-specific distribution standard for Rust.
-#
-# In addition to publishing the crate, this workflow tags the released commit and creates a
-# matching GitHub release. The release tag is derived from the single source of truth (the
-# `version` field in Cargo.toml, which is also what `CLIENT_VERSION` reads via CARGO_PKG_VERSION)
-# so the published crate version, the git tag, and the in-code client version can never disagree.
-#
-# Authentication to crates.io uses Trusted Publishing (OIDC) via `rust-lang/crates-io-auth-action`,
-# the registry's recommended mechanism — no long-lived crates.io API token is stored as a secret.
-# A Trusted Publisher must be configured for the crate on crates.io (this repository + this
-# workflow file). The only repository secret still used is the built-in GITHUB_TOKEN, for pushing
-# the tag and creating the GitHub release.
+# Manual release from master; see "Releasing" in README.md.
 on:
   workflow_dispatch:
     inputs:
@@ -22,16 +9,12 @@ on:
         type: boolean
         default: false
 
-# Never allow two publish runs to race; a half-finished publish to a registry or a duplicate
-# release tag is hard to undo.
+# Two publish runs must never race.
 concurrency:
   group: rust-publish
   cancel-in-progress: false
 
-# The default GITHUB_TOKEN needs write access to push the release tag and create the GitHub
-# release. `id-token: write` lets the job mint a short-lived OpenID Connect token that
-# `rust-lang/crates-io-auth-action` exchanges for an ephemeral crates.io publish token
-# (Trusted Publishing) — so no long-lived crates.io registry secret is stored in the repo.
+# `contents: write` for the tag and release, `id-token: write` for crates.io Trusted Publishing.
 permissions:
   contents: write
   id-token: write
@@ -43,12 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Full history so the tag points at the real commit and tag lookups work.
+          # Full history for the tag lookups.
           fetch-depth: 0
 
-      # A published crate version and its release tag are immutable, so a release must only ever
-      # be cut from master. Refuse to run from any other ref, even when dispatched manually, so a
-      # maintainer cannot accidentally publish an unmerged feature-branch commit as a version.
+      # A released version is immutable, so only master may be released.
       - name: Require master branch
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
@@ -70,7 +51,7 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
-      # Gate the release on the same quality bar as CI so a broken build can never be published.
+      # Same quality gate as CI.
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -80,10 +61,7 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      # Derive the release tag from the single source of truth (Cargo.toml `version`, which is also
-      # what CLIENT_VERSION exposes via CARGO_PKG_VERSION). Keeping the tag in lock step with the
-      # crate version means consumers who read the constant and consumers who pull a tag always see
-      # the same version.
+      # The tag comes from the `version` in Cargo.toml, which `CLIENT_VERSION` reads as well.
       - name: Resolve version from Cargo.toml
         id: version
         run: |
@@ -101,8 +79,7 @@ jobs:
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "Resolved release tag: v${version}"
 
-      # Fail early (before any publish or tag creation) if this version was already released, so a
-      # publish run can never silently no-op or clobber an existing release.
+      # Fail before publishing when this version was already released.
       - name: Ensure tag does not already exist
         env:
           TAG: ${{ steps.version.outputs.tag }}
@@ -116,31 +93,13 @@ jobs:
             exit 1
           fi
 
-      # Always verify packaging works (this also runs as part of `cargo publish`, but doing it
-      # explicitly surfaces packaging problems before any registry interaction or tag creation).
-      # No registry credentials are needed for `--dry-run`: it only packages and verifies the
-      # crate locally without contacting the registry for authentication.
+      # Surfaces packaging problems before any tag or registry interaction.
       - name: Verify package (dry run)
         run: cargo publish --dry-run --verbose
 
-      # Ordering rationale (deliberate): the git tag and GitHub release are created and pushed
-      # BEFORE `cargo publish`. Unlike Go — where pushing the tag *is* the publish, so there is one
-      # atomic step — Rust has two irreversible-ish actions (push a tag, publish to crates.io) that
-      # cannot be made a single atomic transaction. We tag first because:
-      #   * The git tag is the canonical, immutable "this commit is version X" marker; deriving it
-      #     and the GitHub release from the source-of-truth version up front guarantees they always
-      #     agree with each other and with the crate version.
-      #   * A failure AFTER tagging but BEFORE publish is cleanly recoverable: delete the just-pushed
-      #     tag and release, then re-run. The "Ensure tag does not already exist" guard makes that
-      #     re-run safe and refuses to clobber.
-      #   * A failure AFTER publish (the genuinely unrecoverable step, since a crates.io version can
-      #     never be re-published) then leaves the tag and release already in place and consistent,
-      #     rather than a published crate with no tag/release. Recovery is just re-running the two
-      #     git/release steps, never the publish.
-      # If `cargo publish` fails here, recover by deleting the tag/release and bumping the version,
-      # or by manually completing the publish for the existing tag.
+      # The tag and release come before `cargo publish`, see "Releasing" in README.md.
 
-      # Tag the released commit so the crate version, git tag, and GitHub release all line up.
+      # Tag the released commit.
       - name: Create and push release tag
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
@@ -151,16 +110,13 @@ jobs:
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"
 
-      # Extract the matching CHANGELOG section so the GitHub release page shows the actual changes
-      # for this version rather than a static pointer. Falls back to a one-liner if the section is
-      # missing, so a forgotten CHANGELOG entry never blocks the release.
+      # The release notes are the CHANGELOG section of this version.
       - name: Build release notes from CHANGELOG
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Match the heading as a literal string (index) so the version's dots and brackets are
-          # not interpreted as a regex/character class.
+          # `index` matches the heading literally, not as a regex.
           notes=$(awk -v ver="## [${VERSION}]" '
             index($0, ver)==1 {capture=1; next}
             capture && /^## / {exit}
@@ -175,12 +131,7 @@ jobs:
             echo "__EOF__"
           } >> "$GITHUB_ENV"
 
-      # Create a GitHub release for the tag. Uses the default GITHUB_TOKEN from repository secrets;
-      # no personal access token is needed.
-      # Idempotent: create the release, or update it if one already exists for the tag. This keeps a
-      # re-run safe in the post-tag/pre-publish recovery path (see the ordering rationale above): if
-      # a maintainer re-pushes the tag after a partial failure, the release step will not hard-fail
-      # on an already-existing release.
+      # Creates the release, or updates it when a re-run finds one.
       - name: Create GitHub release
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
@@ -197,20 +148,14 @@ jobs:
               --notes "${RELEASE_NOTES}"
           fi
 
-      # Trusted Publishing: exchange the GitHub Actions OIDC identity for a short-lived crates.io
-      # token instead of storing a long-lived registry secret. The action sets a `token` output
-      # and automatically revokes it in its post step when the job finishes. This requires a
-      # matching Trusted Publisher to be configured for the crate on crates.io (organization,
-      # repository and workflow file name).
+      # Trusted Publishing: a short-lived crates.io token from the OIDC identity.
       - name: Authenticate to crates.io (Trusted Publishing)
         id: auth
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish to crates.io
-        # Skip the actual publish when the run was dispatched as a dry run.
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
-          # Short-lived token minted by Trusted Publishing (no stored registry secret).
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --verbose

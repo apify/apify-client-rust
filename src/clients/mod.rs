@@ -28,6 +28,7 @@ pub mod run_dataset_items;
 pub mod schedule;
 pub mod schedule_collection;
 pub mod store_collection;
+pub mod streamed_log;
 pub mod task;
 pub mod task_collection;
 pub mod user;

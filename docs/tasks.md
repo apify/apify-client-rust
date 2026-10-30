@@ -19,8 +19,8 @@ Obtained via `client.tasks()` (collection) and `client.task(id)` (single).
 | `publish()` | — | `Task` | Publishes the task on its public landing page (sets `isPublic: true`). Requires the task's Actor to be public and the task to have `publicConfig` set up. An Actor may have at most 10 published tasks, an account at most 100 (contact Apify support to raise either limit). |
 | `unpublish()` | — | `Task` | Unpublishes the task from its public landing page (sets `isPublic: false`), preserving `publicConfig`. |
 | `delete()` | — | `()` | Deletes the task. |
-| `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run. See [`ActorStartOptions`](actors.md#actorstartoptions) for the full field list. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. Same [`ActorStartOptions`](actors.md#actorstartoptions) as `start`. |
+| `start(input, options)` | `Option<&impl Serialize>`, `TaskStartOptions` | `ActorRun` | Starts a run. `TaskStartOptions` has the fields of [`ActorStartOptions`](actors.md#actorstartoptions) except `content_type` and `force_permission_level`, which the endpoint does not document. |
+| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `TaskStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits. Like [`ActorClient::call`](actors.md#actorcalloptions), it starts without a client-side timeout, but it does not redirect the log. |
 | `get_input()` / `update_input(input)` | — / `&impl Serialize` | `Value` / `Value` | The task's saved input. `get_input` returns a `404` as an error. |
 | `last_run(status)` | `Option<&str>` | `RunClient` | The task's last run, optionally filtered by status. See [Actor runs](runs.md) for the accepted `status` values. |
 | `last_run_with_options(options)` | `LastRunOptions { status, origin }` | `RunClient` | The task's last run, optionally filtered by status and/or origin. See [Actor runs](runs.md) for the accepted `status` and `origin` values (common origins: `DEVELOPMENT`, `WEB`, `API`, `SCHEDULER`). |

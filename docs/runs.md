@@ -26,15 +26,45 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
 | `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
-| `get_streamed_log()` | — | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | Streams the run's log chunks live (log redirection); `None` if the run does not exist. |
-| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<Option<impl Stream<Item = Result<Vec<u8>>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
+| `get_streamed_log(options)` | `StreamedLogOptions { to_log, from_start }` | `Result<Option<StreamedLog>>` (async — `.await` it) | The [redirection](#log-redirection) of the run's log; `None` if the run does not exist or `to_log` is `LogRedirect::Disabled`. |
 
-`get_streamed_log()` / `get_streamed_log_with_options()` are `async` and yield the stream inside a
-`Result` and an `Option`, so `.await?` them and handle the `None` of a missing run to obtain it. Polling the returned stream with `.next()` requires the
-`futures_util::StreamExt` trait (from the `futures-util` crate — add `futures-util = "0.3"` to your
-`Cargo.toml`) in scope; the [`raw_log`](../examples/raw_log.rs) example drives
-`get_streamed_log_with_options` exactly this way. See
-[Logs](misc.md#logs--clientlogbuild_or_run_id) for a full streaming snippet.
+### Log redirection
+
+`get_streamed_log` returns a `StreamedLog`: `start()` spawns a task that follows the run's log, and
+`stop()` ends it (waiting up to a second for the lines in flight, then reading the rest of the
+log). The log is split into messages at the timestamps its lines begin with, so a stack trace
+stays in one piece, and each message goes to a `LogSink`:
+
+- `LogRedirect::Default` prints to the standard output, prefixing each message with
+  `"{Actor name} runId:{run id} -> "`. It costs a request for the run and one for its Actor.
+- `LogRedirect::to_sink(sink)` sends the messages, without a prefix, to a `LogSink`: a trait with
+  one method, implemented by every `Fn(&str) + Send + Sync + 'static` closure, so it can forward to
+  a logging framework.
+- `LogRedirect::Disabled` redirects nothing.
+
+`from_start: false` drops the messages stamped before the call. A run that has not logged yet is
+followed by reopening its empty log stream until the first bytes arrive. `ActorClient::call` does
+all of this for the run it waits for. To read the log as raw chunks instead, use
+`run.log().stream_with_options(..)`; the [`raw_log`](../examples/raw_log.rs) example does.
+
+```rust,no_run
+use apify_client::{ApifyClient, LogRedirect, StreamedLogOptions};
+
+# async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let run = client.run(run_id);
+let mut streamed_log = run
+    .get_streamed_log(StreamedLogOptions {
+        to_log: LogRedirect::to_sink(|message: &str| println!("run -> {message}")),
+        from_start: true,
+    })
+    .await?
+    .ok_or("the run does not exist")?;
+streamed_log.start()?;
+run.wait_for_finish(None).await?;
+streamed_log.stop().await?;
+# Ok(())
+# }
+```
 
 `RunResurrectOptions`: `build`, `memory_mbytes`, `run_timeout_secs`, `max_items`, `max_total_charge_usd`, `restart_on_error` (all optional).
 
@@ -97,7 +127,7 @@ use apify_client::ApifyClient;
 let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
 let run = client
     .actor("apify/hello-world")
-    .call::<serde_json::Value>(None, Default::default(), None)
+    .call::<serde_json::Value>(None, Default::default())
     .await?;
 
 println!("run {} finished with status {:?}", run.id, run.status);
