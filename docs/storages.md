@@ -16,6 +16,10 @@ core; the `.id` field is what the examples read to build a per-storage client
 | `created_at` | `Option<DateTime<Utc>>` | all three | When the storage was created. |
 | `modified_at` | `Option<DateTime<Utc>>` | all three | When the storage was last modified. |
 | `item_count` | `Option<i64>` | `Dataset` only | Total number of items in the dataset. |
+| `console_url` | `Option<String>` | all three | URL of the storage in Apify Console. |
+| `items_public_url` | `Option<String>` | `Dataset` only | Public URL of the dataset items. |
+| `keys_public_url` | `Option<String>` | `KeyValueStore` only | Public URL of the store's key listing. |
+| `records_public_url` | `Option<String>` | `KeyValueStore` only | Public URL prefix of the store's records. |
 | `total_request_count` | `Option<i64>` | `RequestQueue` only | Total number of requests ever added. |
 | `extra` | `Extra` | all three | Any other fields returned by the API. |
 
@@ -63,7 +67,7 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `list_items::<T>(options)` | `DatasetListItemsOptions` | `PaginationList<T>` | Reads items (pagination via response headers). |
 | `iterate_items::<T>(options)` | `DatasetListItemsOptions` | `ListIterator<T>` | Lazily iterates all items across pages (auto-pagination). |
 | `push_items(items)` | `&impl Serialize` | `()` | Appends items (object or array). |
-| `get_statistics()` | — | `Option<Value>` | Field statistics. |
+| `get_statistics()` | — | `Value` | Field statistics. A `404` is an error. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
 | `download_items_stream(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Like `download_items`, but streams the export instead of buffering it, for constant-memory processing of a large export. |
 | `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
@@ -156,6 +160,7 @@ println!("streamed {total_bytes} bytes of JSONL");
 | `set_record_raw(key, bytes, content_type)` | `&str`, `Vec<u8>`, `&str` | `()` | Stores a raw record. |
 | `set_record_raw_with_content_encoding(key, bytes, content_type, content_encoding)` | `&str`, `Vec<u8>`, `&str`, `&str` | `()` | Like `set_record_raw`, for a value that is already compressed (`gzip`, `br`, `deflate`): sends `content_encoding` as the `Content-Encoding` header instead of compressing the bytes again. |
 | `set_record_json(key, value)` | `&str`, `&impl Serialize` | `()` | Stores a JSON record. |
+| `set_record_raw_with_options(key, bytes, content_type, options)` / `set_record_json_with_options(key, value, options)` | as above plus `SetRecordOptions { content_encoding, do_not_retry_timeouts }` | `()` | Like the methods above; `do_not_retry_timeouts` gives up on the first transport timeout instead of retrying it. `content_encoding` is for raw bytes only. |
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
 | `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
@@ -198,6 +203,7 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 |---|---|---|
 | `key` | `String` | The record key (always present). |
 | `size` | `Option<i64>` | Size of the record value in bytes, if reported by the API. |
+| `record_public_url` | `Option<String>` | Public link to access this record directly. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 ## Request queues — `client.request_queues()` / `client.request_queue(id)`
@@ -221,7 +227,7 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `list_and_lock_head(lock_secs, limit)` | `i64`, `Option<i64>` | `LockedRequestQueueHead` | Locks head requests. |
 | `batch_add_requests(requests, options)` | `&[RequestQueueRequest]`, `BatchAddRequestsOptions` | `BatchRequestsOperationResult` | Batch add, with automatic chunking, bounded parallelism, and retries for rate-limited requests. |
 | `batch_delete_requests(requests)` | `&[impl Serialize]` | `BatchRequestsOperationResult` | Batch delete (max 25 requests per call; larger inputs are rejected client-side). |
-| `list_requests(options)` | `ListRequestsOptions { limit, exclusive_start_id, cursor, filter }` | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
+| `list_requests(options)` | `ListRequestsOptions { limit, cursor, filter }` (and the deprecated `exclusive_start_id`) | `RequestQueueRequestsPage` | List requests (cursor/filter pagination). |
 | `paginate_requests(page_limit)` | `Option<i64>` | `RequestQueueRequestsIterator` | Lazy request iterator. |
 | `prolong_request_lock(id, lock_secs, forefront)` | `&str`, `i64`, `bool` | `RequestLockInfo` | Extend a lock. |
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |

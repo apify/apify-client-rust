@@ -4,6 +4,88 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] - 2026-10-29
+
+Ports the `apify-client-js` v3 changes.
+
+### Added
+- Timeout tiers: `Timeout` (`Short`, `Medium`, `Long`, `NoTimeout`, `Custom`), the builder options
+  `timeout_short`, `timeout_medium`, `timeout_long` and `timeout_max`, `with_timeout` on every
+  resource client and `RequestQueueClient::with_timeout_cap`.
+- `HttpCompressor` with `BrotliHttpCompressor` and `GzipHttpCompressor` (configurable quality), set
+  with `ApifyClientBuilder::http_compressor`.
+- `ApifyClientBuilder::default_header`.
+- `ApifyClient::stats`: the `Statistics` of the calls, requests and `429` responses.
+- `KeyValueStoreClient::set_record_raw_with_options`, `set_record_json_with_options` and
+  `SetRecordOptions`, with `do_not_retry_timeouts`.
+- `RunListOptions::deployment`, `StoreListOptions::include_input_schema` and `LogOptions::download`.
+- `RunClient::iterate_dataset_items`, `RunDatasetItemsIterator`: iterate the items of a run's
+  default dataset while the run is still producing them, like the reference client's
+  `iterateDatasetItems`.
+- Typed, normalized URL fields: `ActorRun::console_url` and `output`, `Task::standby_url`,
+  `Dataset::console_url` and `items_public_url`, `KeyValueStore::console_url`, `keys_public_url` and
+  `records_public_url`, `KeyValueStoreKey::record_public_url`, `RequestQueue::console_url`,
+  `ActorStoreListItem::url` and `user_picture_url`, `User::profile`, `WebhookDispatch::webhook`.
+
+- Log redirection like the reference client's `StreamedLog`: `StreamedLog` with `start` and `stop`,
+  `StreamedLogOptions`, and the `LogSink` trait (`StdoutLogSink`, or any `Fn(&str)` closure) behind
+  `LogRedirect`. `ActorClient::call` and `call_raw` redirect the log of the run to the standard
+  output by default, with the `ActorCallOptions::log` option to change or disable it. A redirection
+  that ends early on an error does not fail the call: a `Log redirection stopped due to error: ..`
+  message goes to the sink.
+- `ActorCallOptions` and `TaskStartOptions`.
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
+- **Breaking:** every method has a timeout tier (5s, 30s or 360s by default) instead of one 360s
+  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish(None)` has no timeout, and
+  a `waitForFinish` request gets the server-side wait added to its tier.
+- **Breaking:** `HttpRequest::timeout` may be `timeouts::NO_TIMEOUT`, which a custom `HttpBackend`
+  must not abort.
+- **Breaking:** any `404` resolves to `None`, not only `record-not-found`, but only for a client that
+  names its resource by id. `run.dataset()`, `run.log()` and the other chained clients return it as
+  an error.
+- **Breaking:** `get_statistics`, `get_input`, `schedule.get_log` and `get_openapi_definition`
+  return the `404` as an error and no longer wrap the result in `Option`.
+- **Breaking:** `LogClient::stream` and `stream_with_options` return an `Option`: `None` for a
+  missing log.
+- **Breaking:** `RunClient::get_streamed_log` takes `StreamedLogOptions` and returns a
+  `StreamedLog` (`None` for a missing run when redirecting by default), and
+  `get_streamed_log_with_options` is removed. For the raw chunks of the log, use
+  `run.log().stream_with_options(..)`.
+- **Breaking:** `ActorClient::call` and `call_raw` take `ActorCallOptions` (the start options, the
+  wait budget `wait_secs` and the `log` option) instead of `ActorStartOptions` and `wait_secs`.
+  `TaskClient::start` and `call` take `TaskStartOptions`, which has no `content_type` and no
+  `force_permission_level`, because `POST /actor-tasks/{id}/runs` does not document them.
+- **Breaking:** `call` starts the run, and `TaskClient::call` too, without a client-side timeout
+  unless the client has `with_timeout`, which then applies to the polls too. A start that outlives
+  a tier is no longer aborted and retried into a second run. `start`, `start_raw`, `build` and
+  `TaskClient::start` do not retry a transport timeout either.
+- **Breaking:** the internals `QueryParams`, `common::{encode_path_segment, build_user_agent,
+  to_safe_id, create_hmac_signature, sign_storage_content}`, `http_client::HttpClient` and
+  `http_client::RetryConfig` (which also lost its `timeout` field) are no longer public.
+- `wait_for_finish(Some(n))` gives each poll the `Medium` tier plus the hold it asks for, so a
+  stalled connection cannot hang it.
+- `WaitForResources::ForSecs` with an infinite or huge value waits without a limit, and `NaN`
+  fails with `InvalidArgument`, instead of panicking.
+- `RequestQueueClient::get_request` no longer sends `clientKey`.
+- **Breaking:** `ActorStartOptions::timeout_secs` and `RunResurrectOptions::timeout_secs` are now
+  `run_timeout_secs`.
+- **Breaking:** `LogOptions`, `RunListOptions` and `StoreListOptions` gained a public field.
+- **Breaking:** an id, record key or request id that is empty or a dot segment fails with
+  `InvalidArgument`; ids are percent-encoded and every `/` of an id becomes `~`.
+- **Breaking:** `dataset.push_items` rejects anything but an object or an array of objects, and does
+  not retry a transport timeout.
+- **Breaking:** the URL fields listed above are normalized, and no longer in `extra`.
+- **Breaking:** `RequestCompression` moved to `http_compressors` (still re-exported at the crate
+  root).
+- `ListRequestsOptions::exclusive_start_id` is deprecated in favor of `cursor`.
+- The storages and the log chained from a `last_run()` with a `status` or `origin` filter now
+  belong to the filtered run.
+- A zero `timeout_*` option or `with_timeout` fails the requests with `InvalidArgument`.
+- `UserClient::limits`, `monthly_usage` and `update_limits` work for any user, not only `me`.
+- `batch_add_requests` serializes each request once and rejects an oversized one before sending.
+
 ## [0.14.1] - 2026-10-26
 
 ### Changed

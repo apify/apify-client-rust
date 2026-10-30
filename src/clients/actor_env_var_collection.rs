@@ -6,12 +6,15 @@ use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorEnvVar;
+use crate::timeouts::Timeout;
 
 /// Client for listing and creating environment variables of an Actor version.
 #[derive(Debug, Clone)]
 pub struct ActorEnvVarCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(ActorEnvVarCollectionClient);
 
 impl ActorEnvVarCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -22,7 +25,7 @@ impl ActorEnvVarCollectionClient {
 
     /// Lists the environment variables of the Actor version.
     pub async fn list(&self) -> ApifyClientResult<PaginationList<ActorEnvVar>> {
-        list_resource(&self.ctx, None, &QueryParams::new()).await
+        list_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Lazily iterates over the Actor version's environment variables.
@@ -36,6 +39,6 @@ impl ActorEnvVarCollectionClient {
 
     /// Creates a new environment variable.
     pub async fn create(&self, env_var: &ActorEnvVar) -> ApifyClientResult<ActorEnvVar> {
-        create_resource(&self.ctx, &QueryParams::new(), env_var).await
+        create_resource(&self.ctx, &QueryParams::new(), env_var, Timeout::Short).await
     }
 }

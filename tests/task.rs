@@ -281,7 +281,7 @@ async fn task_crud_flow() {
         .await
         .expect("update input");
     let input = task_client.get_input().await.expect("get input");
-    assert!(input.is_some());
+    assert_eq!(input["message"], "updated");
 
     // Update (rename + set description).
     let renamed = common::unique_name("task-renamed");
@@ -306,4 +306,54 @@ async fn task_crud_flow() {
     // Delete.
     task_client.delete().await.expect("delete task");
     assert!(task_client.get().await.expect("get after delete").is_none());
+}
+
+/// Simple GETs: the webhooks of a task, and its last run with that run's log.
+#[tokio::test(flavor = "multi_thread")]
+async fn task_webhooks_and_last_run() {
+    let client = require_client!();
+    let name = common::unique_name("task-last-run");
+    let task = client
+        .tasks()
+        .create(&task_definition(&name))
+        .await
+        .expect("create task");
+
+    let cleanup_client = client.clone();
+    let id = task.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.task(&id).delete().await;
+    });
+
+    let webhooks = client
+        .task(&task.id)
+        .webhooks()
+        .list(Default::default())
+        .await
+        .expect("listing the webhooks of a task should succeed");
+    assert!(webhooks.total >= 0);
+
+    let run = client
+        .task(&task.id)
+        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .await
+        .expect("call the task");
+
+    let last = client
+        .task(&task.id)
+        .last_run(Some("SUCCEEDED"))
+        .get()
+        .await
+        .expect("get the last run of the task")
+        .expect("the task should have a last run");
+    assert_eq!(last.id, run.id);
+
+    let log = client
+        .task(&task.id)
+        .last_run(None)
+        .log()
+        .get()
+        .await
+        .expect("get the log of the last run of the task");
+    assert!(log.is_some(), "the last run should have a log");
 }

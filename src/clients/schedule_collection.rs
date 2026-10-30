@@ -8,12 +8,15 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Schedule;
+use crate::timeouts::Timeout;
 
 /// Client for listing and creating schedules.
 #[derive(Debug, Clone)]
 pub struct ScheduleCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(ScheduleCollectionClient);
 
 impl ScheduleCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -29,7 +32,7 @@ impl ScheduleCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all schedules matching `options`, fetching pages on demand.
@@ -44,6 +47,6 @@ impl ScheduleCollectionClient {
 
     /// Creates a new schedule from the given definition.
     pub async fn create<T: Serialize>(&self, schedule: &T) -> ApifyClientResult<Schedule> {
-        create_resource(&self.ctx, &QueryParams::new(), schedule).await
+        create_resource(&self.ctx, &QueryParams::new(), schedule, Timeout::Short).await
     }
 }

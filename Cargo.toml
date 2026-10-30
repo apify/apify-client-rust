@@ -1,8 +1,8 @@
 [package]
 name = "apify-client"
-version = "0.14.1"
+version = "0.15.0"
 authors = ["Apify Technologies <support@apify.com>"]
-description = "An official, but experimental, AI-generated and AI-maintained Rust client for the Apify API (https://apify.com)."
+description = "Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"
 edition = "2021"
 repository = "https://github.com/apify/apify-client-rust"
@@ -20,7 +20,8 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
 async-trait = "0.1"
 futures-util = "0.3"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt", "sync", "macros"] }
+url = "2"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
@@ -33,7 +34,7 @@ rustls-webpki = { version = "0.103.16", optional = true }
 webpki-roots = { version = "1.0.10", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util", "net", "io-util"] }
 uuid = { version = "1", features = ["v4"] }
 
 [features]

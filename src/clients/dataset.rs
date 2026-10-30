@@ -1,17 +1,90 @@
 //! Client for a single dataset (`/v2/datasets/{datasetId}` and run-nested variants).
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::clients::base::{
-    delete_resource, get_byte_stream, get_resource, update_resource, ResourceContext,
+    delete_resource, get_byte_stream, get_resource, get_resource_required, update_resource,
+    ResourceContext,
 };
 use crate::clients::pagination::ListIterator;
-use crate::common::{parse_data_envelope, sign_storage_content, PaginationList, QueryParams};
-use crate::error::ApifyClientResult;
-use crate::http_client::{HttpClient, HttpMethod, HttpRequest};
+use crate::common::{sign_storage_content, PaginationList, QueryParams};
+use crate::error::{ApifyClientError, ApifyClientResult};
+use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
+use crate::timeouts::Timeout;
+
+/// Checks that a serialized `push_items` body is a JSON object or an array of JSON objects,
+/// without building a value out of it.
+fn check_items_shape(body: &[u8]) -> ApifyClientResult<()> {
+    serde_json::from_slice::<ItemsShape>(body)
+        .map(|_| ())
+        .map_err(|err| {
+            ApifyClientError::InvalidArgument(format!(
+                "push_items takes a JSON object or an array of JSON objects: {err}"
+            ))
+        })
+}
+
+/// Marker deserialized from a JSON object or an array of JSON objects, and nothing else.
+struct ItemsShape;
+
+impl<'de> Deserialize<'de> for ItemsShape {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ItemsShapeVisitor)
+    }
+}
+
+struct ItemsShapeVisitor;
+
+impl<'de> Visitor<'de> for ItemsShapeVisitor {
+    type Value = ItemsShape;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON object or an array of JSON objects")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<ItemsShape, A::Error> {
+        skip_object(map)?;
+        Ok(ItemsShape)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ItemsShape, A::Error> {
+        while seq.next_element::<ObjectShape>()?.is_some() {}
+        Ok(ItemsShape)
+    }
+}
+
+/// Marker deserialized from a JSON object and nothing else.
+struct ObjectShape;
+
+impl<'de> Deserialize<'de> for ObjectShape {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor;
+
+        impl<'de> Visitor<'de> for ObjectVisitor {
+            type Value = ObjectShape;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<ObjectShape, A::Error> {
+                skip_object(map)?;
+                Ok(ObjectShape)
+            }
+        }
+
+        deserializer.deserialize_map(ObjectVisitor)
+    }
+}
+
+/// Reads the entries of a JSON object without keeping them.
+fn skip_object<'de, A: MapAccess<'de>>(mut map: A) -> Result<(), A::Error> {
+    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+    Ok(())
+}
 
 /// Options for listing or downloading dataset items.
 ///
@@ -151,6 +224,8 @@ pub struct DatasetClient {
     ctx: ResourceContext,
 }
 
+crate::clients::base::impl_with_timeout!(DatasetClient);
+
 impl DatasetClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str, id: &str) -> Self {
         Self {
@@ -159,9 +234,15 @@ impl DatasetClient {
     }
 
     /// Creates a dataset client for a run's default dataset (no ID; nested path only).
-    pub(crate) fn nested(http: HttpClient, base_url: &str, sub_path: &str) -> Self {
+    pub(crate) fn nested(
+        http: HttpClient,
+        base_url: &str,
+        sub_path: &str,
+        base_params: &QueryParams,
+    ) -> Self {
         Self {
-            ctx: ResourceContext::collection(http, base_url, sub_path),
+            ctx: ResourceContext::collection(http, base_url, sub_path)
+                .with_base_params(base_params),
         }
     }
 
@@ -173,17 +254,17 @@ impl DatasetClient {
 
     /// Fetches the dataset metadata, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<Dataset>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the dataset metadata (e.g. `name`, `title`).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<Dataset> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the dataset.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Lists items from the dataset.
@@ -197,17 +278,10 @@ impl DatasetClient {
     ) -> ApifyClientResult<PaginationList<T>> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        let url = self.ctx.url_with_params(Some("items"), &params);
         let response = self
             .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Get, url, self.ctx.timeout(Timeout::Long))
             .await?;
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
@@ -297,17 +371,10 @@ impl DatasetClient {
         let mut params = QueryParams::new();
         params.add_str("format", Some(format.as_str()));
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
+        let url = self.ctx.url_with_params(Some("items"), &params);
         let response = self
             .ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(HttpMethod::Get, url, self.ctx.timeout(Timeout::Long))
             .await?;
         Ok(response.body)
     }
@@ -317,9 +384,10 @@ impl DatasetClient {
     ///
     /// Returns a `Stream` of byte chunks; drive it with `futures_util::StreamExt::next()` (or
     /// pipe it through an `AsyncRead` adapter) to process a large export in constant memory. A
-    /// gap of more than 6 minutes between chunks ends the stream with
-    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) — an inactivity
-    /// timeout, not a cap on the export's total duration.
+    /// gap between chunks longer than the [`Timeout::Long`] tier (6 minutes by default) ends the
+    /// stream with [`ApifyClientError::Timeout`] — an
+    /// inactivity timeout, not a cap on the export's total duration. Use
+    /// [`with_timeout`](Self::with_timeout) to change it.
     ///
     /// Goes through the configured `HttpBackend`'s streaming path instead of the buffered one,
     /// to keep the connection open — like [`crate::clients::log::LogClient::stream`], a failed
@@ -333,30 +401,39 @@ impl DatasetClient {
         let mut params = QueryParams::new();
         params.add_str("format", Some(format.as_str()));
         options.apply(&mut params);
-        let url = params.apply_to_url(&self.ctx.url(Some("items")));
-        get_byte_stream(&self.ctx, url).await
+        let url = self.ctx.url_with_params(Some("items"), &params);
+        get_byte_stream(&self.ctx, url, Timeout::Long).await
     }
 
     /// Pushes one or more items to the dataset.
     ///
-    /// `items` must serialize to a JSON object or an array of objects.
+    /// `items` must serialize to a JSON object or an array of objects, the only shapes the
+    /// endpoint accepts. Anything else, such as a plain string or an array of strings, is
+    /// rejected with [`ApifyClientError::InvalidArgument`]
+    /// before a request is sent.
+    ///
+    /// A push that times out is not retried, because the request may have reached the API and a
+    /// retry could store the items twice; the other errors are retried as usual.
     pub async fn push_items<T: Serialize>(&self, items: &T) -> ApifyClientResult<()> {
         let body = serde_json::to_vec(items)?;
-        let url = self.ctx.url(Some("items"));
+        check_items_shape(&body)?;
+        let url = self.ctx.url_with_params(Some("items"), &QueryParams::new());
         let mut headers = std::collections::HashMap::new();
         headers.insert(
             "Content-Type".to_string(),
             "application/json; charset=utf-8".to_string(),
         );
         self.ctx
-            .http
-            .call(HttpRequest {
-                method: HttpMethod::Post,
+            .send_with_options(
+                HttpMethod::Post,
                 url,
                 headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body),
+                self.ctx.timeout(Timeout::Medium),
+                CallOptions {
+                    do_not_retry_timeouts: true,
+                },
+            )
             .await?;
         Ok(())
     }
@@ -392,7 +469,10 @@ impl DatasetClient {
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
 
-        if let Some(dataset) = self.get().await? {
+        // Like the reference client, fetches the dataset with the `Long` tier of this method.
+        let dataset: Option<Dataset> =
+            get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Long).await?;
+        if let Some(dataset) = dataset {
             if let Some(secret) = dataset
                 .extra
                 .get("urlSigningSecretKey")
@@ -402,26 +482,21 @@ impl DatasetClient {
                 params.add_str("signature", Some(signature));
             }
         }
-        Ok(params.apply_to_url(&self.ctx.public_url(Some("items"))))
+        Ok(self.ctx.public_url_with_params(Some("items"), &params))
     }
 
-    /// Returns statistical information about the dataset, or `None` if unavailable.
-    pub async fn get_statistics(&self) -> ApifyClientResult<Option<Value>> {
-        let result: ApifyClientResult<Value> = async {
-            let response = self
-                .ctx
-                .http
-                .call(HttpRequest {
-                    method: HttpMethod::Get,
-                    url: self.ctx.url(Some("statistics")),
-                    headers: Default::default(),
-                    body: None,
-                    timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-                })
-                .await?;
-            parse_data_envelope(&response.body)
-        }
-        .await;
-        crate::common::catch_not_found(result)
+    /// Returns statistical information about the dataset.
+    ///
+    /// A dataset that does not exist is a [`NotFound`](crate::ApiError::is_not_found) error. The
+    /// response cannot tell a missing dataset from a missing statistics resource, and a client
+    /// chained from a run, such as `run.dataset()`, cannot tell a missing run either.
+    pub async fn get_statistics(&self) -> ApifyClientResult<Value> {
+        get_resource_required(
+            &self.ctx,
+            Some("statistics"),
+            &QueryParams::new(),
+            Timeout::Short,
+        )
+        .await
     }
 }

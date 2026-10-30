@@ -27,9 +27,9 @@ use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::clients::webhook_dispatch::WebhookDispatchClient;
 use crate::clients::webhook_dispatch_collection::WebhookDispatchCollectionClient;
 use crate::common::build_user_agent;
-use crate::http_client::{
-    HttpBackend, HttpClient, RequestCompression, ReqwestBackend, RetryConfig,
-};
+use crate::http_client::{HttpBackend, HttpClient, HttpClientConfig, ReqwestBackend, RetryConfig};
+use crate::http_compressors::{HttpCompressor, RequestCompression};
+use crate::timeouts::TimeoutTiers;
 
 /// Default base URL of the Apify API (without the `/v2` suffix).
 const DEFAULT_BASE_URL: &str = "https://api.apify.com";
@@ -40,8 +40,6 @@ const API_VERSION_PATH: &str = "/v2";
 const DEFAULT_MAX_RETRIES: u32 = 8;
 /// Default minimum delay between retries.
 const DEFAULT_MIN_DELAY_BETWEEN_RETRIES: Duration = Duration::from_millis(500);
-/// Default overall per-request timeout (6 minutes), matching the reference clients.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(360);
 /// Placeholder used to address the current user (`/users/me`).
 pub(crate) const ME_USER_PLACEHOLDER: &str = "me";
 
@@ -62,10 +60,11 @@ pub struct ApifyClientBuilder {
     public_base_url: Option<String>,
     max_retries: u32,
     min_delay_between_retries: Duration,
-    timeout: Duration,
+    tiers: TimeoutTiers,
     user_agent_suffix: Option<String>,
     http_backend: Option<Arc<dyn HttpBackend>>,
-    request_compression: RequestCompression,
+    compressor: Arc<dyn HttpCompressor>,
+    default_headers: Vec<(String, String)>,
 }
 
 impl Default for ApifyClientBuilder {
@@ -76,10 +75,11 @@ impl Default for ApifyClientBuilder {
             public_base_url: None,
             max_retries: DEFAULT_MAX_RETRIES,
             min_delay_between_retries: DEFAULT_MIN_DELAY_BETWEEN_RETRIES,
-            timeout: DEFAULT_TIMEOUT,
+            tiers: TimeoutTiers::default(),
             user_agent_suffix: None,
             http_backend: None,
-            request_compression: RequestCompression::default(),
+            compressor: RequestCompression::default().into_compressor(),
+            default_headers: Vec::new(),
         }
     }
 }
@@ -122,10 +122,44 @@ impl ApifyClientBuilder {
         self
     }
 
-    /// Sets the overall per-request timeout (default `360s`).
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+    /// Sets the duration of the [`Timeout::Short`](crate::Timeout::Short) tier, used by simple
+    /// metadata reads and writes (default `5s`). Like the other timeout options, it must be longer
+    /// than zero: a client built with a zero one fails every request with `InvalidArgument`.
+    pub fn timeout_short(mut self, timeout: Duration) -> Self {
+        self.tiers.short = timeout;
         self
+    }
+
+    /// Sets the duration of the [`Timeout::Medium`](crate::Timeout::Medium) tier, used by
+    /// listing, batch and trigger operations (default `30s`). A zero duration is rejected: a client
+    /// built with one fails every request with `InvalidArgument`.
+    pub fn timeout_medium(mut self, timeout: Duration) -> Self {
+        self.tiers.medium = timeout;
+        self
+    }
+
+    /// Sets the duration of the [`Timeout::Long`](crate::Timeout::Long) tier, used by downloads,
+    /// uploads and streaming (default `360s`). A zero duration is rejected: a client built with one
+    /// fails every request with `InvalidArgument`.
+    pub fn timeout_long(mut self, timeout: Duration) -> Self {
+        self.tiers.long = timeout;
+        self
+    }
+
+    /// Caps the timeout of a single request attempt (default `360s`). A tier or an explicit
+    /// timeout above the cap is lowered to it. The timeout of each attempt doubles with every
+    /// retry, up to this cap. A zero duration is rejected: a client built with one fails every
+    /// request with `InvalidArgument`.
+    pub fn timeout_max(mut self, timeout: Duration) -> Self {
+        self.tiers.max = timeout;
+        self
+    }
+
+    /// Caps the timeout of a single request attempt (default `360s`). Equivalent to
+    /// [`timeout_max`](Self::timeout_max), kept under its original name, and a zero duration is
+    /// rejected the same way.
+    pub fn timeout(self, timeout: Duration) -> Self {
+        self.timeout_max(timeout)
     }
 
     /// Appends a custom suffix to the `User-Agent` header.
@@ -134,15 +168,34 @@ impl ApifyClientBuilder {
         self
     }
 
-    /// Selects the algorithm used to compress large request bodies (default
-    /// [`RequestCompression::Brotli`]).
+    /// Selects the built-in algorithm used to compress large request bodies (default
+    /// [`RequestCompression::Brotli`]), at its default quality.
     ///
     /// The client compresses request bodies of at least 1024 bytes; this chooses whether that
     /// uses brotli (`Content-Encoding: br`) or gzip (`Content-Encoding: gzip`). Brotli is
     /// preferred (matching the reference client); select [`RequestCompression::Gzip`] for
-    /// environments or intermediaries that do not handle brotli.
+    /// environments or intermediaries that do not handle brotli. To tune the quality or use
+    /// another algorithm, pass an [`HttpCompressor`] to [`http_compressor`](Self::http_compressor).
     pub fn request_compression(mut self, compression: RequestCompression) -> Self {
-        self.request_compression = compression;
+        self.compressor = compression.into_compressor();
+        self
+    }
+
+    /// Replaces the request-body compressor with a custom [`HttpCompressor`], for example a
+    /// [`BrotliHttpCompressor`](crate::BrotliHttpCompressor) with a non-default quality.
+    pub fn http_compressor(mut self, compressor: Arc<dyn HttpCompressor>) -> Self {
+        self.compressor = compressor;
+        self
+    }
+
+    /// Adds a header sent with every request. It wins over the built-in `User-Agent` and
+    /// `Authorization` headers, and a header a request sets itself wins over it. Header names are
+    /// compared case-insensitively, and adding the same name again replaces the earlier value.
+    pub fn default_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let name = name.into();
+        self.default_headers
+            .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+        self.default_headers.push((name, value.into()));
         self
     }
 
@@ -165,16 +218,33 @@ impl ApifyClientBuilder {
         let retry = RetryConfig {
             max_retries: self.max_retries,
             min_delay_between_retries: self.min_delay_between_retries,
-            timeout: self.timeout,
         };
 
-        let http = HttpClient::new(
+        let zero_tier = [
+            ("timeout_short", self.tiers.short),
+            ("timeout_medium", self.tiers.medium),
+            ("timeout_long", self.tiers.long),
+            ("timeout_max", self.tiers.max),
+        ]
+        .into_iter()
+        .find(|(_, duration)| duration.is_zero());
+
+        let http = HttpClient::new(HttpClientConfig {
             backend,
-            self.token,
+            token: self.token,
             user_agent,
             retry,
-            self.request_compression,
-        );
+            tiers: self.tiers,
+            compressor: self.compressor,
+            default_headers: self.default_headers,
+            stats: Arc::default(),
+        });
+        // A zero timeout fails every attempt at once, and `Timeout::NoTimeout` is the way to run
+        // without one, so the client fails every request with `InvalidArgument` instead.
+        let http = match zero_tier {
+            Some((option, _)) => http.poisoned(format!("{option} must be longer than zero")),
+            None => http,
+        };
 
         let base_url = to_api_base_url(&self.base_url);
         let public_base_url =
@@ -215,6 +285,13 @@ impl ApifyClient {
 
     pub(crate) fn http(&self) -> HttpClient {
         self.http.clone()
+    }
+
+    /// Statistics of the API calls made through this client and every resource client obtained
+    /// from it: the number of calls, the number of requests (every attempt counts) and the number
+    /// of `429` rate-limit errors by attempt.
+    pub fn stats(&self) -> &crate::Statistics {
+        self.http.stats()
     }
 
     /// The `User-Agent` header value this client sends.
@@ -419,10 +496,16 @@ fn to_api_base_url(url: &str) -> String {
     }
 }
 
+/// What separates the scheme of a URL from its authority.
+const SCHEME_SEPARATOR: &str = "://";
+
 /// Splits a URL into its authority (`scheme://host[:port]`, or the whole string if there is no
 /// path) and its path (starting with `/`, or empty if there is none).
 fn split_authority(url: &str) -> (&str, &str) {
-    let search_from = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let search_from = url
+        .find(SCHEME_SEPARATOR)
+        .map(|i| i + SCHEME_SEPARATOR.len())
+        .unwrap_or(0);
     match url[search_from..].find('/') {
         Some(rel_idx) => url.split_at(search_from + rel_idx),
         None => (url, ""),

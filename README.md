@@ -13,8 +13,7 @@ It provides a resource-oriented, async interface that mirrors the official
 - Transparent authentication, retries with exponential backoff, and timeouts.
 - Resource clients for Actors, runs, builds, tasks, datasets, key-value stores, request
   queues, schedules, webhooks, the Apify Store, users and logs.
-- Convenience helpers: run/wait, log streaming (redirection; needs the `futures-util` crate —
-  see [Installation](#installation)), lazy Store iteration, and `set_status_message` for
+- Convenience helpers: run/wait, log redirection, lazy Store iteration, and `set_status_message` for
   updating the current Actor run's status (see [`docs/README.md`](docs/README.md#convenience-methods)).
 - A replaceable HTTP transport for testing or custom runtimes.
 
@@ -22,7 +21,7 @@ It provides a resource-oriented, async interface that mirrors the official
 
 ```toml
 [dependencies]
-apify-client = "0.14"
+apify-client = "0.15"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -30,12 +29,11 @@ serde_json = "1"          # for the `serde_json::Value` responses used in the Qu
 The Quick start below reads dynamically-typed records with `serde_json::Value`, so a fresh
 project needs `serde_json`. Two more dependencies are needed only for specific features:
 
-- `futures-util = "0.3"` — to consume any of the log streams (`LogClient::stream()` /
-  `stream_with_options()` and the run shortcuts `RunClient::get_streamed_log()` /
-  `get_streamed_log_with_options()`); it provides the `StreamExt` trait used to poll the returned
-  stream. Both the [`log_redirection`](examples/log_redirection.rs) and
-  [`raw_log`](examples/raw_log.rs) examples import `futures_util::StreamExt` for this. See
-  [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id).
+- `futures-util = "0.3"` — to consume the raw log streams (`LogClient::stream()` /
+  `stream_with_options()`); it provides the `StreamExt` trait used to poll the returned stream.
+  The [`raw_log`](examples/raw_log.rs) example imports `futures_util::StreamExt` for this. See
+  [`docs/misc.md`](docs/misc.md#logs--clientlogbuild_or_run_id). Log redirection
+  (`ActorClient::call`, `RunClient::get_streamed_log`) needs no extra dependency.
 - `chrono = "0.4"` — only if you construct or read timestamp values yourself. Model timestamp
   fields (e.g. `Actor::created_at`, `ActorRun::started_at`) are typed as `Option<chrono::DateTime<Utc>>`
   and `chrono` is **not** re-exported, so snippets that call `chrono::Utc::now()` (e.g. the
@@ -50,7 +48,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 By default the client uses the system TLS (`native-tls`). To use rustls instead:
 
 ```toml
-apify-client = { version = "0.14", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.15", default-features = false, features = ["rustls"] }
 ```
 
 The `rustls` feature requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10 or
@@ -69,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start an Actor and wait for it to finish.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), None)
+        .call::<serde_json::Value>(None, Default::default())
         .await?;
     println!("Run finished with status {:?}", run.status);
 
@@ -104,10 +102,56 @@ let client = ApifyClient::builder()
     .public_base_url("https://api.apify.com") // origin for public/shareable URLs; defaults to `base_url`
     .max_retries(8)                         // default: 8
     .min_delay_between_retries(Duration::from_millis(500)) // default: 500ms
-    .timeout(Duration::from_secs(360))      // default: 360s
+    .timeout_short(Duration::from_secs(5))   // default: 5s, simple metadata reads and writes
+    .timeout_medium(Duration::from_secs(30)) // default: 30s, listing, batch and trigger calls
+    .timeout_long(Duration::from_secs(360))  // default: 360s, downloads, uploads and streaming
+    .timeout_max(Duration::from_secs(360))   // default: 360s, cap on a single attempt
     .user_agent_suffix("my-app/1.0")
+    .default_header("X-My-Header", "value")  // sent with every request
     .request_compression(RequestCompression::Brotli) // default: Brotli; or RequestCompression::Gzip
     .build();
+```
+
+### Timeouts
+
+Every method picks the timeout tier that fits its request: `Timeout::Short` for simple metadata
+reads and writes, `Timeout::Medium` for listing, batch and trigger calls, and `Timeout::Long` for
+downloads, uploads and streaming. Polling that waits for a job to finish (`wait_for_finish`) has no
+client-side timeout when it waits indefinitely (`None`); a bounded wait (`Some(n)`) gives each
+poll the `Medium` tier plus the server-side hold it asks for. The duration of each tier is set on
+the builder, and `timeout_max` caps the timeout of a single attempt: a tier or an explicit timeout
+above it is lowered to it. The timeout applies to each attempt separately and doubles with every
+retry, up to the cap.
+
+A resource client's `with_timeout` replaces the tier of every request that client sends, with a
+tier, an exact duration, or `Timeout::NoTimeout` to let a request run for as long as it takes.
+With `NoTimeout` the client never aborts the request, so a connection that stalls is not retried
+either. A zero duration is rejected: every request then fails with `InvalidArgument`, and so does
+every request of a client built with a zero `timeout_short`, `timeout_medium`, `timeout_long` or
+`timeout_max`. Clients
+obtained from that client, such as `run.dataset()`, do not inherit the timeout. A request queue
+client also has `with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
+
+A call that is not idempotent is not retried after a transport timeout, because the request may
+have reached the API: `dataset.push_items` never retries one, and the `set_record_*_with_options`
+methods of a key-value store do not either when `do_not_retry_timeouts` is set.
+
+```rust,no_run
+use std::time::Duration;
+use apify_client::{ApifyClient, Timeout};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new("my-api-token");
+
+// A dataset export that legitimately takes longer than the `Long` tier.
+let items = client
+    .dataset("my-dataset-id")
+    .with_timeout(Timeout::Custom(Duration::from_secs(300)))
+    .list_items::<serde_json::Value>(Default::default())
+    .await?;
+# let _ = items;
+# Ok(())
+# }
 ```
 
 ### Request compression
@@ -116,7 +160,33 @@ Request bodies of at least 1024 bytes are compressed once (before retries) and s
 matching `Content-Encoding` header. The default is Brotli (`br`); select
 `RequestCompression::Gzip` (`gzip`) for environments or intermediaries that do not handle brotli.
 `RequestCompression` is re-exported at the crate root
-(`use apify_client::RequestCompression;`).
+(`use apify_client::RequestCompression;`). To tune the quality or use another algorithm, pass an
+`HttpCompressor` to `ApifyClientBuilder::http_compressor`: the built-in
+`BrotliHttpCompressor` (quality 0 to 11, default 6) and `GzipHttpCompressor` (quality 1 to 9,
+default 6), or your own implementation of the trait.
+
+```rust,no_run
+use std::sync::Arc;
+use apify_client::{ApifyClient, BrotliHttpCompressor};
+
+# fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::builder()
+    .token("my-api-token")
+    .http_compressor(Arc::new(BrotliHttpCompressor::new(11)?))
+    .build();
+# Ok(())
+# }
+```
+
+The compressor is skipped for bodies under 1024 bytes, for content types that already carry their
+own compression (images, audio, video, archives, ...), and for a request that sets its own
+`Content-Encoding`.
+
+### Statistics
+
+`client.stats()` counts the calls made through the client and every resource client obtained from
+it: `calls()` (each call counts once), `requests()` (every attempt counts) and
+`rate_limit_errors()` (the `429` responses, indexed by attempt).
 
 ### User-Agent
 
@@ -144,6 +214,10 @@ Every request carries a `User-Agent` of the form
 | `client.store()` | collection | Browse the Apify Store |
 | `client.me()` / `client.user(id)` | single | User accounts |
 | `client.log(build_or_run_id)` | single | Build/run logs |
+
+`client.api_base_url()` returns the API base URL the client targets, including `/v2` and any
+`base_url` override. The iterators returned by `iterate(..)` (and by `RunClient::iterate_dataset_items`)
+yield one item per `next().await?`; `collect_all().await?` drains the remaining items into a `Vec`.
 
 ## Versioning
 
@@ -211,6 +285,15 @@ step, replacing the `git push origin :refs/tags/...` command above rather than a
 If `cargo publish` itself already succeeded, that version is permanent on crates.io; bump the
 `version` in `Cargo.toml` for the next release instead of re-running.
 
+## Testing
+
+The integration tests in `tests/` run against the live API and need `APIFY_TOKEN`; the `unit_*`
+tests run offline against a scripted HTTP backend. The
+[`Rust integration tests`](.github/workflows/rust-integration-tests.yml) workflow runs them on pull
+requests, with a limited thread count to be gentle on the shared test account. Its `Test examples`
+step runs the programs in `examples/` through the `example_*` tests in `tests/examples.rs`, and the
+code snippets in this README and `docs/` as doctests (`cargo test --doc`).
+
 ## Examples
 
 Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN` and can be
@@ -222,8 +305,8 @@ run with `cargo run --example <name>`:
 - `create_build_run_actor` — create an Actor, build it, run it, fetch the run log.
 - `run_and_last_run_storages` — run an Actor, then access the last run and its storages.
 - `iterate_store` — lazily iterate Actors in the Apify Store.
-- `log_redirection` — run a separate Actor and redirect its run log into your output live, with each line prefixed by the source Actor's name.
-- `raw_log` — fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`.
+- `log_redirection` — run a separate Actor and redirect its run log into your output live, with each message prefixed by the source Actor's name, and to a custom sink.
+- `raw_log` — fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true), ..Default::default() }`.
 
 See [`docs/`](docs) for the full API documentation.
 
@@ -255,8 +338,11 @@ All fallible methods return `Result<T, ApifyClientError>`. API errors expose the
 error `type` (as the field `error_type`), `message`, `status_code` and request details.
 
 An Actor (or task/store) id may be a bare id, a `username/name` reference, or the equivalent
-`username~name` form (the client encodes the first `/` as `~` on the wire, so the two are
-interchangeable). The example below uses `"nonexistent~actor"` — a deliberately non-existent
+`username~name` form (the client encodes every `/` as `~` on the wire, so the two are
+interchangeable). An id is percent-encoded when it is placed in a URL path. An id that is empty or
+a dot segment (`.` or `..`) cannot be placed in a path without addressing another endpoint, so
+every request through a client created with it fails with `ApifyClientError::InvalidArgument`;
+the same goes for a key-value store record key or a request queue request id. The example below uses `"nonexistent~actor"` — a deliberately non-existent
 reference — to show how a missing resource surfaces as `Ok(None)` rather than an error, while
 real calls elsewhere in this README use a live actor such as `"apify/hello-world"`:
 
@@ -276,11 +362,16 @@ match client.actor("nonexistent~actor").get().await {
 # }
 ```
 
-`get`/`delete` operations resolve a missing resource (`404 record-not-found`) to
-`Ok(None)` / a successful no-op, matching the reference clients.
+`get`/`delete` operations resolve a missing resource (any `404`) to `Ok(None)` / a successful
+no-op, matching the reference clients, but only on a client that names its resource by id. A
+client chained from a parent without an id of its own, such as `run.dataset()` or `run.log()`,
+returns the `404` as an error: the response cannot tell a missing run from a missing dataset. The
+same goes for methods that address a fixed sub-path of a resource (`get_statistics`, `get_input`,
+`get_log`, `get_openapi_definition`, `limits`, `monthly_usage`): they return the `404` as an error.
 
-`ApiError` also exposes `is_not_found()`, `is_rate_limited()`, `is_server_error()` and similar
-`is_*` predicates classifying it by HTTP status — the idiomatic equivalent of the reference
+`ApiError` also exposes the `is_invalid_request()` (400), `is_unauthorized()` (401),
+`is_forbidden()` (403), `is_not_found()` (404), `is_conflict()` (409), `is_rate_limited()` (429) and
+`is_server_error()` (5xx) predicates classifying it by HTTP status — the idiomatic equivalent of the reference
 clients' `NotFoundError`/`RateLimitError`/... error subclasses, since Rust has no exception
 hierarchy to mirror them with.
 
@@ -299,8 +390,39 @@ built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom pro
 pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
 `HttpBackend` on your own type instead — just `async fn send`; `send_streaming` (used by
 `log().stream()` and `download_items_stream()`) has a default implementation that buffers the
-whole response via `send`, so it is optional unless you want true incremental streaming. The
-snippet below constructs a
+whole response via `send`, so it is optional unless you want true incremental streaming. A request
+whose `timeout` is `timeouts::NO_TIMEOUT` (see [Timeouts](#timeouts)) may run for as long as it
+takes, so a backend must check for it before it applies a timeout of its own:
+
+```rust,no_run
+use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
+use apify_client::timeouts::NO_TIMEOUT;
+use apify_client::ApifyClientError;
+use async_trait::async_trait;
+
+#[derive(Debug)]
+struct MyBackend;
+
+#[async_trait]
+impl HttpBackend for MyBackend {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ApifyClientError> {
+        let send = async {
+            // Send the request with your own HTTP stack.
+            let response: Result<HttpResponse, ApifyClientError> = todo!();
+            response
+        };
+        if request.timeout == NO_TIMEOUT {
+            send.await
+        } else {
+            tokio::time::timeout(request.timeout, send)
+                .await
+                .map_err(|_| ApifyClientError::Timeout)?
+        }
+    }
+}
+```
+
+The snippet below constructs a
 `reqwest::Client` directly, so it requires adding `reqwest = "0.12"` (matching this crate's
 `reqwest` version) as your own dependency — see [Installation](#installation):
 

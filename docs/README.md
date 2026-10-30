@@ -31,7 +31,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.14"
+apify-client = "0.15"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -71,13 +71,13 @@ root, so you can import them directly from `apify_client` — you never need the
 `apify_client::clients::<module>::<Type>` path. The complete set of re-exported option/parameter
 types is:
 
-- Actors: `ActorStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordOptions`
 - Request queues: `ListRequestsOptions`
 - Store: `StoreListOptions`
-- Logs: `LogOptions`
+- Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StreamedLog`, `StreamedLogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
 - Client configuration: `RequestCompression`
 
@@ -140,10 +140,15 @@ Builder options:
 | `public_base_url(u)` | = `base_url` | Origin used when building public/shareable URLs. |
 | `max_retries(n)` | `8` | Maximum retries for `429`/`5xx`/network errors. |
 | `min_delay_between_retries(d)` | `500ms` | Base backoff delay (doubled each retry, with jitter). |
-| `timeout(d)` | `360s` | Overall per-request timeout budget. |
+| `timeout_short(d)` | `5s` | Duration of the `Timeout::Short` tier (simple metadata reads and writes). Like the other timeout options, a zero duration makes every request of the client fail with `InvalidArgument`. |
+| `timeout_medium(d)` | `30s` | Duration of the `Timeout::Medium` tier (listing, batch and trigger calls). |
+| `timeout_long(d)` | `360s` | Duration of the `Timeout::Long` tier (downloads, uploads and streaming). |
+| `timeout_max(d)` | `360s` | Cap on the timeout of a single attempt. `timeout(d)` is the same option under its original name. |
 | `user_agent_suffix(s)` | none | Extra text appended to the `User-Agent` header. |
+| `default_header(name, value)` | none | Header sent with every request. It wins over the built-in `User-Agent` and `Authorization` headers; a header a request sets itself wins over it. Names are compared case-insensitively. |
 | `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
-| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). |
+| `http_compressor(c)` | Brotli, quality 6 | A custom `Arc<dyn HttpCompressor>`: `BrotliHttpCompressor::new(quality)` (0 to 11, default 6), `GzipHttpCompressor::new(quality)` (1 to 9, default 6), or your own implementation. |
+| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). A request whose `timeout` is `timeouts::NO_TIMEOUT` may run for as long as it takes, so a backend must check for it before it applies a timeout of its own. |
 
 Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
 `request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is
@@ -166,6 +171,53 @@ variable (the platform variable the reference clients read; rendered lowercase t
 reach those values the client maps Rust's native `std::env::consts::OS` spellings to Node's
 (`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
 (`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
+
+### Timeouts
+
+Every method uses a timeout tier: `Timeout::Short` for simple metadata reads and writes,
+`Timeout::Medium` for listing, batch and trigger calls, and `Timeout::Long` for downloads, uploads
+and streaming. `wait_for_finish(None)` polls without a client-side timeout, and
+`wait_for_finish(Some(n))` gives each poll the `Medium` tier plus the server-side hold it asks for.
+A tier or an explicit timeout above `timeout_max` is lowered to it, and the timeout of each
+attempt doubles with every retry, up to the same cap.
+
+Every resource client has a `with_timeout(Timeout)` method that replaces the tier of all the
+requests it sends with a tier, `Timeout::Custom(duration)`, or `Timeout::NoTimeout` (the client
+never aborts the request, so a stalled connection is not retried either). A zero duration is
+rejected: every request then fails with `InvalidArgument`, and so does every request of a client
+built with a zero `timeout_short`, `timeout_medium`, `timeout_long` or `timeout_max`. Clients
+obtained from it, such as
+`run.dataset()`, do not inherit the timeout. A request queue client also has
+`with_timeout_cap(duration)`, which only lowers the tiers longer than `duration`.
+
+`dataset.push_items` is not retried after a transport timeout, because the request may have
+reached the API and a retry could store the items twice. The same goes for the key-value store
+`set_record_*_with_options` methods when `do_not_retry_timeouts` is set.
+
+`client.stats()` returns the `Statistics` of the client and of every resource client obtained from
+it: `calls()` (each call counts once), `requests()` (every attempt counts) and `rate_limit_errors()`
+(the `429` responses, indexed by attempt).
+
+```rust,no_run
+use std::time::Duration;
+use apify_client::{ApifyClient, DownloadItemsFormat, Timeout};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::builder()
+    .token("my-api-token")
+    .timeout_short(Duration::from_secs(10))
+    .build();
+
+// This export may take longer than the default `Long` tier of 6 minutes.
+let csv = client
+    .dataset("my-dataset-id")
+    .with_timeout(Timeout::NoTimeout)
+    .download_items(DownloadItemsFormat::Csv, Default::default())
+    .await?;
+# let _ = csv;
+# Ok(())
+# }
+```
 
 ### Convenience methods
 
@@ -251,7 +303,14 @@ Every fallible method returns `Result<T, ApifyClientError>`. The variants are:
 - `Serde(..)` — (de)serialization failure.
 - `InvalidResponse(..)` / `InvalidArgument(..)` — unexpected response or bad argument.
 
-`get`/`delete` map a missing resource to `Ok(None)` / a no-op.
+`get`/`delete` map a missing resource (any `404`) to `Ok(None)` / a no-op, on a client that names
+its resource by id. A client chained from a parent, such as `run.dataset()` or `run.log()`, and the
+methods that address a fixed sub-path of a resource (`get_statistics`, `get_input`, `get_log`,
+`get_openapi_definition`, `limits`, `monthly_usage*`, webhook `test`) return the `404` as an error,
+because the response cannot tell which resource is missing.
+
+An id that is empty or a dot segment (`.` or `..`) cannot be placed in a URL path, so every request
+through a client created with it fails with `InvalidArgument`.
 
 To inspect the API-level details of an error without matching every variant, use
 `ApifyClientError::as_api_error`, which returns `Some(&ApiError)` for the `Api` variant and
@@ -283,4 +342,4 @@ Each example in [`../examples`](../examples) is runnable with
 | `run_and_last_run_storages` | Run an Actor, then read the last run's storages. |
 | `iterate_store` | Lazily iterate Store Actors. |
 | `log_redirection` | Redirect a separate Actor's run log into your output live, prefixing each line with the source Actor's name. |
-| `raw_log` | Fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true) }`. |
+| `raw_log` | Fetch and stream a run's raw (unprocessed) log via `LogOptions { raw: Some(true), ..Default::default() }`. |

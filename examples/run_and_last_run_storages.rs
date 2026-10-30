@@ -13,7 +13,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start a run and wait for it to finish.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
         .await?;
     println!("Run {} finished: {:?}", run.id, run.status);
 

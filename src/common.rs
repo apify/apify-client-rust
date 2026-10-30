@@ -4,13 +4,8 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::error::ApifyClientResult;
+use crate::error::{ApifyClientError, ApifyClientResult, NOT_FOUND_STATUS_CODE};
 use crate::version::CLIENT_VERSION;
-
-/// Status code returned when a resource is not found.
-const NOT_FOUND_STATUS_CODE: u16 = 404;
-const RECORD_NOT_FOUND_TYPE: &str = "record-not-found";
-const RECORD_OR_TOKEN_NOT_FOUND_TYPE: &str = "record-or-token-not-found";
 
 /// Most Apify endpoints wrap their payload in a top-level `data` property.
 /// This envelope unwraps `{ "data": ... }` into the inner type.
@@ -28,30 +23,20 @@ pub(crate) fn parse_data_envelope<T: DeserializeOwned>(body: &[u8]) -> ApifyClie
 /// Translates a "not found" API error into `Ok(None)`, re-raising any other error.
 ///
 /// This mirrors `catchNotFoundOrThrow` in the reference clients: a `get`/`delete` on a
-/// missing resource resolves to `None` rather than raising.
+/// missing resource resolves to `None` rather than raising, whatever the error `type` of the
+/// `404` response.
 pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientResult<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(err) => {
-            if let Some(api_error) = err.as_api_error() {
-                let is_not_found_status = api_error.status_code == NOT_FOUND_STATUS_CODE;
-                let is_not_found_type = matches!(
-                    api_error.error_type.as_deref(),
-                    Some(RECORD_NOT_FOUND_TYPE) | Some(RECORD_OR_TOKEN_NOT_FOUND_TYPE)
-                ) || api_error.http_method.as_deref() == Some("HEAD");
-                if is_not_found_status && is_not_found_type {
-                    return Ok(None);
-                }
-            }
-            Err(err)
-        }
+        Err(err) if err.status_code() == Some(NOT_FOUND_STATUS_CODE) => Ok(None),
+        Err(err) => Err(err),
     }
 }
 
 /// A mutable collection of query parameters that serializes booleans as `0`/`1` and
 /// omits `None` values, matching the Apify API conventions.
 #[derive(Debug, Default, Clone)]
-pub struct QueryParams {
+pub(crate) struct QueryParams {
     pairs: Vec<(String, String)>,
 }
 
@@ -104,11 +89,6 @@ impl QueryParams {
         self
     }
 
-    /// Returns `true` if no parameters were added.
-    pub fn is_empty(&self) -> bool {
-        self.pairs.is_empty()
-    }
-
     /// Internal: read access to the raw pairs (used when merging parent params).
     pub(crate) fn pairs_ref(&self) -> &[(String, String)] {
         &self.pairs
@@ -155,10 +135,30 @@ fn url_encode(input: &str) -> String {
 /// Encodes everything except the RFC 3986 "unreserved" characters. Notably `/`, `?`, `#`,
 /// space and any non-ASCII bytes are escaped — unlike a raw `format!(".../{key}")`, which
 /// would leave them intact and produce a malformed or wrong-endpoint URL.
-pub fn encode_path_segment(input: &str) -> String {
+///
+/// This does not reject a segment that is empty or a dot segment (`.` or `..`), which a URL
+/// parser resolves to another endpoint even when percent-encoded; the client methods that take
+/// such a value validate it with `to_path_segment` instead.
+pub(crate) fn encode_path_segment(input: &str) -> String {
     // Path segments and query components share the same unreserved set here, so reuse the
     // query encoder. (`url_encode` already escapes `/`, `?`, `#`, space and non-ASCII.)
     url_encode(input)
+}
+
+/// Validates and percent-encodes a caller-supplied URL path segment so it cannot restructure
+/// the request path.
+///
+/// An empty value is rejected because it would address the collection instead of a resource, and
+/// so is `.` or `..`: URL parsers resolve dot segments after percent-decoding, so
+/// `records/%2E%2E` collapses to the parent endpoint just like `records/..`. The error is
+/// [`ApifyClientError::InvalidArgument`].
+pub(crate) fn to_path_segment(input: &str) -> ApifyClientResult<String> {
+    if input.is_empty() || input == "." || input == ".." {
+        return Err(ApifyClientError::InvalidArgument(format!(
+            "URL path segment must be non-empty and must not be a dot segment, got `{input}`"
+        )));
+    }
+    Ok(encode_path_segment(input))
 }
 
 /// Standard offset/limit pagination options shared by most list endpoints.
@@ -244,7 +244,7 @@ fn env_var_set(name: &str) -> bool {
 
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
-pub fn build_user_agent(suffix: Option<&str>) -> String {
+pub(crate) fn build_user_agent(suffix: Option<&str>) -> String {
     // The OS token must be byte-for-byte identical across all Apify clients, which means it must
     // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
     // own spellings (`macos`, `windows`, `solaris`, `illumos`), so map those to the Node
@@ -293,9 +293,9 @@ fn map_os_to_node_platform(os: &str) -> &str {
 }
 
 /// Encodes a resource id so it is safe to embed in a URL path. Apify uses the
-/// `username~resourcename` form, so the first `/` of an id is replaced with `~`.
-pub fn to_safe_id(id: &str) -> String {
-    id.replacen('/', "~", 1)
+/// `username~resourcename` form, so every `/` of an id is replaced with `~`.
+pub(crate) fn to_safe_id(id: &str) -> String {
+    id.replace('/', "~")
 }
 
 /// Version tag embedded in storage-content signatures. Matches the upstream library default
@@ -313,7 +313,7 @@ const BASE62_ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJK
 /// The algorithm is: `HMAC-SHA256(secret_key, message)` as lowercase hex, take the first 30
 /// hex characters, interpret them as a big integer, then base62-encode (alphabet `0-9a-zA-Z`).
 /// Used to sign key-value-store record keys for public access.
-pub fn create_hmac_signature(secret_key: &str, message: &str) -> String {
+pub(crate) fn create_hmac_signature(secret_key: &str, message: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
@@ -348,6 +348,9 @@ fn to_base62(mut value: u128) -> String {
     String::from_utf8(digits).expect("base62 alphabet is valid ASCII")
 }
 
+/// Milliseconds in a second.
+const MILLIS_PER_SECOND: i64 = 1000;
+
 /// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
 /// with the platform's `@apify/utilities` `createStorageContentSignature`.
 ///
@@ -355,7 +358,7 @@ fn to_base62(mut value: u128) -> String {
 /// is the absolute expiry in milliseconds, or `0` for a non-expiring URL) with
 /// [`create_hmac_signature`], then returns the base64url (no padding) encoding of
 /// `"{version}.{expiresAtMillis}.{hmac}"`. Used for dataset-items and key-list public URLs.
-pub fn sign_storage_content(
+pub(crate) fn sign_storage_content(
     secret_key: &str,
     resource_id: &str,
     expires_in_secs: Option<i64>,
@@ -363,7 +366,7 @@ pub fn sign_storage_content(
     use base64::Engine;
 
     let expires_at_millis = match expires_in_secs {
-        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * 1000,
+        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
         None => 0,
     };
     let version = STORAGE_CONTENT_SIGNATURE_VERSION;

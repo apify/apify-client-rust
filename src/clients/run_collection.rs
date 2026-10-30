@@ -6,6 +6,7 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorRun;
+use crate::timeouts::Timeout;
 
 /// Filtering options for [`RunCollectionClient::list`], covering the spec query parameters of
 /// `GET /v2/actor-runs` and `GET /v2/actors/{actorId}/runs`.
@@ -24,6 +25,12 @@ pub struct RunListOptions {
     pub started_after: Option<String>,
     /// Only return runs started at or before this ISO 8601 timestamp. (Actor-scoped lists only.)
     pub started_before: Option<String>,
+    /// Only return Actor Standby runs served by one of these deployment pools
+    /// (`SINGLE_TENANT`, `MULTI_TENANT_FREE_USERS`, `MULTI_TENANT_PAYING_USERS` or
+    /// `MULTI_TENANT_OWNER_PAID`); sent as a comma-separated list. Requires `status` to contain
+    /// only non-terminal statuses (`READY`, `RUNNING`, `TIMING-OUT` or `ABORTING`). Empty means no
+    /// deployment filter. (Account and Actor scoped lists only.)
+    pub deployment: Vec<String>,
 }
 
 /// Client for listing Actor runs.
@@ -31,6 +38,8 @@ pub struct RunListOptions {
 pub struct RunCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(RunCollectionClient);
 
 impl RunCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, resource_path: &str) -> Self {
@@ -75,8 +84,9 @@ impl RunCollectionClient {
             .add_bool("desc", options.desc)
             .add_csv("status", Some(&filter.status))
             .add_str("startedAfter", filter.started_after)
-            .add_str("startedBefore", filter.started_before);
-        list_resource(&self.ctx, None, &params).await
+            .add_str("startedBefore", filter.started_before)
+            .add_csv("deployment", Some(&filter.deployment));
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all runs matching `options`/`filter`, fetching pages on demand.

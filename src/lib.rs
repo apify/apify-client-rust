@@ -18,7 +18,7 @@
 //! // Start an Actor and wait for it to finish.
 //! let run = client
 //!     .actor("apify/hello-world")
-//!     .call::<serde_json::Value>(None, Default::default(), None)
+//!     .call::<serde_json::Value>(None, Default::default())
 //!     .await?;
 //!
 //! // Read items from the run's default dataset.
@@ -40,7 +40,11 @@
 //!   [`http_client::ReqwestBackend`]. Swap it via
 //!   [`ApifyClientBuilder::http_backend`].
 //! - **Cross-cutting behaviour** (auth, `User-Agent`, retries with exponential backoff,
-//!   timeouts) lives in [`http_client::HttpClient`] and is applied to every request.
+//!   timeouts, request compression) lives in the client's internal HTTP layer and is applied to every
+//!   request.
+//! - **Timeouts**: every method uses a [`Timeout`] tier (`Short`, `Medium` or `Long`) whose
+//!   duration is configured on the [`ApifyClientBuilder`]. A resource client's `with_timeout`
+//!   overrides the tier of all its requests.
 //!
 //! ## Cancellation
 //!
@@ -49,7 +53,10 @@
 //! nothing until polled, so dropping one (e.g. via `tokio::select!`, or letting a
 //! `tokio::time::timeout` elapse) stops the underlying request without any API for it. This
 //! client therefore exposes no separate cancellation parameter — dropping the future returned
-//! by any method is the idiomatic equivalent.
+//! by any method is the idiomatic equivalent: the request in flight ends and no retry or further
+//! poll follows. The built-in waits, such as [`RunClient::wait_for_finish`], are futures too.
+//!
+//! [`RunClient::wait_for_finish`]: crate::clients::run::RunClient::wait_for_finish
 
 #![warn(missing_docs)]
 
@@ -58,17 +65,26 @@ pub mod clients;
 pub mod common;
 pub mod error;
 pub mod http_client;
+pub mod http_compressors;
 pub mod models;
+pub mod statistics;
+pub mod timeouts;
 mod version;
 
 pub use client::{ApifyClient, ApifyClientBuilder};
-pub use common::{ListOptions, PaginationList, QueryParams, StorageListOptions};
+pub use common::{ListOptions, PaginationList, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
-pub use http_client::RequestCompression;
+pub use http_compressors::{
+    BrotliHttpCompressor, GzipHttpCompressor, HttpCompressor, RequestCompression,
+};
+pub use statistics::Statistics;
+pub use timeouts::Timeout;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
 // Re-export the most commonly used option/parameter types for ergonomic access.
-pub use clients::actor::{ActorBuildOptions, ActorStartOptions, WaitForResources};
+pub use clients::actor::{
+    ActorBuildOptions, ActorCallOptions, ActorStartOptions, TaskStartOptions, WaitForResources,
+};
 pub use clients::actor_collection::ActorListOptions;
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
@@ -81,7 +97,11 @@ pub use clients::run::{
     LastRunOptions, RunChargeOptions, RunMetamorphOptions, RunResurrectOptions,
 };
 pub use clients::run_collection::RunListOptions;
+pub use clients::run_dataset_items::RunDatasetItemsIterator;
 pub use clients::store_collection::{StoreActorIterator, StoreListOptions};
+pub use clients::streamed_log::{
+    LogRedirect, LogSink, StdoutLogSink, StreamedLog, StreamedLogOptions,
+};
 
 // Compile-test the code snippets in the README and the external `docs/` pages so every
 // in-documentation code snippet stays valid and runnable. Pulling each Markdown file in as

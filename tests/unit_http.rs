@@ -3,113 +3,18 @@
 //! These use a mock [`HttpBackend`] and require no network access or `APIFY_TOKEN`, so the
 //! most bug-prone logic is always exercised in CI.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+mod common;
+
+use std::sync::Arc;
 use std::time::Duration;
 
-use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
 use apify_client::{
-    ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions, RequestCompression,
-    WaitForResources,
+    ActorCallOptions, ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions,
+    LogRedirect, RequestCompression, TaskStartOptions, WaitForResources,
 };
-use async_trait::async_trait;
+use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use futures_util::StreamExt;
-
-/// A scripted backend that returns a queued sequence of responses and counts calls.
-#[derive(Debug)]
-struct MockBackend {
-    responses: Mutex<Vec<MockOutcome>>,
-    calls: AtomicUsize,
-    last_url: Mutex<Option<String>>,
-    /// Every request URL in call order, so tests can assert per-page pagination wiring.
-    urls: Mutex<Vec<String>>,
-    last_headers: Mutex<std::collections::HashMap<String, String>>,
-    last_body: Mutex<Option<Vec<u8>>>,
-}
-
-#[derive(Debug, Clone)]
-enum MockOutcome {
-    Status(u16, Vec<u8>),
-    NetworkError,
-}
-
-impl MockBackend {
-    fn new(responses: Vec<MockOutcome>) -> Arc<Self> {
-        Arc::new(Self {
-            responses: Mutex::new(responses),
-            calls: AtomicUsize::new(0),
-            last_url: Mutex::new(None),
-            urls: Mutex::new(Vec::new()),
-            last_headers: Mutex::new(std::collections::HashMap::new()),
-            last_body: Mutex::new(None),
-        })
-    }
-
-    fn call_count(&self) -> usize {
-        self.calls.load(Ordering::SeqCst)
-    }
-
-    fn last_url(&self) -> Option<String> {
-        self.last_url.lock().unwrap().clone()
-    }
-
-    /// All request URLs in call order.
-    fn urls(&self) -> Vec<String> {
-        self.urls.lock().unwrap().clone()
-    }
-
-    /// Case-insensitive lookup of the last request's header value.
-    fn last_header(&self, name: &str) -> Option<String> {
-        let headers = self.last_headers.lock().unwrap();
-        headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.clone())
-    }
-
-    fn last_body(&self) -> Option<Vec<u8>> {
-        self.last_body.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl HttpBackend for MockBackend {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ApifyClientError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        *self.last_url.lock().unwrap() = Some(request.url.clone());
-        self.urls.lock().unwrap().push(request.url.clone());
-        *self.last_headers.lock().unwrap() = request.headers.clone();
-        *self.last_body.lock().unwrap() = request.body.clone();
-        let mut queue = self.responses.lock().unwrap();
-        let outcome = if queue.len() > 1 {
-            queue.remove(0)
-        } else {
-            // Repeat the last scripted outcome for any further calls.
-            queue
-                .first()
-                .cloned()
-                .expect("at least one scripted response")
-        };
-        match outcome {
-            MockOutcome::Status(status, body) => Ok(HttpResponse {
-                status,
-                headers: Default::default(),
-                body,
-            }),
-            MockOutcome::NetworkError => Err(ApifyClientError::Http("boom".to_string())),
-        }
-    }
-}
-
-fn client_with(backend: Arc<MockBackend>, max_retries: u32) -> ApifyClient {
-    ApifyClient::builder()
-        .token("test-token")
-        .max_retries(max_retries)
-        // Keep backoff tiny so tests run fast.
-        .min_delay_between_retries(Duration::from_millis(1))
-        .http_backend(backend)
-        .build()
-}
+use serde_json::json;
 
 /// Builds a client with an explicit request-compression algorithm and no retries.
 fn client_with_compression(
@@ -332,7 +237,7 @@ async fn api_error_status_predicates_classify_by_status_code() {
         let client = client_with(backend, 0);
         client
             .me()
-            .get()
+            .limits()
             .await
             .expect_err("should fail")
             .as_api_error()
@@ -506,7 +411,10 @@ async fn log_get_sends_raw_query_param() {
     client
         .run("some-run-id")
         .log()
-        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .get_with_options(apify_client::LogOptions {
+            raw: Some(true),
+            ..Default::default()
+        })
         .await
         .expect("ok");
     let url = backend.last_url().expect("a request was sent");
@@ -538,7 +446,8 @@ async fn log_stream_goes_through_the_configured_backend() {
         .log()
         .stream()
         .await
-        .expect("stream should open");
+        .expect("stream should open")
+        .expect("the log should exist");
     let mut collected = Vec::new();
     while let Some(chunk) = stream.next().await {
         collected.extend(chunk.expect("chunk"));
@@ -1513,7 +1422,7 @@ async fn task_wait_for_resources_retries_until_success() {
         .task("some-task")
         .start::<serde_json::Value>(
             None,
-            ActorStartOptions {
+            TaskStartOptions {
                 wait_for_resources: Some(WaitForResources::Forever),
                 ..Default::default()
             },
@@ -1546,13 +1455,140 @@ async fn call_wait_for_resources_does_not_count_toward_wait_secs() {
         .actor("some-actor")
         .call::<serde_json::Value>(
             None,
-            ActorStartOptions {
-                wait_for_resources: Some(WaitForResources::Forever),
-                ..Default::default()
+            ActorCallOptions {
+                start: ActorStartOptions {
+                    wait_for_resources: Some(WaitForResources::Forever),
+                    ..Default::default()
+                },
+                wait_secs: Some(1),
+                log: LogRedirect::Disabled,
             },
-            Some(1),
         )
         .await
         .expect("the resource-limit retry must not eat into the wait_for_finish budget");
     assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+}
+
+/// A request of a batch add, identified by its URL.
+fn queue_request(url: &str) -> apify_client::models::RequestQueueRequest {
+    serde_json::from_value(json!({ "url": url })).expect("a valid request")
+}
+
+/// The batch body is the JSON array of the requests, each serialized once, with the explicit JSON
+/// content type.
+#[tokio::test]
+async fn batch_add_requests_sends_the_requests_as_one_json_array() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        json!({ "data": {
+            "processedRequests": [
+                { "uniqueKey": "https://example.com/1", "requestId": "1" },
+                { "uniqueKey": "https://example.com/2", "requestId": "2" }
+            ],
+            "unprocessedRequests": []
+        } })
+        .to_string()
+        .into_bytes(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+    let requests = vec![
+        queue_request("https://example.com/1"),
+        queue_request("https://example.com/2"),
+    ];
+
+    let result = client
+        .request_queue("q")
+        .batch_add_requests(&requests, Default::default())
+        .await
+        .expect("batch add");
+
+    assert_eq!(result.processed_requests.len(), 2);
+    assert_eq!(backend.call_count(), 1);
+    assert_eq!(
+        backend.last_body().unwrap(),
+        serde_json::to_vec(&requests).unwrap()
+    );
+    assert_eq!(
+        backend.last_header("Content-Type").as_deref(),
+        Some("application/json")
+    );
+}
+
+/// Only the requests the API reports as unprocessed are sent again.
+#[tokio::test]
+async fn batch_add_requests_retries_only_the_unprocessed_requests() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            json!({ "data": {
+                "processedRequests": [{ "uniqueKey": "https://example.com/1", "requestId": "1" }],
+                "unprocessedRequests": [{ "uniqueKey": "https://example.com/2", "url": "https://example.com/2" }]
+            } })
+            .to_string()
+            .into_bytes(),
+        ),
+        MockOutcome::Status(
+            200,
+            json!({ "data": {
+                "processedRequests": [{ "uniqueKey": "https://example.com/2", "requestId": "2" }],
+                "unprocessedRequests": []
+            } })
+            .to_string()
+            .into_bytes(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+    let requests = vec![
+        queue_request("https://example.com/1"),
+        queue_request("https://example.com/2"),
+    ];
+
+    let result = client
+        .request_queue("q")
+        .batch_add_requests(
+            &requests,
+            apify_client::BatchAddRequestsOptions {
+                min_delay_between_unprocessed_requests_retries: Some(Duration::from_millis(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("batch add");
+
+    assert_eq!(result.processed_requests.len(), 2);
+    assert!(result.unprocessed_requests.is_empty());
+    assert_eq!(backend.call_count(), 2);
+    assert_eq!(
+        backend.last_body().unwrap(),
+        serde_json::to_vec(&requests[1..]).unwrap(),
+        "the retry carries only the request that was not processed"
+    );
+}
+
+/// A request that cannot fit in any batch is rejected before a single batch is sent, not when its
+/// batch comes up with earlier batches already in flight.
+#[tokio::test]
+async fn batch_add_requests_rejects_an_oversized_request_before_sending_anything() {
+    const OVERSIZED_URL_BYTES: usize = 10 * 1024 * 1024;
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"{}".to_vec())]);
+    let client = client_with(backend.clone(), 0);
+    let requests = vec![
+        queue_request("https://example.com/small"),
+        queue_request(&format!(
+            "https://example.com/{}",
+            "x".repeat(OVERSIZED_URL_BYTES)
+        )),
+    ];
+
+    let err = client
+        .request_queue("q")
+        .batch_add_requests(&requests, Default::default())
+        .await
+        .expect_err("an oversized request is rejected");
+
+    assert!(
+        matches!(err, ApifyClientError::InvalidArgument(_)),
+        "{err:?}"
+    );
+    assert_eq!(backend.call_count(), 0, "nothing was sent");
 }
