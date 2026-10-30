@@ -298,8 +298,8 @@ impl ActorClient {
     /// See [`ActorCallOptions`] for the wait budget and the log redirection. The log goes to the
     /// standard output unless `options.log` says otherwise. A redirection that ends early on an
     /// error does not fail the call; a `Log redirection stopped due to error: ..` message goes
-    /// to the log sink instead, like the reference client's warning. One that cannot be set up is
-    /// reported on the standard error.
+    /// to the log sink instead (without the prefix). One that cannot be set up is reported on the
+    /// standard error.
     ///
     /// Like the reference client, the start request has no client-side timeout, because an
     /// aborted start would be retried and could create a second run; set a timeout with the
@@ -358,9 +358,8 @@ impl ActorClient {
                 None
             });
         if let Some(streamed_log) = streamed_log.as_mut() {
-            if let Err(error) = streamed_log.start() {
-                streamed_log.warn(&error);
-            }
+            // A redirection that was just created is not started yet, so this cannot fail.
+            let _ = streamed_log.start();
         }
         let finished = run_client.wait_for_finish(wait_secs).await;
         if let Some(streamed_log) = streamed_log.as_mut() {

@@ -45,8 +45,9 @@ stays in one piece, and each message goes to a `LogSink`:
 `from_start: false` drops the messages stamped before the call. A run that has not logged yet is
 followed by reopening its empty log stream until the first bytes arrive. `ActorClient::call` does
 all of this for the run it waits for; when the redirection ends early on an error, it passes a
-`Log redirection stopped due to error: ..` message to the sink instead of failing the call. To read the log as raw chunks instead, use
-`run.log().stream_with_options(..)`; the [`raw_log`](../examples/raw_log.rs) example does.
+`Log redirection stopped due to error: ..` message to the sink instead of failing the call. To
+read the log as raw chunks instead, use `run.log().stream_with_options(..)`; the
+[`raw_log`](../examples/raw_log.rs) example does.
 
 ```rust,no_run
 use apify_client::{ApifyClient, LogRedirect, StreamedLogOptions};

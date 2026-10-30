@@ -180,13 +180,11 @@ impl StreamedLog {
         }
     }
 
-    /// Reports a failure of the redirection to the sink of the log, so the log does not just stop
-    /// without a trace.
+    /// Reports a failure of the redirection to the sink of the log, without the prefix, so the log
+    /// does not just stop without a trace.
     pub(crate) fn warn(&self, error: &ApifyClientError) {
-        self.sink.line(&format!(
-            "{}Log redirection stopped due to error: {error}",
-            self.prefix
-        ));
+        self.sink
+            .line(&format!("Log redirection stopped due to error: {error}"));
     }
 
     /// Starts redirecting the log, in a task spawned on the current Tokio runtime. Fails with

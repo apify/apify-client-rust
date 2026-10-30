@@ -613,17 +613,20 @@ async fn a_failing_log_stream_is_reported_by_stop_and_does_not_fail_call() {
     stream_failed.store(false, Ordering::SeqCst);
     let streams_before = backend.count(HttpMethod::Get, "stream=1");
     let (messages, log) = collecting_sink();
-    let run = client
-        .actor("a1")
-        .call::<Value>(
+    // Bounded, so that a call that never opens the log stream fails here instead of polling on.
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        client.actor("a1").call::<Value>(
             None,
             ActorCallOptions {
                 log,
                 ..Default::default()
             },
-        )
-        .await
-        .expect("a failing redirection does not fail the call");
+        ),
+    )
+    .await
+    .expect("the call finishes once the log stream has failed")
+    .expect("a failing redirection does not fail the call");
     assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
     assert_eq!(
         backend.count(HttpMethod::Get, "stream=1"),
