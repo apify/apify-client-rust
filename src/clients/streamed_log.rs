@@ -2,8 +2,8 @@
 //!
 //! [`StreamedLog`] is the equivalent of the reference client's `StreamedLog`. It follows the log
 //! of a run in a background task, splits it into messages at the timestamps the Actor's log lines
-//! start with, and hands every message, prefixed, to a [`LogSink`]. [`ActorClient::call`] uses it
-//! to redirect the log of the run it waits for.
+//! start with, and hands every message to a [`LogSink`]. [`ActorClient::call`] uses it to redirect
+//! the log of the run it waits for.
 //!
 //! [`ActorClient::call`]: crate::clients::actor::ActorClient::call
 
