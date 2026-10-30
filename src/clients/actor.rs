@@ -115,7 +115,9 @@ pub struct ActorCallOptions {
     /// it, since that budget only starts once the run has actually started.
     pub wait_secs: Option<i64>,
     /// Where to redirect the log of the run while it is waited for. Redirects to the standard
-    /// output by default; [`LogRedirect::Disabled`] turns that off.
+    /// output by default; [`LogRedirect::Disabled`] turns that off. A redirection that ends early
+    /// on an error does not fail the call: a `Log redirection stopped due to error: ..` message
+    /// goes to the sink.
     pub log: LogRedirect,
 }
 
@@ -163,11 +165,6 @@ impl From<TaskStartOptions> for ActorStartOptions {
             ..Self::default()
         }
     }
-}
-
-/// Reports a log redirection that failed, without failing the call that waits for the run.
-fn warn_log_redirection(error: &crate::error::ApifyClientError) {
-    eprintln!("Log redirection stopped due to error: {error}");
 }
 
 /// Options for building an Actor.
@@ -299,14 +296,15 @@ impl ActorClient {
     /// the run while it waits.
     ///
     /// See [`ActorCallOptions`] for the wait budget and the log redirection. The log goes to the
-    /// standard output unless `options.log` says otherwise. A redirection that cannot be set up,
-    /// or that ends early on an error, does not fail the call; a warning goes to the standard
-    /// error instead, like the reference client's log.
+    /// standard output unless `options.log` says otherwise. A redirection that ends early on an
+    /// error does not fail the call; a `Log redirection stopped due to error: ..` message goes
+    /// to the log sink instead, like the reference client's warning. One that cannot be set up is
+    /// reported on the standard error.
     ///
     /// Like the reference client, the start request has no client-side timeout, because an
     /// aborted start would be retried and could create a second run; set a timeout with the
     /// client's `with_timeout` to change that, and it applies to the polls as well. Without one,
-    /// the polls are bounded by `wait_secs` as [`RunClient::wait_for_finish`] describes.
+    /// the polls are timed as [`RunClient::wait_for_finish`] describes.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
@@ -356,18 +354,18 @@ impl ActorClient {
             })
             .await
             .unwrap_or_else(|error| {
-                warn_log_redirection(&error);
+                eprintln!("Log redirection could not start: {error}");
                 None
             });
         if let Some(streamed_log) = streamed_log.as_mut() {
             if let Err(error) = streamed_log.start() {
-                warn_log_redirection(&error);
+                streamed_log.warn(&error);
             }
         }
         let finished = run_client.wait_for_finish(wait_secs).await;
         if let Some(streamed_log) = streamed_log.as_mut() {
             if let Err(error) = streamed_log.stop().await {
-                warn_log_redirection(&error);
+                streamed_log.warn(&error);
             }
         }
         finished

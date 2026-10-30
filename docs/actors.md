@@ -20,7 +20,7 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `delete()` | — | `()` | Deletes the Actor. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
 | `start_raw(input, options)` | `&[u8]`, `ActorStartOptions` | `ActorRun` | Like `start`, but sends `input` as a raw request body (no JSON serialization) — for a non-JSON input such as a ZIP archive, paired with `options.content_type`. |
-| `call(input, options)` | `Option<&impl Serialize>`, `ActorCallOptions` | `ActorRun` | Starts a run and waits for it to finish, redirecting its log to the standard output unless `options.log` says otherwise. |
+| `call(input, options)` | `Option<&impl Serialize>`, `ActorCallOptions` | `ActorRun` | Starts a run and waits for it to finish, redirecting its log to the standard output unless `options.log` says otherwise. A redirection that fails does not fail the call: the error goes to the log sink as a `Log redirection stopped due to error: ..` message. |
 | `call_raw(input, options)` | `&[u8]`, `ActorCallOptions` | `ActorRun` | `start_raw` followed by `wait_for_finish`, like `call`. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
@@ -61,7 +61,7 @@ documents neither.
 |---|---|---|
 | `start` | `ActorStartOptions` | The options of the run start. |
 | `wait_secs` | `Option<i64>` | The client-side polling budget, see below. |
-| `log` | `LogRedirect` | Where to redirect the run's log while waiting: `LogRedirect::Default` (the default) prints it to the standard output prefixed with `"{Actor name} runId:{run id} -> "`, `LogRedirect::Disabled` turns it off, and `LogRedirect::to_sink(..)` sends it to a [`LogSink`](runs.md#log-redirection) of your own. |
+| `log` | `LogRedirect` | Where to redirect the run's log while waiting: `LogRedirect::Default` (the default) prints it to the standard output prefixed with `"{Actor name} runId:{run id} -> "`, `LogRedirect::Disabled` turns it off, and `LogRedirect::to_sink(..)` sends it to a [`LogSink`](runs.md#log-redirection) of your own. A redirection that ends early on an error does not fail the call; a `Log redirection stopped due to error: ..` message goes to the sink. |
 
 `call` starts the run without a client-side timeout, because a start that is aborted and retried
 could create a second run. A timeout set with the client's `with_timeout` replaces that for the

@@ -30,14 +30,16 @@ Ports the `apify-client-js` v3 changes.
 - Log redirection like the reference client's `StreamedLog`: `StreamedLog` with `start` and `stop`,
   `StreamedLogOptions`, and the `LogSink` trait (`StdoutLogSink`, or any `Fn(&str)` closure) behind
   `LogRedirect`. `ActorClient::call` and `call_raw` redirect the log of the run to the standard
-  output by default, with the `ActorCallOptions::log` option to change or disable it.
+  output by default, with the `ActorCallOptions::log` option to change or disable it. A redirection
+  that ends early on an error does not fail the call: a `Log redirection stopped due to error: ..`
+  message goes to the sink.
 - `ActorCallOptions` and `TaskStartOptions`.
 
 ### Changed
 - Synced with Apify OpenAPI spec `v2-2026-10-29T100357Z` (`API_SPEC_VERSION`).
 - **Breaking:** every method has a timeout tier (5s, 30s or 360s by default) instead of one 360s
-  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish(None)` has no timeout, and a
-  `waitForFinish` request gets the server-side wait added to its tier.
+  timeout; `timeout` is now an alias of `timeout_max`. `wait_for_finish(None)` has no timeout, and
+  a `waitForFinish` request gets the server-side wait added to its tier.
 - **Breaking:** `HttpRequest::timeout` may be `timeouts::NO_TIMEOUT`, which a custom `HttpBackend`
   must not abort.
 - **Breaking:** any `404` resolves to `None`, not only `record-not-found`, but only for a client that
@@ -48,8 +50,9 @@ Ports the `apify-client-js` v3 changes.
 - **Breaking:** `LogClient::stream` and `stream_with_options` return an `Option`: `None` for a
   missing log.
 - **Breaking:** `RunClient::get_streamed_log` takes `StreamedLogOptions` and returns a
-  `StreamedLog` (`None` for a missing run when redirecting by default), and `get_streamed_log_with_options` is removed. For the
-  raw chunks of the log, use `run.log().stream_with_options(..)`.
+  `StreamedLog` (`None` for a missing run when redirecting by default), and
+  `get_streamed_log_with_options` is removed. For the raw chunks of the log, use
+  `run.log().stream_with_options(..)`.
 - **Breaking:** `ActorClient::call` and `call_raw` take `ActorCallOptions` (the start options, the
   wait budget `wait_secs` and the `log` option) instead of `ActorStartOptions` and `wait_secs`.
   `TaskClient::start` and `call` take `TaskStartOptions`, which has no `content_type` and no

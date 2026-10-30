@@ -5,6 +5,7 @@
 
 mod common;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,8 +43,8 @@ type Route = dyn Fn(&HttpRequest, usize) -> Result<HttpResponse, ApifyClientErro
 struct RouteBackend {
     requests: Mutex<Vec<HttpRequest>>,
     route: Box<Route>,
-    /// Makes every log stream deliver its first line and then fail.
-    failing_log_stream: bool,
+    /// Makes every log stream deliver its first line and then fail, and raises the flag.
+    failing_log_stream: Option<Arc<AtomicBool>>,
 }
 
 impl std::fmt::Debug for RouteBackend {
@@ -62,11 +63,12 @@ impl RouteBackend {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             route: Box::new(route),
-            failing_log_stream: false,
+            failing_log_stream: None,
         })
     }
 
     fn with_failing_log_stream(
+        stream_failed: Arc<AtomicBool>,
         route: impl Fn(&HttpRequest, usize) -> Result<HttpResponse, ApifyClientError>
             + Send
             + Sync
@@ -75,7 +77,7 @@ impl RouteBackend {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             route: Box::new(route),
-            failing_log_stream: true,
+            failing_log_stream: Some(stream_failed),
         })
     }
 
@@ -106,15 +108,20 @@ impl HttpBackend for RouteBackend {
         &self,
         request: HttpRequest,
     ) -> Result<StreamingHttpResponse, ApifyClientError> {
-        if !(self.failing_log_stream && request.url.contains("stream=1")) {
+        let failing = self
+            .failing_log_stream
+            .as_ref()
+            .filter(|_| request.url.contains("stream=1"));
+        let Some(stream_failed) = failing else {
             let response = self.send(request).await?;
             return Ok(StreamingHttpResponse {
                 status: response.status,
                 headers: response.headers,
                 body: Box::pin(futures_util::stream::once(async move { Ok(response.body) })),
             });
-        }
+        };
         self.requests.lock().unwrap().push(request);
+        stream_failed.store(true, Ordering::SeqCst);
         let chunks: Vec<Result<Vec<u8>, ApifyClientError>> = vec![
             Ok(b"2024-01-01T00:00:00.000Z first\n".to_vec()),
             Err(ApifyClientError::Http("the stream broke".to_string())),
@@ -558,18 +565,31 @@ async fn a_streamed_log_of_a_missing_run_is_none() {
         .is_none());
 }
 
-fn run_route(request: &HttpRequest, _: usize) -> Result<HttpResponse, ApifyClientError> {
-    if request.method == HttpMethod::Post {
-        return response(201, RUN_READY);
+/// A run that stays unfinished until the log stream was opened (and has failed).
+fn run_finishing_after(
+    stream_failed: Arc<AtomicBool>,
+) -> impl Fn(&HttpRequest, usize) -> Result<HttpResponse, ApifyClientError> {
+    move |request, _| {
+        if request.method == HttpMethod::Post {
+            return response(201, RUN_READY);
+        }
+        if stream_failed.load(Ordering::SeqCst) {
+            response(200, RUN_DONE)
+        } else {
+            response(200, RUN_READY)
+        }
     }
-    response(200, RUN_DONE)
 }
 
 /// A redirection that ends on a stream error reports it from `stop()`, after it passed on the
-/// messages it had. `call` does not fail because of it.
+/// messages it had. `call` does not fail because of it, and tells the sink.
 #[tokio::test]
 async fn a_failing_log_stream_is_reported_by_stop_and_does_not_fail_call() {
-    let backend = RouteBackend::with_failing_log_stream(run_route);
+    let stream_failed = Arc::new(AtomicBool::new(false));
+    let backend = RouteBackend::with_failing_log_stream(
+        stream_failed.clone(),
+        run_finishing_after(stream_failed.clone()),
+    );
     let client = client_on(backend.clone(), 0);
     let (messages, to_log) = collecting_sink();
     let mut streamed = client
@@ -590,7 +610,9 @@ async fn a_failing_log_stream_is_reported_by_stop_and_does_not_fail_call() {
         vec!["2024-01-01T00:00:00.000Z first".to_string()]
     );
 
-    let (_, log) = collecting_sink();
+    stream_failed.store(false, Ordering::SeqCst);
+    let streams_before = backend.count(HttpMethod::Get, "stream=1");
+    let (messages, log) = collecting_sink();
     let run = client
         .actor("a1")
         .call::<Value>(
@@ -603,4 +625,16 @@ async fn a_failing_log_stream_is_reported_by_stop_and_does_not_fail_call() {
         .await
         .expect("a failing redirection does not fail the call");
     assert_eq!(run.status.as_deref(), Some("SUCCEEDED"));
+    assert_eq!(
+        backend.count(HttpMethod::Get, "stream=1"),
+        streams_before + 1
+    );
+    assert_eq!(
+        *messages.lock().unwrap(),
+        vec![
+            "2024-01-01T00:00:00.000Z first".to_string(),
+            "Log redirection stopped due to error: HTTP transport error: the stream broke"
+                .to_string()
+        ]
+    );
 }

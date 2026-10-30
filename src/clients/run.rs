@@ -433,9 +433,8 @@ impl RunClient {
     /// Returns the redirection of the run's log, or `None` if `options.to_log` is
     /// [`LogRedirect::Disabled`] or, for [`LogRedirect::Default`], the run does not exist. With a
     /// [`LogRedirect::Sink`] nothing is requested, so a missing run shows up as the error of
-    /// [`StreamedLog::stop`]. Call [`StreamedLog::start`] to begin
-    /// redirecting and [`StreamedLog::stop`] to end it. Mirrors the reference client's
-    /// `getStreamedLog`.
+    /// [`StreamedLog::stop`]. Call [`StreamedLog::start`] to begin redirecting and
+    /// [`StreamedLog::stop`] to end it. Mirrors the reference client's `getStreamedLog`.
     ///
     /// With [`LogRedirect::Default`], the messages go to the standard output prefixed with
     /// `"{actor name} runId:{run id} -> "`, which costs a request for the run and one for its

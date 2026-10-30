@@ -176,10 +176,10 @@ reach those values the client maps Rust's native `std::env::consts::OS` spelling
 
 Every method uses a timeout tier: `Timeout::Short` for simple metadata reads and writes,
 `Timeout::Medium` for listing, batch and trigger calls, and `Timeout::Long` for downloads, uploads
-and streaming. `wait_for_finish(None)` polls without a client-side timeout, and `wait_for_finish(Some(n))` gives
-each poll the `Medium` tier plus the server-side hold it asks for. A tier or an explicit
-timeout above `timeout_max` is lowered to it, and the timeout of each attempt doubles with every
-retry, up to the same cap.
+and streaming. `wait_for_finish(None)` polls without a client-side timeout, and
+`wait_for_finish(Some(n))` gives each poll the `Medium` tier plus the server-side hold it asks for.
+A tier or an explicit timeout above `timeout_max` is lowered to it, and the timeout of each
+attempt doubles with every retry, up to the same cap.
 
 Every resource client has a `with_timeout(Timeout)` method that replaces the tier of all the
 requests it sends with a tier, `Timeout::Custom(duration)`, or `Timeout::NoTimeout` (the client
