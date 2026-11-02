@@ -4,9 +4,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::client::ApifyClient;
-use crate::clients::actor::ActorStartOptions;
+use crate::clients::actor::{ActorStartOptions, TaskStartOptions};
 use crate::clients::base::{
-    delete_resource, get_resource, post_with_body, update_resource, ResourceContext,
+    delete_resource, get_resource, post_creating, update_resource, ResourceContext,
 };
 use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
@@ -15,6 +15,7 @@ use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::{ActorRun, Task};
+use crate::timeouts::Timeout;
 
 /// Client for a specific Actor task.
 #[derive(Debug, Clone)]
@@ -22,6 +23,8 @@ pub struct TaskClient {
     root: ApifyClient,
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(TaskClient);
 
 impl TaskClient {
     pub(crate) fn new(root: ApifyClient, http: HttpClient, base_url: &str, id: &str) -> Self {
@@ -33,17 +36,17 @@ impl TaskClient {
 
     /// Fetches the task object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<Task>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the task with the given fields.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<Task> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the task.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Publishes the task on its public landing page, by setting `isPublic: true` through
@@ -71,26 +74,42 @@ impl TaskClient {
     /// Starts the task and returns immediately with the created run.
     ///
     /// `input` overrides the task's saved input (or `None` to use the saved input). Set
-    /// [`ActorStartOptions::wait_for_resources`] to retry the start while the account lacks the
+    /// [`TaskStartOptions::wait_for_resources`] to retry the start while the account lacks the
     /// memory or a concurrent-run slot for it.
     pub async fn start<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
+        options: TaskStartOptions,
     ) -> ApifyClientResult<ActorRun> {
+        self.start_with_tier(input, options, Timeout::Medium).await
+    }
+
+    /// Starts the task with `tier` as the timeout of the request (unless the client was given
+    /// one with `with_timeout`).
+    async fn start_with_tier<T: Serialize>(
+        &self,
+        input: Option<&T>,
+        options: TaskStartOptions,
+        tier: Timeout,
+    ) -> ApifyClientResult<ActorRun> {
+        let options = ActorStartOptions::from(options);
         let mut params = QueryParams::new();
         options.apply(&mut params);
         let body = match input {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(tier, options.wait_for_finish);
         crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
-            post_with_body(
+            post_creating(
                 &self.ctx,
                 Some("runs"),
                 &params,
                 body.clone(),
                 "application/json",
+                timeout,
             )
         })
         .await
@@ -104,26 +123,42 @@ impl TaskClient {
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
     ///
-    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count
+    /// Time spent retrying under [`TaskStartOptions::wait_for_resources`] does not count
     /// toward `wait_secs`, since that budget only starts once the run has actually started.
+    ///
+    /// Like [`ActorClient::call`](crate::clients::actor::ActorClient::call), the start request
+    /// has no client-side timeout unless the client was given one with `with_timeout`, which
+    /// then applies to the polls as well. The log of the run is not redirected.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
+        options: TaskStartOptions,
         wait_secs: Option<i64>,
     ) -> ApifyClientResult<ActorRun> {
-        let run = self.start(input, options).await?;
-        self.root.run(run.id).wait_for_finish(wait_secs).await
+        let run = self
+            .start_with_tier(input, options, Timeout::NoTimeout)
+            .await?;
+        let mut run_client = self.root.run(run.id);
+        if let Some(timeout) = self.ctx.timeout {
+            run_client = run_client.with_timeout(timeout);
+        }
+        run_client.wait_for_finish(wait_secs).await
     }
 
-    /// Fetches the task's saved input, or `None` if not set.
-    pub async fn get_input(&self) -> ApifyClientResult<Option<Value>> {
-        let response =
-            crate::clients::base::get_raw(&self.ctx, Some("input"), &QueryParams::new()).await?;
-        match response {
-            Some(r) => Ok(Some(serde_json::from_slice(&r.body)?)),
-            None => Ok(None),
-        }
+    /// Fetches the task's saved input.
+    ///
+    /// A task that does not exist is a [`NotFound`](crate::ApiError::is_not_found) error: the
+    /// input is a fixed sub-path of the task, so a `404` cannot be told apart from a missing
+    /// input.
+    pub async fn get_input(&self) -> ApifyClientResult<Value> {
+        let response = crate::clients::base::get_raw_required(
+            &self.ctx,
+            Some("input"),
+            &QueryParams::new(),
+            Timeout::Short,
+        )
+        .await?;
+        Ok(serde_json::from_slice(&response.body)?)
     }
 
     /// Updates the task's saved input.
@@ -134,14 +169,13 @@ impl TaskClient {
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         let response = self
             .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Put,
+            .send_with(
+                crate::http_client::HttpMethod::Put,
                 url,
                 headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body),
+                self.ctx.timeout(Timeout::Short),
+            )
             .await?;
         Ok(serde_json::from_slice(&response.body)?)
     }

@@ -6,7 +6,7 @@
 //! backend (e.g. for testing or for a different runtime) can be plugged in via
 //! [`ApifyClientBuilder::http_backend`](crate::ApifyClientBuilder::http_backend).
 //!
-//! [`HttpClient`] wraps a backend and adds the cross-cutting concerns shared by every
+//! The client wraps a backend in an internal `HttpClient` that adds the cross-cutting concerns shared by every
 //! endpoint: authentication, the `User-Agent` header, query-parameter serialization,
 //! timeouts and retries with exponential backoff (mirroring the JavaScript and Python
 //! reference clients).
@@ -17,113 +17,19 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::error::{ApiError, ApiErrorBody, ApifyClientError, ApifyClientResult};
+use crate::error::{
+    ApiError, ApiErrorBody, ApifyClientError, ApifyClientResult, MIN_SERVER_ERROR_STATUS_CODE,
+    RATE_LIMIT_EXCEEDED_STATUS_CODE,
+};
+use crate::http_compressors::{maybe_compress, HttpCompressor};
+use crate::statistics::Statistics;
+use crate::timeouts::{Timeout, TimeoutTiers, NO_TIMEOUT};
 
-/// HTTP status code returned by the API when the per-resource rate limit is exceeded.
-const RATE_LIMIT_EXCEEDED_STATUS_CODE: u16 = 429;
-/// Statuses `>= 500` are considered retryable internal server errors.
-const MIN_SERVER_ERROR_STATUS_CODE: u16 = 500;
 /// Responses with status `< 300` are treated as success.
 const MAX_SUCCESS_STATUS_CODE: u16 = 300;
 /// Multiplier applied to the inter-retry delay after each attempt (exponential backoff).
 /// Matches the reference client's `async-retry` default factor of 2.
 const BACKOFF_FACTOR: u32 = 2;
-
-/// Request bodies at least this many bytes are compressed before sending. Smaller bodies are
-/// left uncompressed because the CPU cost outweighs the transfer savings. Matches the reference
-/// client's `MIN_COMPRESS_BYTES` threshold.
-const MIN_COMPRESS_BYTES: usize = 1024;
-/// `Content-Encoding` value used for brotli-compressed request bodies.
-const CONTENT_ENCODING_BROTLI: &str = "br";
-/// `Content-Encoding` value used for gzip-compressed request bodies.
-const CONTENT_ENCODING_GZIP: &str = "gzip";
-/// Brotli quality level (0–11). The reference client compresses request bodies at quality 6,
-/// which balances ratio against CPU cost; we mirror that.
-const BROTLI_QUALITY: u32 = 6;
-/// Brotli sliding-window size (log2), 22 is the library default (a 4 MiB window).
-const BROTLI_WINDOW_SIZE: u32 = 22;
-/// Internal buffer size for the brotli encoder.
-const BROTLI_BUFFER_SIZE: usize = 4096;
-/// Gzip compression level (0–9). Matches the reference client, which gzips using `node:zlib`'s
-/// default level (6).
-const GZIP_COMPRESSION_LEVEL: u32 = 6;
-
-/// Media-type prefixes whose payloads already carry their own compression, so running them
-/// through brotli/gzip burns CPU and memory for a result that is usually no smaller — and the
-/// request also keeps the intended `Content-Type`, rather than becoming an unreadable
-/// `Content-Encoding: br` blob the destination may not expect for these formats.
-/// Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES`.
-const ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES: [&str; 3] = ["audio/", "image/", "video/"];
-
-/// Exact media types (outside the prefixes above) whose payloads already carry their own
-/// compression. Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPES`.
-const ALREADY_COMPRESSED_MEDIA_TYPES: [&str; 19] = [
-    "application/epub+zip",
-    "application/gzip",
-    "application/java-archive",
-    "application/vnd.android.package-archive",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.rar",
-    "application/x-7z-compressed",
-    "application/x-bzip",
-    "application/x-bzip2",
-    "application/x-gzip",
-    "application/x-rar-compressed",
-    "application/x-xz",
-    "application/x-zip-compressed",
-    "application/zip",
-    "application/zstd",
-    "font/woff",
-    "font/woff2",
-];
-
-/// Uncompressed media types that sit under an already-compressed prefix above, so compressing
-/// them still pays off. Matches the reference client's `COMPRESSIBLE_MEDIA_TYPES`.
-const COMPRESSIBLE_MEDIA_TYPES: [&str; 16] = [
-    "audio/aiff",
-    "audio/basic",
-    "audio/l16",
-    "audio/l24",
-    "audio/midi",
-    "audio/vnd.wave",
-    "audio/wav",
-    "audio/wave",
-    "audio/x-aiff",
-    "audio/x-wav",
-    "image/bmp",
-    "image/tiff",
-    "image/vnd.adobe.photoshop",
-    "image/vnd.microsoft.icon",
-    "image/x-icon",
-    "image/x-ms-bmp",
-];
-
-/// Structured-syntax suffixes that mark a media type as text even under an already-compressed
-/// prefix (e.g. `image/svg+xml`). Matches the reference client's
-/// `COMPRESSIBLE_MEDIA_TYPE_SUFFIXES`.
-const COMPRESSIBLE_MEDIA_TYPE_SUFFIXES: [&str; 2] = ["+json", "+xml"];
-
-/// Algorithm used to compress large request bodies before they are sent.
-///
-/// The Apify API accepts both brotli (`br`) and gzip (`gzip`) request bodies. The reference JS
-/// client picks between them automatically (brotli when available, gzip otherwise); this client
-/// exposes the choice explicitly via
-/// [`ApifyClientBuilder::request_compression`](crate::ApifyClientBuilder::request_compression),
-/// because Rust's brotli support is always compiled in and would leave no runtime path to gzip.
-/// [`Brotli`](RequestCompression::Brotli) is the default (best ratio).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum RequestCompression {
-    /// Brotli (`Content-Encoding: br`). The default: best compression ratio, and the encoding the
-    /// reference client prefers.
-    #[default]
-    Brotli,
-    /// Gzip (`Content-Encoding: gzip`). Choose this for environments or intermediaries that do not
-    /// handle brotli.
-    Gzip,
-}
 
 /// HTTP method of a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +62,7 @@ impl HttpMethod {
 /// A fully-resolved HTTP request, ready to be sent by an [`HttpBackend`].
 ///
 /// All cross-cutting concerns (auth header, user agent, retry policy) are applied by
-/// [`HttpClient`] before the request reaches the backend.
+/// the client before the request reaches the backend.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     /// The HTTP method.
@@ -167,7 +73,9 @@ pub struct HttpRequest {
     pub headers: HashMap<String, String>,
     /// Raw request body bytes (already serialized).
     pub body: Option<Vec<u8>>,
-    /// Per-request timeout. The backend should abort the request after this duration.
+    /// Per-request timeout. The backend should abort the request after this duration, unless it
+    /// is [`NO_TIMEOUT`]: such a request may run for as long as it
+    /// takes and the backend must not impose a timeout of its own.
     pub timeout: Duration,
 }
 
@@ -209,7 +117,7 @@ pub struct StreamingHttpResponse {
 ///
 /// Implementors are responsible only for sending a single request and returning the
 /// raw response. Retries, authentication and serialization are handled by
-/// [`HttpClient`], so a backend only needs to perform one network round-trip.
+/// the client, so a backend only needs to perform one network round-trip.
 #[async_trait]
 pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// Sends a single HTTP request and returns the response.
@@ -285,10 +193,10 @@ impl HttpBackend for ReqwestBackend {
     async fn send(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse> {
         let method = to_reqwest_method(request.method);
 
-        let mut builder = self
-            .client
-            .request(method, &request.url)
-            .timeout(request.timeout);
+        let mut builder = self.client.request(method, &request.url);
+        if request.timeout != NO_TIMEOUT {
+            builder = builder.timeout(request.timeout);
+        }
 
         for (key, value) in &request.headers {
             builder = builder.header(key, value);
@@ -355,15 +263,37 @@ impl HttpBackend for ReqwestBackend {
     }
 }
 
-/// Configuration for the retry/timeout behaviour of the [`HttpClient`].
+/// Configuration for the retry behaviour of the [`HttpClient`].
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub(crate) struct RetryConfig {
     /// Maximum number of *retries* (i.e. the request is attempted up to `max_retries + 1` times).
     pub max_retries: u32,
     /// Minimum delay between retries; doubled on each subsequent retry (exponential backoff).
     pub min_delay_between_retries: Duration,
-    /// Overall per-request timeout budget. Each attempt's timeout grows but is capped here.
-    pub timeout: Duration,
+}
+
+/// Everything an [`HttpClient`] is built from.
+pub(crate) struct HttpClientConfig {
+    pub(crate) backend: Arc<dyn HttpBackend>,
+    pub(crate) token: Option<String>,
+    pub(crate) user_agent: String,
+    pub(crate) retry: RetryConfig,
+    pub(crate) tiers: TimeoutTiers,
+    pub(crate) compressor: Arc<dyn HttpCompressor>,
+    /// Extra headers sent with every request. They win over the built-in `User-Agent` and
+    /// `Authorization` headers, and a request's own headers win over them.
+    pub(crate) default_headers: Vec<(String, String)>,
+    pub(crate) stats: Arc<Statistics>,
+}
+
+/// Options of a single [`HttpClient::call_with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CallOptions {
+    /// Give up on the first transport timeout instead of retrying it. For a call that is not
+    /// idempotent, such as pushing dataset items, whose request may have reached the API before
+    /// the client gave up on it: a retry could then store the same data twice. Other errors are
+    /// retried as usual.
+    pub(crate) do_not_retry_timeouts: bool,
 }
 
 /// The orchestrating HTTP client shared by every resource client.
@@ -372,53 +302,120 @@ pub struct RetryConfig {
 /// It is cheap to clone (everything is reference-counted) so each resource client can
 /// hold its own handle.
 #[derive(Debug, Clone)]
-pub struct HttpClient {
+pub(crate) struct HttpClient {
     backend: Arc<dyn HttpBackend>,
     token: Option<String>,
     user_agent: String,
     retry: RetryConfig,
-    compression: RequestCompression,
+    tiers: TimeoutTiers,
+    compressor: Arc<dyn HttpCompressor>,
+    default_headers: Vec<(String, String)>,
+    stats: Arc<Statistics>,
+    /// Set when the resource client holding this handle was addressed with an invalid ID. Every
+    /// call then fails with [`ApifyClientError::InvalidArgument`] before reaching the backend.
+    /// The handle is cloned down to every client chained from that resource, so the failure
+    /// follows them.
+    poison: Option<Arc<str>>,
 }
 
 impl HttpClient {
-    pub(crate) fn new(
-        backend: Arc<dyn HttpBackend>,
-        token: Option<String>,
-        user_agent: String,
-        retry: RetryConfig,
-        compression: RequestCompression,
-    ) -> Self {
+    pub(crate) fn new(config: HttpClientConfig) -> Self {
         Self {
-            backend,
-            token,
-            user_agent,
-            retry,
-            compression,
+            backend: config.backend,
+            token: config.token,
+            user_agent: config.user_agent,
+            retry: config.retry,
+            tiers: config.tiers,
+            compressor: config.compressor,
+            default_headers: config.default_headers,
+            stats: config.stats,
+            poison: None,
         }
     }
 
-    /// Sends `request` with authentication, the user-agent header, and the retry policy
-    /// applied. Returns the first successful response, or the final error.
-    pub async fn call(&self, mut request: HttpRequest) -> ApifyClientResult<HttpResponse> {
-        // Inject auth + user-agent headers shared by every endpoint.
-        request
-            .headers
-            .insert("User-Agent".to_string(), self.user_agent.clone());
-        if let Some(token) = &self.token {
-            request
-                .headers
-                .insert("Authorization".to_string(), format!("Bearer {token}"));
+    /// Returns a handle that fails every call with [`ApifyClientError::InvalidArgument`] carrying
+    /// `message`.
+    pub(crate) fn poisoned(mut self, message: String) -> Self {
+        self.poison = Some(Arc::from(message));
+        self
+    }
+
+    pub(crate) fn fail_if_poisoned(&self) -> ApifyClientResult<()> {
+        match &self.poison {
+            Some(message) => Err(ApifyClientError::InvalidArgument(message.to_string())),
+            None => Ok(()),
         }
+    }
+
+    /// Resolves a [`Timeout`] to the duration of the first attempt of a request, capped at the
+    /// client's `timeout_max`.
+    pub(crate) fn resolve_timeout(&self, timeout: Timeout) -> Duration {
+        self.tiers.resolve(timeout)
+    }
+
+    /// Resolves the timeout of a request that asks the API to hold its response for
+    /// `wait_for_finish_secs` (see [`TimeoutTiers::resolve_with_wait_hold`]).
+    pub(crate) fn resolve_timeout_with_wait_hold(
+        &self,
+        tier: Timeout,
+        wait_for_finish_secs: Option<i64>,
+    ) -> Duration {
+        self.tiers.resolve(
+            self.tiers
+                .resolve_with_wait_hold(tier, wait_for_finish_secs),
+        )
+    }
+
+    /// Adds the headers every request carries: the built-in `User-Agent` and `Authorization`,
+    /// overridden by the client's default headers, overridden by the request's own headers.
+    /// Header names are compared case-insensitively.
+    fn apply_headers(&self, request: &mut HttpRequest) {
+        let mut merged: HashMap<String, String> = HashMap::new();
+        merged.insert("User-Agent".to_string(), self.user_agent.clone());
+        if let Some(token) = &self.token {
+            merged.insert("Authorization".to_string(), format!("Bearer {token}"));
+        }
+        for (name, value) in &self.default_headers {
+            set_header(&mut merged, name, value);
+        }
+        for (name, value) in std::mem::take(&mut request.headers) {
+            set_header(&mut merged, &name, &value);
+        }
+        request.headers = merged;
+    }
+
+    /// The statistics of the calls made through this client.
+    pub(crate) fn stats(&self) -> &Statistics {
+        &self.stats
+    }
+
+    /// Sends `request` with authentication, the user-agent header, and the retry policy
+    /// applied, as `options` adjust it. Returns the first successful response, or the final
+    /// error.
+    pub(crate) async fn call_with_options(
+        &self,
+        mut request: HttpRequest,
+        options: CallOptions,
+    ) -> ApifyClientResult<HttpResponse> {
+        self.fail_if_poisoned()?;
+        self.stats.add_call();
+        self.apply_headers(&mut request);
 
         // Compress the request body once (not per attempt) when it is large enough, mirroring the
         // reference client. The API accepts both brotli- and gzip-encoded request bodies.
-        maybe_compress_request(&mut request, self.compression);
+        if let Some(body) = request.body.take() {
+            request.body = Some(maybe_compress(
+                self.compressor.as_ref(),
+                &mut request.headers,
+                body,
+            )?);
+        }
 
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
 
-        // The caller-supplied `request.timeout` is the per-endpoint base; it grows with each
-        // attempt up to the client's overall timeout budget.
+        // The caller-supplied `request.timeout` is the base of the request's tier; it grows with
+        // each attempt up to the client's `timeout_max`.
         let base_timeout = request.timeout;
         let mut delay = self.retry.min_delay_between_retries;
         // `saturating_add` so an extreme `max_retries` can't overflow the attempt count.
@@ -426,21 +423,27 @@ impl HttpClient {
 
         let mut attempt = 1;
         loop {
-            // Grow per-attempt timeout with each attempt, capped at the overall budget.
+            // Grow the timeout of the attempt with each attempt, up to `timeout_max`.
             let mut attempt_request = request.clone();
             attempt_request.timeout = self.attempt_timeout(base_timeout, attempt);
 
+            self.stats.add_request();
             let outcome = match self.backend.send(attempt_request).await {
                 Ok(response) => {
                     if response.status < MAX_SUCCESS_STATUS_CODE {
                         return Ok(response);
+                    }
+                    if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+                        self.stats.add_rate_limit_error(attempt);
                     }
                     let api_error = build_api_error(&response, attempt, &method_str, &path);
                     let retryable = is_status_retryable(response.status);
                     (ApifyClientError::from(api_error), retryable)
                 }
                 Err(err) => {
-                    let retryable = is_error_retryable(&err);
+                    let retryable = is_error_retryable(&err)
+                        && !(options.do_not_retry_timeouts
+                            && matches!(err, ApifyClientError::Timeout));
                     (err, retryable)
                 }
             };
@@ -453,23 +456,26 @@ impl HttpClient {
 
             // Sleep with randomized exponential backoff before the next attempt. The backoff
             // doubles each retry (matching the reference client, which uses `async-retry` with
-            // a factor of 2) and is capped at the overall request timeout so a single backoff
-            // can never exceed the budget the whole request is allowed.
+            // a factor of 2) and is capped at `timeout_max`.
             sleep(randomized_delay(delay)).await;
             // `saturating_mul` mirrors the saturating arithmetic in `attempt_timeout`.
-            delay = delay.saturating_mul(BACKOFF_FACTOR).min(self.retry.timeout);
+            delay = delay.saturating_mul(BACKOFF_FACTOR).min(self.tiers.max);
             attempt += 1;
         }
     }
 
-    /// Per-attempt timeout: `min(overall_timeout, base * 2^(attempt-1))`.
+    /// Per-attempt timeout: `min(timeout_max, base * 2^(attempt-1))`.
     ///
-    /// The first attempt uses the per-endpoint `base` timeout; each retry doubles it so a
+    /// The first attempt uses the `base` timeout of the request; each retry doubles it so a
     /// slow-but-progressing connection gets more time, while never exceeding the client's
-    /// overall timeout budget. Mirrors the reference clients.
+    /// `timeout_max`. A request without a timeout ([`NO_TIMEOUT`]) stays without one. Mirrors the
+    /// reference clients.
     fn attempt_timeout(&self, base: Duration, attempt: u32) -> Duration {
+        if base == NO_TIMEOUT {
+            return NO_TIMEOUT;
+        }
         let scaled = base.saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
-        scaled.min(self.retry.timeout)
+        scaled.min(self.tiers.max)
     }
 
     pub(crate) fn user_agent(&self) -> &str {
@@ -477,44 +483,33 @@ impl HttpClient {
     }
 
     /// Sends `request` through the configured [`HttpBackend`]'s [`HttpBackend::send_streaming`],
-    /// with authentication and the user-agent header applied like [`call`](Self::call), but with
+    /// with authentication and the user-agent header applied like [`call_with_options`](Self::call_with_options), but with
     /// no retries and no request compression: matches the reference clients, which do not retry
     /// an open stream (a log redirection or a large export already in flight can't be safely
     /// replayed from the start).
     ///
     /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
-    /// successful body below) and returns the same structured [`ApiError`] [`call`](Self::call)
+    /// successful body below) and returns the same structured [`ApiError`] [`call_with_options`](Self::call_with_options)
     /// would. On success, returns the body as a stream whose `.next()` must resolve within the
-    /// client's overall timeout budget each time — bounding silence (a stalled connection)
-    /// without capping the stream's total duration, so a long-but-active stream (e.g. live log
-    /// redirection) is never cut off. That same budget also bounds the initial wait for the
-    /// response to start, mirroring the reference clients' streaming `timeoutSecs`.
+    /// request's resolved timeout each time — bounding silence (a stalled connection) without
+    /// capping the stream's total duration, so a long-but-active stream (e.g. live log
+    /// redirection) is never cut off. The same timeout also bounds the initial wait for the
+    /// response to start.
     pub(crate) async fn call_streaming(
         &self,
         mut request: HttpRequest,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        request
-            .headers
-            .insert("User-Agent".to_string(), self.user_agent.clone());
-        if let Some(token) = &self.token {
-            request
-                .headers
-                .insert("Authorization".to_string(), format!("Bearer {token}"));
-        }
+        self.fail_if_poisoned()?;
+        self.stats.add_call();
+        self.stats.add_request();
+        self.apply_headers(&mut request);
 
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
-        // The caller-supplied `request.timeout` (the same per-endpoint base every buffered call
-        // uses — e.g. `DEFAULT_REQUEST_TIMEOUT`, the reference clients' "long" tier) is reused
-        // here as both the response-start wait and the per-chunk inactivity window: one
-        // configured duration, not a separate, larger one for inactivity. The JS reference client
-        // documents the same single-duration behavior ("it only limits inactivity"), though it
-        // gets there differently — via its HTTP library's socket-level idle timeout, not an
-        // explicit per-chunk reset like `with_inactivity_timeout` below — so this is a
-        // same-outcome, not same-mechanism, match. It carries the same tradeoff either way: a
-        // stream legitimately silent for the whole window (e.g. a long-running Actor logging
-        // nothing for `DEFAULT_REQUEST_TIMEOUT`) times out; the reference's escape hatch for that
-        // is an explicit `'noTimeout'` request option, which this crate does not yet expose.
+        // The request timeout is both the response-start wait and the per-chunk inactivity
+        // window, so a stream that stays silent for that long (e.g. a run that logs nothing for
+        // the `Long` tier) times out. `Timeout::NoTimeout`, set with a resource client's
+        // `with_timeout`, turns that off.
         let budget = request.timeout;
 
         let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
@@ -531,6 +526,9 @@ impl HttpClient {
         // body that fails to read (e.g. the connection drops mid-response) still surfaces the
         // status code, just without a parsed message.
         let body = collect_with_timeout(response.body, budget).await;
+        if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+            self.stats.add_rate_limit_error(1);
+        }
         let http_response = HttpResponse {
             status: response.status,
             headers: response.headers,
@@ -594,115 +592,11 @@ async fn collect_with_timeout(
     buf
 }
 
-/// Compresses `request.body` in place when it is present, at least [`MIN_COMPRESS_BYTES`] long,
-/// and no `Content-Encoding` is already set, adding the matching `Content-Encoding` header.
-///
-/// The algorithm is chosen by `compression` (defaulting to brotli). The size threshold and the
-/// "compress once, before retries" behaviour mirror the reference client.
-fn maybe_compress_request(request: &mut HttpRequest, compression: RequestCompression) {
-    let Some(body) = request.body.as_ref() else {
-        return;
-    };
-    if body.len() < MIN_COMPRESS_BYTES {
-        return;
-    }
-    // Respect a caller-provided `Content-Encoding` (case-insensitive): the body is then assumed to
-    // already be encoded, so re-compressing it would corrupt it.
-    let already_encoded = request
-        .headers
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case("Content-Encoding"));
-    if already_encoded {
-        return;
-    }
-    // Skip media types that already carry their own compression (images, audio, video,
-    // archives): compressing them again burns CPU for little to no size reduction. This is
-    // mainly relevant to a raw-bytes Actor input (e.g. `ActorClient::start_raw` with
-    // `content_type: Some("application/zip")`); JSON request bodies always pass this check.
-    let content_type = request
-        .headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("Content-Type"))
-        .map(|(_, v)| v.as_str());
-    if !is_compressible_content_type(content_type) {
-        return;
-    }
-
-    let (encoding, compressed) = match compression {
-        RequestCompression::Brotli => (CONTENT_ENCODING_BROTLI, brotli_compress(body)),
-        RequestCompression::Gzip => (CONTENT_ENCODING_GZIP, gzip_compress(body)),
-    };
-    request
-        .headers
-        .insert("Content-Encoding".to_string(), encoding.to_string());
-    request.body = Some(compressed);
-}
-
-/// Decides whether a request body with the given content type is worth compressing.
-///
-/// Images, audio, video and archives already carry their own compression: running them through
-/// brotli or gzip burns CPU, holds a second full copy of the body in memory, and usually produces
-/// output no smaller than the input (sometimes larger). Formats that are raw despite such a media
-/// type, e.g. `image/bmp` or `audio/wav`, are still compressed. A body with no content type is
-/// assumed to be compressible. Matches the reference client's `isCompressibleContentType`.
-fn is_compressible_content_type(content_type: Option<&str>) -> bool {
-    let Some(content_type) = content_type else {
-        return true;
-    };
-    // `Content-Type` is case-insensitive and may carry parameters, e.g. `text/plain; charset=utf-8`.
-    let media_type = content_type
-        .split(';')
-        .next()
-        .unwrap_or(content_type)
-        .trim()
-        .to_ascii_lowercase();
-
-    if COMPRESSIBLE_MEDIA_TYPES.contains(&media_type.as_str()) {
-        return true;
-    }
-    if COMPRESSIBLE_MEDIA_TYPE_SUFFIXES
-        .iter()
-        .any(|suffix| media_type.ends_with(suffix))
-    {
-        return true;
-    }
-    if ALREADY_COMPRESSED_MEDIA_TYPES.contains(&media_type.as_str()) {
-        return false;
-    }
-    !ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES
-        .iter()
-        .any(|prefix| media_type.starts_with(prefix))
-}
-
-/// Brotli-compresses `data`. Writing to an in-memory `Vec` is infallible, so this cannot fail.
-fn brotli_compress(data: &[u8]) -> Vec<u8> {
-    use std::io::Write;
-
-    let mut writer = brotli::CompressorWriter::new(
-        Vec::new(),
-        BROTLI_BUFFER_SIZE,
-        BROTLI_QUALITY,
-        BROTLI_WINDOW_SIZE,
-    );
-    writer
-        .write_all(data)
-        .expect("writing to an in-memory Vec never fails");
-    writer.into_inner()
-}
-
-/// Gzip-compresses `data`. Writing to and finishing an in-memory `Vec` is infallible, so this
-/// cannot fail.
-fn gzip_compress(data: &[u8]) -> Vec<u8> {
-    use flate2::{write::GzEncoder, Compression};
-    use std::io::Write;
-
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::new(GZIP_COMPRESSION_LEVEL));
-    encoder
-        .write_all(data)
-        .expect("writing to an in-memory Vec never fails");
-    encoder
-        .finish()
-        .expect("finishing an in-memory Vec never fails")
+/// Sets header `name` to `value`, replacing any existing header of the same name regardless of
+/// its casing.
+fn set_header(headers: &mut HashMap<String, String>, name: &str, value: &str) {
+    headers.retain(|existing, _| !existing.eq_ignore_ascii_case(name));
+    headers.insert(name.to_string(), value.to_string());
 }
 
 /// Returns the path + query portion of a URL, for error reporting.

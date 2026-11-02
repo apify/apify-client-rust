@@ -7,17 +7,19 @@ use crate::client::ApifyClient;
 use crate::clients::actor_version::ActorVersionClient;
 use crate::clients::actor_version_collection::ActorVersionCollectionClient;
 use crate::clients::base::{
-    delete_resource, get_resource, post_with_body, update_resource, ResourceContext,
+    delete_resource, get_resource, post_creating, update_resource, ResourceContext,
 };
 use crate::clients::build::BuildClient;
 use crate::clients::build_collection::BuildCollectionClient;
 use crate::clients::run::{LastRunOptions, RunClient};
 use crate::clients::run_collection::RunCollectionClient;
+use crate::clients::streamed_log::{LogRedirect, StreamedLogOptions};
 use crate::clients::webhook_collection::WebhookCollectionClient;
 use crate::common::{parse_data_envelope, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::{Actor, ActorRun, Build};
+use crate::timeouts::Timeout;
 
 /// How long to keep retrying a run start that the API rejects for lack of resources (see
 /// [`ActorStartOptions::wait_for_resources`]).
@@ -26,7 +28,9 @@ pub enum WaitForResources {
     /// Retry until the run starts, how ever long that takes.
     Forever,
     /// Retry for up to this many seconds (clamped to `0` if negative), then return the last
-    /// error. `0` makes a single attempt and returns its error without retrying.
+    /// error. `0` makes a single attempt and returns its error without retrying. An infinite or
+    /// too large value is the same as [`Forever`](Self::Forever), and `NaN` is rejected with
+    /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument).
     ForSecs(f64),
 }
 
@@ -38,8 +42,9 @@ pub struct ActorStartOptions {
     pub build: Option<String>,
     /// Memory in megabytes allocated for the run.
     pub memory_mbytes: Option<i64>,
-    /// Timeout for the run in seconds (`0` means no timeout).
-    pub timeout_secs: Option<i64>,
+    /// Timeout of the run itself in seconds (`0` means no timeout). Not the timeout of the API
+    /// request, which is set with the client's `with_timeout`.
+    pub run_timeout_secs: Option<i64>,
     /// Maximum seconds to wait server-side for the run to finish (max 60).
     pub wait_for_finish: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
@@ -77,7 +82,7 @@ impl ActorStartOptions {
         params
             .add_str("build", self.build.clone())
             .add_int("memory", self.memory_mbytes)
-            .add_int("timeout", self.timeout_secs)
+            .add_int("timeout", self.run_timeout_secs)
             .add_int("waitForFinish", self.wait_for_finish)
             .add_int("maxItems", self.max_items)
             .add_float("maxTotalChargeUsd", self.max_total_charge_usd)
@@ -92,6 +97,73 @@ impl ActorStartOptions {
         let webhooks = self.webhooks.as_ref()?;
         let json = serde_json::to_vec(webhooks).ok()?;
         Some(base64::engine::general_purpose::STANDARD.encode(json))
+    }
+}
+
+/// Options of [`ActorClient::call`] and [`ActorClient::call_raw`].
+#[derive(Debug, Default, Clone)]
+pub struct ActorCallOptions {
+    /// The options of the run start.
+    pub start: ActorStartOptions,
+    /// The wait budget, in seconds:
+    /// - `None` polls indefinitely until the run reaches a terminal state.
+    /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by then,
+    ///   the **last fetched (still non-terminal) run is returned** rather than an error. Check
+    ///   `status` / `is_terminal()` on the result.
+    ///
+    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count toward
+    /// it, since that budget only starts once the run has actually started.
+    pub wait_secs: Option<i64>,
+    /// Where to redirect the log of the run while it is waited for. Redirects to the standard
+    /// output by default; [`LogRedirect::Disabled`] turns that off. A redirection that ends early
+    /// on an error does not fail the call: a `Log redirection stopped due to error: ..` message
+    /// goes to the sink.
+    pub log: LogRedirect,
+}
+
+/// Options shared by [`TaskClient::start`](crate::clients::task::TaskClient::start) and
+/// [`TaskClient::call`](crate::clients::task::TaskClient::call): the
+/// [`ActorStartOptions`] the `POST /actor-tasks/{id}/runs` endpoint accepts. A task takes its
+/// input as JSON, and its permission level is that of its Actor, so there is no `content_type`
+/// or `force_permission_level`.
+#[derive(Debug, Default, Clone)]
+pub struct TaskStartOptions {
+    /// Tag or number of the build to run (e.g. `latest`, `0.1.2`).
+    pub build: Option<String>,
+    /// Memory in megabytes allocated for the run.
+    pub memory_mbytes: Option<i64>,
+    /// Timeout of the run itself in seconds (`0` means no timeout). Not the timeout of the API
+    /// request, which is set with the client's `with_timeout`.
+    pub run_timeout_secs: Option<i64>,
+    /// Maximum seconds to wait server-side for the run to finish (max 60).
+    pub wait_for_finish: Option<i64>,
+    /// Maximum number of dataset items to charge (pay-per-result Actors).
+    pub max_items: Option<i64>,
+    /// Maximum total cost of the run in USD, across all pricing models.
+    pub max_total_charge_usd: Option<f64>,
+    /// Whether to restart the run if it fails.
+    pub restart_on_error: Option<bool>,
+    /// Ad-hoc webhooks to attach to this run, see [`ActorStartOptions::webhooks`].
+    pub webhooks: Option<Vec<serde_json::Value>>,
+    /// Retry the start while the account lacks the resources for the run, see
+    /// [`ActorStartOptions::wait_for_resources`].
+    pub wait_for_resources: Option<WaitForResources>,
+}
+
+impl From<TaskStartOptions> for ActorStartOptions {
+    fn from(options: TaskStartOptions) -> Self {
+        Self {
+            build: options.build,
+            memory_mbytes: options.memory_mbytes,
+            run_timeout_secs: options.run_timeout_secs,
+            wait_for_finish: options.wait_for_finish,
+            max_items: options.max_items,
+            max_total_charge_usd: options.max_total_charge_usd,
+            restart_on_error: options.restart_on_error,
+            webhooks: options.webhooks,
+            wait_for_resources: options.wait_for_resources,
+            ..Self::default()
+        }
     }
 }
 
@@ -120,6 +192,8 @@ pub struct ActorClient {
     id: String,
 }
 
+crate::clients::base::impl_with_timeout!(ActorClient);
+
 impl ActorClient {
     pub(crate) fn new(root: ApifyClient, http: HttpClient, base_url: &str, id: &str) -> Self {
         Self {
@@ -132,17 +206,17 @@ impl ActorClient {
 
     /// Fetches the Actor object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<Actor>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the Actor with the given fields and returns the updated object.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<Actor> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the Actor.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Starts the Actor and returns immediately with the created run.
@@ -160,7 +234,7 @@ impl ActorClient {
             Some(value) => Some(serde_json::to_vec(value)?),
             None => None,
         };
-        self.start_with_body(body, "application/json", options)
+        self.start_with_body(body, "application/json", options, Timeout::Medium)
             .await
     }
 
@@ -176,18 +250,25 @@ impl ActorClient {
         input: &[u8],
         options: ActorStartOptions,
     ) -> ApifyClientResult<ActorRun> {
-        self.start_with_body(Some(input.to_vec()), "application/octet-stream", options)
-            .await
+        self.start_with_body(
+            Some(input.to_vec()),
+            "application/octet-stream",
+            options,
+            Timeout::Medium,
+        )
+        .await
     }
 
     /// Shared implementation of [`start`](Self::start) and [`start_raw`](Self::start_raw):
     /// applies the run-start options as query parameters and posts the given body, falling back
-    /// to `default_content_type` only when the caller did not set `options.content_type`.
+    /// to `default_content_type` only when the caller did not set `options.content_type`. `tier`
+    /// is the timeout of the request unless the client was given one with `with_timeout`.
     async fn start_with_body(
         &self,
         body: Option<Vec<u8>>,
         default_content_type: &str,
         options: ActorStartOptions,
+        tier: Timeout,
     ) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         options.apply(&mut params);
@@ -195,37 +276,45 @@ impl ActorClient {
             .content_type
             .clone()
             .unwrap_or_else(|| default_content_type.to_string());
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(tier, options.wait_for_finish);
         crate::clients::base::retry_while_resource_limited(options.wait_for_resources, || {
-            post_with_body(
+            post_creating(
                 &self.ctx,
                 Some("runs"),
                 &params,
                 body.clone(),
                 &content_type,
+                timeout,
             )
         })
         .await
     }
 
-    /// Starts the Actor and waits (client-side polling) for it to finish.
+    /// Starts the Actor and waits (client-side polling) for it to finish, redirecting the log of
+    /// the run while it waits.
     ///
-    /// `wait_secs` controls the wait budget:
-    /// - `None` polls indefinitely until the run reaches a terminal state.
-    /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
-    ///   then, the **last fetched (still non-terminal) run is returned** rather than an
-    ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    /// See [`ActorCallOptions`] for the wait budget and the log redirection. The log goes to the
+    /// standard output unless `options.log` says otherwise. A redirection that ends early on an
+    /// error does not fail the call; a `Log redirection stopped due to error: ..` message goes
+    /// to the log sink instead (without the `"{actor name} runId:{run id} -> "` prefix of the
+    /// default redirection). One that cannot be set up is reported on the standard error.
     ///
-    /// Time spent retrying under [`ActorStartOptions::wait_for_resources`] does not count
-    /// toward `wait_secs`, since that budget only starts once the run has actually started.
+    /// Like the reference client, the start request has no client-side timeout, because an
+    /// aborted start would be retried and could create a second run; set a timeout with the
+    /// client's `with_timeout` to change that, and it applies to the polls as well. Without one,
+    /// the polls are timed as [`RunClient::wait_for_finish`] describes.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
-        options: ActorStartOptions,
-        wait_secs: Option<i64>,
+        options: ActorCallOptions,
     ) -> ApifyClientResult<ActorRun> {
-        let run = self.start(input, options).await?;
-        // Use the root client's run client so polling targets the canonical run route.
-        self.root.run(run.id).wait_for_finish(wait_secs).await
+        let body = match input {
+            Some(value) => Some(serde_json::to_vec(value)?),
+            None => None,
+        };
+        self.call_with_body(body, "application/json", options).await
     }
 
     /// Starts the Actor with a raw request body ([`start_raw`](Self::start_raw)) and waits for
@@ -233,11 +322,52 @@ impl ActorClient {
     pub async fn call_raw(
         &self,
         input: &[u8],
-        options: ActorStartOptions,
-        wait_secs: Option<i64>,
+        options: ActorCallOptions,
     ) -> ApifyClientResult<ActorRun> {
-        let run = self.start_raw(input, options).await?;
-        self.root.run(run.id).wait_for_finish(wait_secs).await
+        self.call_with_body(Some(input.to_vec()), "application/octet-stream", options)
+            .await
+    }
+
+    async fn call_with_body(
+        &self,
+        body: Option<Vec<u8>>,
+        default_content_type: &str,
+        options: ActorCallOptions,
+    ) -> ApifyClientResult<ActorRun> {
+        let ActorCallOptions {
+            start,
+            wait_secs,
+            log,
+        } = options;
+        let run = self
+            .start_with_body(body, default_content_type, start, Timeout::NoTimeout)
+            .await?;
+        // Use the root client's run client so polling targets the canonical run route.
+        let mut run_client = self.root.run(run.id);
+        if let Some(timeout) = self.ctx.timeout {
+            run_client = run_client.with_timeout(timeout);
+        }
+        let mut streamed_log = run_client
+            .get_streamed_log(StreamedLogOptions {
+                to_log: log,
+                from_start: true,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                eprintln!("Log redirection could not start: {error}");
+                None
+            });
+        if let Some(streamed_log) = streamed_log.as_mut() {
+            // A redirection that was just created is not started yet, so this cannot fail.
+            let _ = streamed_log.start();
+        }
+        let finished = run_client.wait_for_finish(wait_secs).await;
+        if let Some(streamed_log) = streamed_log.as_mut() {
+            if let Err(error) = streamed_log.stop().await {
+                streamed_log.warn(&error);
+            }
+        }
+        finished
     }
 
     /// Builds the given version of the Actor and returns the created build.
@@ -250,10 +380,21 @@ impl ActorClient {
         params
             .add_str("version", Some(version_number.to_string()))
             .add_bool("betaPackages", options.beta_packages)
-            .add_str("tag", options.tag)
+            .add_str("tag", options.tag.clone())
             .add_bool("useCache", options.use_cache)
             .add_int("waitForFinish", options.wait_for_finish);
-        post_with_body(&self.ctx, Some("builds"), &params, None, "application/json").await
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Medium, options.wait_for_finish);
+        post_creating(
+            &self.ctx,
+            Some("builds"),
+            &params,
+            None,
+            "application/json",
+            timeout,
+        )
+        .await
     }
 
     /// Resolves the Actor's default build and returns a client for it.
@@ -267,16 +408,12 @@ impl ActorClient {
         let mut params = QueryParams::new();
         params.add_int("waitForFinish", wait_for_finish);
         let url = params.apply_to_url(&self.ctx.url(Some("builds/default")));
+        let timeout = self
+            .ctx
+            .timeout_with_wait_hold(Timeout::Short, wait_for_finish);
         let response = self
             .ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Get,
-                url,
-                headers: Default::default(),
-                body: None,
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+            .send(crate::http_client::HttpMethod::Get, url, timeout)
             .await?;
         let build: Build = parse_data_envelope(&response.body)?;
         Ok(BuildClient::new(
@@ -316,6 +453,7 @@ impl ActorClient {
             &params,
             Some(body),
             Some("application/json"),
+            self.ctx.timeout(Timeout::Short),
         )
         .await
     }

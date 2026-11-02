@@ -6,17 +6,25 @@ use crate::clients::base::{
     delete_resource, get_resource, post_action, post_with_body, update_resource, wait_for_finish,
     ResourceContext,
 };
-use crate::clients::dataset::DatasetClient;
+use crate::clients::dataset::{DatasetClient, DatasetListItemsOptions};
 use crate::clients::key_value_store::KeyValueStoreClient;
 use crate::clients::log::LogClient;
 use crate::clients::request_queue::RequestQueueClient;
+use crate::clients::run_dataset_items::RunDatasetItemsIterator;
+use crate::clients::streamed_log::{
+    LogRedirect, LogSink, StdoutLogSink, StreamedLog, StreamedLogOptions,
+};
 use crate::common::{to_safe_id, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorRun;
+use crate::timeouts::Timeout;
+use std::sync::Arc;
 
 /// Header the API uses to deduplicate charge requests (matching the reference client).
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
+/// Nanoseconds in a millisecond: the sub-millisecond part of a timestamp is below it.
+const NANOS_PER_MILLI: u32 = 1_000_000;
 
 /// Options for fetching an Actor's or task's last run
 /// ([`crate::clients::actor::ActorClient::last_run_with_options`] /
@@ -43,8 +51,9 @@ pub struct RunResurrectOptions {
     pub build: Option<String>,
     /// Memory in megabytes.
     pub memory_mbytes: Option<i64>,
-    /// Timeout in seconds.
-    pub timeout_secs: Option<i64>,
+    /// Timeout of the run itself in seconds. Not the timeout of the API request, which is set with
+    /// the client's `with_timeout`.
+    pub run_timeout_secs: Option<i64>,
     /// Maximum number of dataset items to charge (pay-per-result Actors).
     pub max_items: Option<i64>,
     /// Maximum total cost of the run in USD, across all pricing models.
@@ -89,23 +98,42 @@ pub struct RunChargeOptions {
 /// run's default dataset, key-value store, request queue and log.
 #[derive(Debug, Clone)]
 pub struct RunClient {
+    root: crate::client::ApifyClient,
     ctx: ResourceContext,
     /// The run ID, retained so `charge` can build a per-run idempotency key.
     id: String,
 }
 
+crate::clients::base::impl_with_timeout!(RunClient);
+
 impl RunClient {
     pub(crate) fn new(
-        _root: crate::client::ApifyClient,
+        root: crate::client::ApifyClient,
         http: HttpClient,
         base_url: &str,
         resource_path: &str,
         id: &str,
     ) -> Self {
         Self {
+            root,
             ctx: ResourceContext::single(http, base_url, resource_path, id),
             id: id.to_string(),
         }
+    }
+
+    /// The run ID this client addresses; `last` for the client of a `last_run()`.
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The timeout set with `with_timeout`, if any.
+    pub(crate) fn timeout(&self) -> Option<Timeout> {
+        self.ctx.timeout
+    }
+
+    /// A client for the run with the given ID.
+    pub(crate) fn pinned_to(&self, run_id: &str) -> RunClient {
+        self.root.run(run_id)
     }
 
     /// Adds a base query parameter to this run client, inherited by its requests (used by
@@ -118,17 +146,17 @@ impl RunClient {
 
     /// Fetches the run object, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<ActorRun>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the run (e.g. its status message) and returns the updated object.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<ActorRun> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the run.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Aborts the run. `gracefully` is optional, matching the reference client's optional
@@ -138,7 +166,15 @@ impl RunClient {
     pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params.add_bool("gracefully", gracefully);
-        post_action(&self.ctx, Some("abort"), &params, None, None).await
+        post_action(
+            &self.ctx,
+            Some("abort"),
+            &params,
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Transforms the run into a run of another Actor (metamorph).
@@ -199,12 +235,28 @@ impl RunClient {
             .as_deref()
             .unwrap_or(default_content_type)
             .to_string();
-        post_with_body(&self.ctx, Some("metamorph"), &params, body, &content_type).await
+        post_with_body(
+            &self.ctx,
+            Some("metamorph"),
+            &params,
+            body,
+            &content_type,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Reboots the run (restarts its container, preserving the run ID and storages).
     pub async fn reboot(&self) -> ApifyClientResult<ActorRun> {
-        post_action(&self.ctx, Some("reboot"), &QueryParams::new(), None, None).await
+        post_action(
+            &self.ctx,
+            Some("reboot"),
+            &QueryParams::new(),
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Resurrects a finished run, starting it again with (optionally overridden) settings.
@@ -219,11 +271,19 @@ impl RunClient {
         params
             .add_str("build", options.build)
             .add_int("memory", options.memory_mbytes)
-            .add_int("timeout", options.timeout_secs)
+            .add_int("timeout", options.run_timeout_secs)
             .add_int("maxItems", options.max_items)
             .add_float("maxTotalChargeUsd", options.max_total_charge_usd)
             .add_bool("restartOnError", options.restart_on_error);
-        post_action(&self.ctx, Some("resurrect"), &params, None, None).await
+        post_action(
+            &self.ctx,
+            Some("resurrect"),
+            &params,
+            None,
+            None,
+            self.ctx.timeout(Timeout::Medium),
+        )
+        .await
     }
 
     /// Charges the run for a pay-per-event run, recording occurrences of a named event.
@@ -244,21 +304,22 @@ impl RunClient {
             body["requestId"] = serde_json::Value::String(request_id);
         }
         let body_bytes = serde_json::to_vec(&body)?;
-        let url = self.ctx.url(Some("charge"));
+        let url = self
+            .ctx
+            .url_with_params(Some("charge"), &QueryParams::new());
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         headers.insert(CHARGE_IDEMPOTENCY_HEADER.to_string(), idempotency_key);
         // A successful `HttpClient::call` already guarantees a 2xx status; the (empty) body
         // is intentionally ignored rather than parsed as a `data` envelope.
         self.ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Post,
+            .send_with(
+                crate::http_client::HttpMethod::Post,
                 url,
                 headers,
-                body: Some(body_bytes),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(body_bytes),
+                self.ctx.timeout(Timeout::Short),
+            )
             .await?;
         Ok(())
     }
@@ -273,7 +334,7 @@ impl RunClient {
             .unwrap_or_default();
         let millis = now.as_millis();
         // Sub-millisecond nanos give a cheap, non-crypto "random" suffix (cf. JS Math.random()).
-        let random_suffix = now.subsec_nanos() % 1_000_000;
+        let random_suffix = now.subsec_nanos() % NANOS_PER_MILLI;
         format!("{}-{event_name}-{millis}-{random_suffix}", self.id)
     }
 
@@ -284,13 +345,22 @@ impl RunClient {
     /// - `Some(n)` bounds the wait to roughly `n` seconds; if the run has not finished by
     ///   then, the **last fetched (still non-terminal) run is returned** rather than an
     ///   error. Check `status` / `is_terminal()` on the result when using `Some`.
+    ///
+    /// With `None`, the polls have no client-side timeout. With `Some(n)`, each poll is allowed the
+    /// `Medium` tier plus the hold (up to a minute) it asks the API for, so a stalled connection
+    /// cannot hang the wait. A timeout set with `with_timeout` is used as given instead.
     pub async fn wait_for_finish(&self, wait_secs: Option<i64>) -> ApifyClientResult<ActorRun> {
         wait_for_finish(&self.ctx, wait_secs, |r: &ActorRun| r.is_terminal()).await
     }
 
     /// Returns a client for the run's default dataset.
     pub fn dataset(&self) -> DatasetClient {
-        DatasetClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "dataset")
+        DatasetClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "dataset",
+            &self.ctx.base_params,
+        )
     }
 
     /// Returns a client for the run's default key-value store.
@@ -299,42 +369,112 @@ impl RunClient {
             self.ctx.http.clone(),
             &self.ctx.url(None),
             "key-value-store",
+            &self.ctx.base_params,
         )
     }
 
     /// Returns a client for the run's default request queue.
     pub fn request_queue(&self) -> RequestQueueClient {
-        RequestQueueClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "request-queue")
+        RequestQueueClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "request-queue",
+            &self.ctx.base_params,
+        )
     }
 
     /// Returns a client for the run's log.
     pub fn log(&self) -> LogClient {
-        LogClient::nested(self.ctx.http.clone(), &self.ctx.url(None), "log")
+        LogClient::nested(
+            self.ctx.http.clone(),
+            &self.ctx.url(None),
+            "log",
+            &self.ctx.base_params,
+        )
     }
 
-    /// Opens a live stream of the run's log for redirection.
+    /// Iterates over the items of the run's default dataset while the run is still producing them.
     ///
-    /// Convenience equivalent to `run.log().stream()` (mirrors the reference client's
-    /// `getStreamedLog`): yields log chunks as they arrive, so callers can forward them to
-    /// their own logger/stdout while the run is in progress.
+    /// Returns a [`RunDatasetItemsIterator`]; call its `next()` to get one item at a time. Unlike
+    /// [`DatasetClient::iterate_items`], which stops at the end of the dataset as it is, this keeps
+    /// polling until the run finishes, so a consumer can process the items of a long-running Actor
+    /// as they appear. See [`RunDatasetItemsIterator`] for how the rows are read, and its
+    /// `with_chunk_size` and `with_poll_interval` for the page size and the polling interval.
+    ///
+    /// `options` filters and projects the items exactly like
+    /// [`DatasetClient::list_items`]: `offset` is the number of dataset rows to skip and `limit`
+    /// the maximum number of rows to scan. `desc: Some(true)` is rejected with
+    /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument), since
+    /// the end of a dataset that is still growing is not known: the rows are always read oldest
+    /// first.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use apify_client::ApifyClient;
+    ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = ApifyClient::new("my-api-token");
+    /// let mut items = client
+    ///     .run("my-run-id")
+    ///     .iterate_dataset_items::<serde_json::Value>(Default::default());
+    /// while let Some(item) = items.next().await? {
+    ///     println!("{item}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn iterate_dataset_items<T: serde::de::DeserializeOwned>(
+        &self,
+        options: DatasetListItemsOptions,
+    ) -> RunDatasetItemsIterator<T> {
+        RunDatasetItemsIterator::new(self.clone(), options)
+    }
+
+    /// Returns the redirection of the run's log, or `None` if `options.to_log` is
+    /// [`LogRedirect::Disabled`] or, for [`LogRedirect::Default`], the run does not exist. With a
+    /// [`LogRedirect::Sink`] nothing is requested, so a missing run shows up as the error of
+    /// [`StreamedLog::stop`]. Call [`StreamedLog::start`] to begin redirecting and
+    /// [`StreamedLog::stop`] to end it. Mirrors the reference client's `getStreamedLog`.
+    ///
+    /// With [`LogRedirect::Default`], the messages go to the standard output prefixed with
+    /// `"{actor name} runId:{run id} -> "`, which costs a request for the run and one for its
+    /// Actor. With [`LogRedirect::Sink`], they go to the sink as they are, and nothing is
+    /// requested. To read the log as raw chunks instead, use
+    /// [`LogClient::stream_with_options`](crate::clients::log::LogClient::stream_with_options) of
+    /// [`RunClient::log`].
     pub async fn get_streamed_log(
         &self,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream().await
-    }
-
-    /// Opens a live stream of the run's log for redirection, applying the given
-    /// [`LogOptions`](crate::LogOptions) (e.g. [`LogOptions::raw`](crate::LogOptions::raw) to
-    /// stream the unprocessed log, which is the form the JS reference's log redirection consumes
-    /// internally).
-    ///
-    /// This is a Rust-specific convenience that simply forwards `LogOptions` to
-    /// [`LogClient::stream_with_options`]; it is not a 1:1 mirror of the JS `getStreamedLog`
-    /// method's signature (which takes redirect options and returns a `StreamedLog` object).
-    pub async fn get_streamed_log_with_options(
-        &self,
-        options: crate::clients::log::LogOptions,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        self.log().stream_with_options(options).await
+        options: StreamedLogOptions,
+    ) -> ApifyClientResult<Option<StreamedLog>> {
+        let StreamedLogOptions { to_log, from_start } = options;
+        let (sink, prefix): (Arc<dyn LogSink>, String) = match to_log {
+            LogRedirect::Disabled => return Ok(None),
+            LogRedirect::Sink(sink) => (sink, String::new()),
+            LogRedirect::Default => {
+                let Some(run) =
+                    get_resource::<ActorRun>(&self.ctx, None, &QueryParams::new(), Timeout::Long)
+                        .await?
+                else {
+                    return Ok(None);
+                };
+                let actor_name = match run.act_id.as_deref().filter(|id| !id.is_empty()) {
+                    Some(actor_id) => self
+                        .root
+                        .actor(actor_id)
+                        .with_timeout(Timeout::Long)
+                        .get()
+                        .await?
+                        .and_then(|actor| actor.name),
+                    None => None,
+                };
+                let name = [actor_name, Some(format!("runId:{}", run.id))]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (Arc::new(StdoutLogSink), format!("{name} -> "))
+            }
+        };
+        Ok(Some(StreamedLog::new(self.log(), sink, prefix, from_start)))
     }
 }

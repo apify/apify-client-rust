@@ -9,11 +9,50 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Convenience alias for the catch-all map of unmodelled JSON fields.
 pub type Extra = HashMap<String, Value>;
+
+/// Deserializes an optional URL field the OpenAPI specification declares as `format: uri`, into
+/// the WHATWG URL serialization of the value the API sent, so every Apify client returns the same
+/// string for the same field.
+///
+/// Normalization adds a trailing slash to an empty path, lowercases and punycodes the host, drops
+/// a default port, and percent-encodes unsafe characters. A value that is not a valid absolute URL
+/// fails the deserialization of the whole response.
+fn deserialize_normalized_url<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    value.map(normalize_url).transpose()
+}
+
+/// Like [`deserialize_normalized_url`], for a map whose values are URLs.
+fn deserialize_normalized_url_map<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<HashMap<String, String>> = Option::deserialize(deserializer)?;
+    value
+        .map(|links| {
+            links
+                .into_iter()
+                .map(|(name, raw)| Ok((name, normalize_url(raw)?)))
+                .collect()
+        })
+        .transpose()
+}
+
+fn normalize_url<E: serde::de::Error>(raw: String) -> Result<String, E> {
+    url::Url::parse(&raw)
+        .map(String::from)
+        .map_err(|err| E::custom(format!("invalid URL `{raw}`: {err}")))
+}
 
 /// An Actor on the Apify platform.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -89,9 +128,16 @@ pub struct ActorRun {
     /// Default request queue ID associated with the run.
     #[serde(default)]
     pub default_request_queue_id: Option<String>,
-    /// URL of the run's container, if running.
-    #[serde(default)]
+    /// URL of the run's container, if running. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
     pub container_url: Option<String>,
+    /// URL of the run in Apify Console. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub console_url: Option<String>,
+    /// Output links of the run, generated from the output schema of the Actor build (present only
+    /// if the build defines one). Each link is normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url_map")]
+    pub output: Option<HashMap<String, String>>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -191,6 +237,9 @@ pub struct Task {
     /// The task's public landing page display configuration, or `None` if never configured.
     #[serde(default)]
     pub public_config: Option<TaskPublicConfig>,
+    /// URL of the task's Actor Standby endpoint, or `None` if it has none. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub standby_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -249,6 +298,12 @@ pub struct Dataset {
     /// Total number of items in the dataset.
     #[serde(default)]
     pub item_count: Option<i64>,
+    /// URL of the dataset in Apify Console. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub console_url: Option<String>,
+    /// Public URL of the dataset items. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub items_public_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -272,6 +327,15 @@ pub struct KeyValueStore {
     /// When the store was last modified.
     #[serde(default)]
     pub modified_at: Option<DateTime<Utc>>,
+    /// URL of the store in Apify Console. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub console_url: Option<String>,
+    /// Public URL of the store's key listing. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub keys_public_url: Option<String>,
+    /// Public URL prefix of the store's records. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub records_public_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -286,6 +350,9 @@ pub struct KeyValueStoreKey {
     /// Size of the record value in bytes.
     #[serde(default)]
     pub size: Option<i64>,
+    /// Public link to access this record directly. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub record_public_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -356,6 +423,9 @@ pub struct RequestQueue {
     /// Total number of requests ever added.
     #[serde(default)]
     pub total_request_count: Option<i64>,
+    /// URL of the queue in Apify Console. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub console_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -569,8 +639,8 @@ pub struct Webhook {
     /// ID of the owner.
     #[serde(default)]
     pub user_id: Option<String>,
-    /// The URL that receives the webhook POST request.
-    #[serde(default)]
+    /// The URL that receives the webhook POST request. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
     pub request_url: Option<String>,
     /// Event types that trigger this webhook.
     #[serde(default)]
@@ -589,6 +659,23 @@ pub struct WebhookDispatch {
     /// ID of the webhook that produced this dispatch.
     #[serde(default)]
     pub webhook_id: Option<String>,
+    /// A summary of the webhook as it was when the dispatch was made, or `None` if the webhook has
+    /// since been deleted.
+    #[serde(default)]
+    pub webhook: Option<WebhookDispatchWebhookSummary>,
+    /// Any other fields returned by the API.
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// The webhook of a [`WebhookDispatch`], as it was when the dispatch was made.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookDispatchWebhookSummary {
+    /// The URL that received the webhook POST request. Normalized to its WHATWG URL
+    /// serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub request_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -603,7 +690,28 @@ pub struct User {
     /// Username.
     #[serde(default)]
     pub username: Option<String>,
+    /// The user's public profile.
+    #[serde(default)]
+    pub profile: Option<UserProfile>,
     /// Any other fields returned by the API (public or private depending on the call).
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// The public profile of a [`User`].
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProfile {
+    /// The user's display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// URL of the user's picture. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub picture_url: Option<String>,
+    /// URL of the user's website. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub website_url: Option<String>,
+    /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -623,6 +731,12 @@ pub struct ActorStoreListItem {
     /// Human-readable title.
     #[serde(default)]
     pub title: Option<String>,
+    /// URL of the Actor's page. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub url: Option<String>,
+    /// URL of the owner's picture. Normalized to its WHATWG URL serialization.
+    #[serde(default, deserialize_with = "deserialize_normalized_url")]
+    pub user_picture_url: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
@@ -657,4 +771,120 @@ pub struct ActorEnvVar {
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_fields_are_normalized_to_the_whatwg_serialization() {
+        let run: ActorRun = serde_json::from_value(serde_json::json!({
+            "id": "run",
+            "containerUrl": "HTTPS://Run-1.Example.COM:443"
+        }))
+        .unwrap();
+        assert_eq!(
+            run.container_url.as_deref(),
+            Some("https://run-1.example.com/")
+        );
+
+        let webhook: Webhook = serde_json::from_value(serde_json::json!({
+            "id": "hook",
+            "requestUrl": "https://example.com/a b?q=1"
+        }))
+        .unwrap();
+        assert_eq!(
+            webhook.request_url.as_deref(),
+            Some("https://example.com/a%20b?q=1")
+        );
+    }
+
+    #[test]
+    fn every_url_field_of_the_models_is_normalized() {
+        let url = "HTTP://Example.COM:80";
+        let normalized = "http://example.com/";
+
+        let run: ActorRun = serde_json::from_value(serde_json::json!({
+            "id": "r", "consoleUrl": url, "output": { "results": url }
+        }))
+        .unwrap();
+        assert_eq!(run.console_url.as_deref(), Some(normalized));
+        assert_eq!(run.output.unwrap()["results"], normalized);
+
+        let task: Task =
+            serde_json::from_value(serde_json::json!({ "id": "t", "standbyUrl": url })).unwrap();
+        assert_eq!(task.standby_url.as_deref(), Some(normalized));
+
+        let dataset: Dataset = serde_json::from_value(serde_json::json!({
+            "id": "d", "consoleUrl": url, "itemsPublicUrl": url
+        }))
+        .unwrap();
+        assert_eq!(dataset.console_url.as_deref(), Some(normalized));
+        assert_eq!(dataset.items_public_url.as_deref(), Some(normalized));
+
+        let store: KeyValueStore = serde_json::from_value(serde_json::json!({
+            "id": "s", "consoleUrl": url, "keysPublicUrl": url, "recordsPublicUrl": url
+        }))
+        .unwrap();
+        assert_eq!(store.console_url.as_deref(), Some(normalized));
+        assert_eq!(store.keys_public_url.as_deref(), Some(normalized));
+        assert_eq!(store.records_public_url.as_deref(), Some(normalized));
+
+        let key: KeyValueStoreKey =
+            serde_json::from_value(serde_json::json!({ "key": "k", "recordPublicUrl": url }))
+                .unwrap();
+        assert_eq!(key.record_public_url.as_deref(), Some(normalized));
+
+        let queue: RequestQueue =
+            serde_json::from_value(serde_json::json!({ "id": "q", "consoleUrl": url })).unwrap();
+        assert_eq!(queue.console_url.as_deref(), Some(normalized));
+
+        let actor: ActorStoreListItem = serde_json::from_value(serde_json::json!({
+            "id": "a", "url": url, "userPictureUrl": url
+        }))
+        .unwrap();
+        assert_eq!(actor.url.as_deref(), Some(normalized));
+        assert_eq!(actor.user_picture_url.as_deref(), Some(normalized));
+
+        let user: User = serde_json::from_value(serde_json::json!({
+            "id": "u", "profile": { "pictureUrl": url, "websiteUrl": url, "bio": "hi" }
+        }))
+        .unwrap();
+        let profile = user.profile.unwrap();
+        assert_eq!(profile.picture_url.as_deref(), Some(normalized));
+        assert_eq!(profile.website_url.as_deref(), Some(normalized));
+        assert_eq!(profile.extra["bio"], "hi");
+
+        let dispatch: WebhookDispatch = serde_json::from_value(serde_json::json!({
+            "id": "w", "webhook": { "requestUrl": url }
+        }))
+        .unwrap();
+        assert_eq!(
+            dispatch.webhook.unwrap().request_url.as_deref(),
+            Some(normalized)
+        );
+    }
+
+    #[test]
+    fn null_and_missing_url_fields_stay_none() {
+        let run: ActorRun = serde_json::from_value(serde_json::json!({
+            "id": "run",
+            "containerUrl": null
+        }))
+        .unwrap();
+        assert_eq!(run.container_url, None);
+
+        let webhook: Webhook = serde_json::from_value(serde_json::json!({ "id": "hook" })).unwrap();
+        assert_eq!(webhook.request_url, None);
+    }
+
+    #[test]
+    fn an_invalid_url_fails_the_deserialization() {
+        let result: Result<Webhook, _> = serde_json::from_value(serde_json::json!({
+            "id": "hook",
+            "requestUrl": "not a url"
+        }));
+        assert!(result.is_err());
+    }
 }

@@ -26,7 +26,13 @@ async fn run_actor_and_read_outputs() {
     // Start + wait for the public hello-world Actor.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
         .await
         .expect("call hello-world actor");
 
@@ -68,7 +74,10 @@ async fn run_actor_and_read_outputs() {
     let raw_log = client
         .run(&run.id)
         .log()
-        .get_with_options(apify_client::LogOptions { raw: Some(true) })
+        .get_with_options(apify_client::LogOptions {
+            raw: Some(true),
+            ..Default::default()
+        })
         .await
         .expect("get raw run log");
     assert!(raw_log.is_some(), "finished run should have a raw log");
@@ -104,7 +113,13 @@ async fn iterate_runs() {
     // Ensure at least one run exists on the account by calling the public hello-world Actor.
     let run = client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
         .await
         .expect("call hello-world actor");
 
@@ -139,7 +154,13 @@ async fn last_run_access() {
     // Ensure there is at least one run by calling the actor.
     client
         .actor("apify/hello-world")
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
         .await
         .expect("call hello-world actor");
 
@@ -163,11 +184,14 @@ async fn call_raw_sends_raw_bytes_input() {
         .actor("apify/hello-world")
         .call_raw(
             b"{}",
-            apify_client::ActorStartOptions {
-                content_type: Some("application/json".to_string()),
+            apify_client::ActorCallOptions {
+                start: apify_client::ActorStartOptions {
+                    content_type: Some("application/json".to_string()),
+                    ..Default::default()
+                },
+                wait_secs: Some(120),
                 ..Default::default()
             },
-            Some(120),
         )
         .await
         .expect("call_raw hello-world actor");
@@ -201,4 +225,185 @@ async fn log_stream_of_missing_run_carries_structured_api_error() {
         .expect("error should be a structured ApiError, not a generic transport error");
     assert_eq!(api_error.status_code, 404);
     assert!(api_error.is_not_found());
+}
+
+/// A chained client cannot tell a missing run from a missing storage or log, so a `404` through it
+/// is an error, while a client that names its resource by id resolves it to `None`.
+#[tokio::test(flavor = "multi_thread")]
+async fn not_found_through_a_chained_client_is_an_error() {
+    let client = require_client!();
+    let run = client.run("nonexistent-run-id-xyz");
+
+    let err = run
+        .dataset()
+        .get()
+        .await
+        .expect_err("a chained client returns the 404");
+    assert!(err.as_api_error().expect("an API error").is_not_found());
+    let err = run
+        .log()
+        .get()
+        .await
+        .expect_err("a chained log client returns the 404");
+    assert!(err.as_api_error().expect("an API error").is_not_found());
+
+    assert!(client
+        .log("nonexistent-run-id-xyz")
+        .get()
+        .await
+        .expect("a log addressed by id resolves a 404")
+        .is_none());
+    assert!(client
+        .log("nonexistent-run-id-xyz")
+        .stream()
+        .await
+        .expect("a log stream addressed by id resolves a 404")
+        .is_none());
+    assert!(client
+        .dataset("nonexistent-dataset-id-xyz")
+        .get()
+        .await
+        .expect("a dataset addressed by id resolves a 404")
+        .is_none());
+}
+
+/// An id that cannot be placed in a URL path fails without a request.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invalid_id_is_rejected() {
+    let client = require_client!();
+    let err = client
+        .run("..")
+        .get()
+        .await
+        .expect_err("a dot segment is not a run id");
+    assert!(
+        matches!(err, apify_client::ApifyClientError::InvalidArgument(_)),
+        "{err:?}"
+    );
+}
+
+/// The `deployment` filter is accepted by the run listing, together with the non-terminal status
+/// it requires.
+#[tokio::test(flavor = "multi_thread")]
+async fn list_runs_filtered_by_deployment() {
+    let client = require_client!();
+    let page = client
+        .runs()
+        .list(
+            Default::default(),
+            apify_client::RunListOptions {
+                status: vec!["RUNNING".to_string()],
+                deployment: vec!["SINGLE_TENANT".to_string()],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("listing runs by deployment should succeed");
+    assert!(page.total >= 0);
+}
+
+/// Iterating the default dataset of a run reads the items pushed to it, including those past the
+/// dataset's `itemCount`, which lags a few seconds behind the pushed items.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_run_dataset_items_reads_the_items_of_a_finished_run() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("call hello-world actor");
+    let dataset_id = run
+        .default_dataset_id
+        .clone()
+        .expect("a run has a default dataset");
+    client
+        .dataset(&dataset_id)
+        .push_items(&serde_json::json!([{ "n": 1 }, { "n": 2 }, { "n": 3 }]))
+        .await
+        .expect("push items to the run's dataset");
+
+    let items = client
+        .run(&run.id)
+        .iterate_dataset_items::<serde_json::Value>(Default::default())
+        .with_chunk_size(2)
+        .collect_all()
+        .await
+        .expect("iterate the run's dataset items");
+
+    // The Actor may have written items of its own before the three that were pushed.
+    assert!(items.len() >= 3, "{items:?}");
+    let pushed = &items[items.len() - 3..];
+    assert_eq!(pushed[0]["n"], 1);
+    assert_eq!(pushed[2]["n"], 3);
+}
+
+/// Simple GETs of the storages of a finished run, and of the run's log through the top-level
+/// `/logs/{id}` endpoint.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_scoped_storages_and_log_can_be_read() {
+    let client = require_client!();
+    let run = client
+        .actor("apify/hello-world")
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                log: apify_client::LogRedirect::Disabled,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("call hello-world actor");
+    let run_client = client.run(&run.id);
+
+    let log = client.log(&run.id).get().await.expect("get the log by id");
+    assert!(log.is_some(), "a finished run should have a log");
+
+    let store = run_client
+        .key_value_store()
+        .get()
+        .await
+        .expect("get the run's key-value store");
+    assert!(store.is_some());
+    let keys = run_client
+        .key_value_store()
+        .list_keys(Default::default())
+        .await
+        .expect("list the keys of the run's key-value store");
+    assert!(keys.items.iter().any(|key| key.key == "OUTPUT"));
+
+    let queue = run_client
+        .request_queue()
+        .get()
+        .await
+        .expect("get the run's request queue");
+    assert!(queue.is_some());
+    run_client
+        .request_queue()
+        .list_head(Some(10))
+        .await
+        .expect("list the head of the run's request queue");
+    run_client
+        .request_queue()
+        .list_requests(Default::default())
+        .await
+        .expect("list the requests of the run's request queue");
+
+    let dataset = run_client
+        .dataset()
+        .get()
+        .await
+        .expect("get the run's dataset");
+    assert!(dataset.is_some());
+    run_client
+        .dataset()
+        .get_statistics()
+        .await
+        .expect("get the statistics of the run's dataset");
 }

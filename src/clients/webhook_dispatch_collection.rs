@@ -6,12 +6,15 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::WebhookDispatch;
+use crate::timeouts::Timeout;
 
 /// Client for listing webhook dispatches.
 #[derive(Debug, Clone)]
 pub struct WebhookDispatchCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(WebhookDispatchCollectionClient);
 
 impl WebhookDispatchCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -37,7 +40,7 @@ impl WebhookDispatchCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all webhook dispatches matching `options`, fetching pages on demand.

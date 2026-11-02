@@ -20,8 +20,8 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `delete()` | — | `()` | Deletes the Actor. |
 | `start(input, options)` | `Option<&impl Serialize>`, `ActorStartOptions` | `ActorRun` | Starts a run, returns immediately. |
 | `start_raw(input, options)` | `&[u8]`, `ActorStartOptions` | `ActorRun` | Like `start`, but sends `input` as a raw request body (no JSON serialization) — for a non-JSON input such as a ZIP archive, paired with `options.content_type`. |
-| `call(input, options, wait_secs)` | `Option<&impl Serialize>`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | Starts a run and waits for it to finish. |
-| `call_raw(input, options, wait_secs)` | `&[u8]`, `ActorStartOptions`, `Option<i64>` | `ActorRun` | `start_raw` followed by `wait_for_finish`. |
+| `call(input, options)` | `Option<&impl Serialize>`, `ActorCallOptions` | `ActorRun` | Starts a run and waits for it to finish, redirecting its log to the standard output unless `options.log` says otherwise. A redirection that ends early on an error does not fail the call; the error goes to the log sink as a `Log redirection stopped due to error: ..` message. |
+| `call_raw(input, options)` | `&[u8]`, `ActorCallOptions` | `ActorRun` | `start_raw` followed by `wait_for_finish`, like `call`. |
 | `build(version, options)` | `&str`, `ActorBuildOptions` | `Build` | Builds a version of the Actor. |
 | `default_build(wait_for_finish)` | `Option<i64>` | `BuildClient` | Resolves the Actor's default build, optionally waiting up to `wait_for_finish` seconds. |
 | `validate_input(input)` | `&impl Serialize` | `serde_json::Value` | Validates input against the default build's schema. |
@@ -35,15 +35,17 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 
 ### `ActorStartOptions`
 
-All fields are optional. Used by both `start` and `call` here, and by the identical `start` /
-`call` methods on [tasks](tasks.md) (for `call`, `wait_for_finish` is server-side; the
-`wait_secs` argument controls client-side polling).
+All fields are optional. Used by `start` and `start_raw`, and as `ActorCallOptions::start` by
+`call` and `call_raw` (there, `wait_for_finish` is server-side; `ActorCallOptions::wait_secs`
+controls client-side polling). [Tasks](tasks.md) take `TaskStartOptions`, which has the same
+fields except `content_type` and `force_permission_level`, because `POST /actor-tasks/{id}/runs`
+documents neither.
 
 | Field | Type | Description |
 |---|---|---|
 | `build` | `Option<String>` | Tag or number of the build to run (e.g. `latest`, `0.1.2`). |
 | `memory_mbytes` | `Option<i64>` | Memory in megabytes allocated for the run. |
-| `timeout_secs` | `Option<i64>` | Timeout for the run in seconds (`0` means no timeout). |
+| `run_timeout_secs` | `Option<i64>` | Timeout of the run itself in seconds (`0` means no timeout). The timeout of the API request is set with the client's `with_timeout`. |
 | `wait_for_finish` | `Option<i64>` | Maximum seconds to wait server-side for the run to finish (max 60). |
 | `max_items` | `Option<i64>` | Maximum number of dataset items to charge (pay-per-result Actors). |
 | `max_total_charge_usd` | `Option<f64>` | Maximum total cost of the run in USD, across all pricing models. |
@@ -53,7 +55,20 @@ All fields are optional. Used by both `start` and `call` here, and by the identi
 | `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
 | `wait_for_resources` | `Option<WaitForResources>` | Retry the start while the account lacks the memory or a concurrent-run slot for it (`ApiError::error_type` of `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`). See below. |
 
-The `wait_secs` argument of `call` (and of `wait_for_finish` on runs/builds) controls the
+### `ActorCallOptions`
+
+| Field | Type | Description |
+|---|---|---|
+| `start` | `ActorStartOptions` | The options of the run start. |
+| `wait_secs` | `Option<i64>` | The client-side polling budget, see below. |
+| `log` | `LogRedirect` | Where to redirect the run's log while waiting: `LogRedirect::Default` (the default) prints it to the standard output prefixed with `"{Actor name} runId:{run id} -> "`, `LogRedirect::Disabled` turns it off, and `LogRedirect::to_sink(..)` sends it to a [`LogSink`](runs.md#log-redirection) of your own. A redirection that ends early on an error does not fail the call; a `Log redirection stopped due to error: ..` message goes to the sink. |
+
+`call` starts the run without a client-side timeout, because a start that is aborted and retried
+could create a second run. A timeout set with the client's `with_timeout` replaces that for the
+start and applies to every poll as well. A start that times out is never retried, for `start`,
+`start_raw` and `build` too.
+
+`wait_secs` (and the `wait_secs` argument of `wait_for_finish` on runs/builds) controls the
 client-side polling budget:
 
 - `None` polls indefinitely until the run reaches a terminal state.
@@ -75,6 +90,7 @@ Set `ActorStartOptions::wait_for_resources` to retry the start every 10 seconds 
 
 - `WaitForResources::Forever` retries until the run starts.
 - `WaitForResources::ForSecs(secs)` stops retrying after that many seconds and returns the last
+  error. An infinite or huge value is the same as `Forever`, and `NaN` is an `InvalidArgument`
   error.
 
 Any other error is returned right away. A run that asks for more memory than the account's whole
@@ -82,7 +98,7 @@ memory limit is rejected with `actor-memory-limit-exceeded` too and never starts
 retries it forever. In `call`, time spent retrying the start does not count toward `wait_secs`.
 
 ```rust,no_run
-use apify_client::{ApifyClient, ActorStartOptions, WaitForResources};
+use apify_client::{ActorCallOptions, ActorStartOptions, ApifyClient, WaitForResources};
 
 # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 let client = ApifyClient::new("my-api-token");
@@ -92,11 +108,13 @@ let run = client
     .actor("username/actor-name")
     .call::<serde_json::Value>(
         None,
-        ActorStartOptions {
-            wait_for_resources: Some(WaitForResources::Forever),
+        ActorCallOptions {
+            start: ActorStartOptions {
+                wait_for_resources: Some(WaitForResources::Forever),
+                ..Default::default()
+            },
             ..Default::default()
         },
-        None,
     )
     .await?;
 # Ok(())

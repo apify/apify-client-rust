@@ -6,12 +6,15 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Build;
+use crate::timeouts::Timeout;
 
 /// Client for listing Actor builds.
 #[derive(Debug, Clone)]
 pub struct BuildCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(BuildCollectionClient);
 
 impl BuildCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -34,7 +37,7 @@ impl BuildCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all builds matching `options`, fetching pages on demand.

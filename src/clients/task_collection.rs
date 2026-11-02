@@ -8,12 +8,15 @@ use crate::common::{ListOptions, PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Task;
+use crate::timeouts::Timeout;
 
 /// Client for listing and creating Actor tasks.
 #[derive(Debug, Clone)]
 pub struct TaskCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(TaskCollectionClient);
 
 impl TaskCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -29,7 +32,7 @@ impl TaskCollectionClient {
             .add_int("offset", options.offset)
             .add_int("limit", options.limit)
             .add_bool("desc", options.desc);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all tasks matching `options`, fetching pages on demand.
@@ -44,6 +47,6 @@ impl TaskCollectionClient {
 
     /// Creates a new task from the given definition.
     pub async fn create<T: Serialize>(&self, task: &T) -> ApifyClientResult<Task> {
-        create_resource(&self.ctx, &QueryParams::new(), task).await
+        create_resource(&self.ctx, &QueryParams::new(), task, Timeout::Medium).await
     }
 }

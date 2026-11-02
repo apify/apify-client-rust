@@ -10,15 +10,18 @@
 
 #![allow(dead_code)]
 
-use apify_client::ApifyClient;
+pub mod mock_backend;
+
+use apify_client::{ApifyClient, ApifyClientBuilder};
 
 /// The API URL the tests target, mirroring the integration-test contract.
 const DEFAULT_API_URL: &str = "https://api.apify.com/v2";
 
-/// Builds an [`ApifyClient`] configured from the environment.
+/// Builds an [`ApifyClientBuilder`] configured from the environment, for tests that customize the
+/// client further.
 ///
 /// Returns `None` (so the caller can skip) if `APIFY_TOKEN` is not set.
-pub fn make_client() -> Option<ApifyClient> {
+pub fn make_client_builder() -> Option<ApifyClientBuilder> {
     let token = std::env::var("APIFY_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())?;
@@ -26,12 +29,14 @@ pub fn make_client() -> Option<ApifyClient> {
         .ok()
         .filter(|u| !u.is_empty());
     let base_url = resolve_base_url(api_url.as_deref());
-    Some(
-        ApifyClient::builder()
-            .token(token)
-            .base_url(base_url)
-            .build(),
-    )
+    Some(ApifyClient::builder().token(token).base_url(base_url))
+}
+
+/// Builds an [`ApifyClient`] configured from the environment.
+///
+/// Returns `None` (so the caller can skip) if `APIFY_TOKEN` is not set.
+pub fn make_client() -> Option<ApifyClient> {
+    make_client_builder().map(ApifyClientBuilder::build)
 }
 
 /// Resolves the client `base_url` from an optional `APIFY_API_URL`.
@@ -144,17 +149,17 @@ where
 
 /// Number of times [`iter_contains_eventually`] rebuilds the iterator and re-scans while waiting
 /// for a just-created resource to become visible in its collection LIST endpoint.
-pub const ITER_RETRY_ATTEMPTS: usize = 16;
+pub const ITER_RETRY_ATTEMPTS: usize = 32;
 
 /// Delay between the attempts made by [`iter_contains_eventually`].
-pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(1000);
+pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// Like [`iter_contains`], but tolerant of eventual consistency in collection LIST endpoints.
+/// Like [`iter_contains`], but tolerant of replica lag in collection LIST endpoints.
 ///
-/// A resource created through a write endpoint is not always immediately reflected in its
-/// collection's LIST response — the write and the list index converge asynchronously on the
-/// server. A create-then-iterate test that scans the collection exactly once therefore races that
-/// convergence and flakes when the just-created entity has not yet propagated.
+/// The list endpoints read from database secondaries that may trail the primary by up to 90
+/// seconds, so a resource created through a write endpoint is not always immediately reflected in
+/// its collection's LIST response. A create-then-iterate test that scans the collection exactly
+/// once therefore races that lag and flakes when the just-created entity has not yet propagated.
 ///
 /// This helper rebuilds a fresh iterator via `make_iter` and re-scans it with [`iter_contains`] up
 /// to [`ITER_RETRY_ATTEMPTS`] times, sleeping [`ITER_RETRY_BACKOFF`] between attempts, returning
@@ -162,13 +167,9 @@ pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_mi
 /// attempt and returns immediately with no sleeping — so it is a no-op in the common
 /// already-consistent case and only pays the backoff on the rare lagging run.
 ///
-/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = ~15s of retrying before giving up.
-/// This is deliberately larger than a "couple of seconds": the only Apify propagation lag actually
-/// measured in this suite is the dataset-items count settling at ~10s, and the collection LIST
-/// index convergence time is not independently measured, so a ~2s budget could let the flake recur
-/// at a lower (harder-to-diagnose) frequency. ~15s gives real headroom above the ~10s observation
-/// while still failing fast enough on a genuinely-missing entity (a true bug). The cost lands only
-/// on lagging or genuinely-failing runs; a consistent account never sleeps.
+/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = 93s of retrying before giving up,
+/// which covers the 90-second staleness window. The cost lands only on lagging or
+/// genuinely-failing runs; a consistent account never sleeps.
 pub async fn iter_contains_eventually<T, F, Mk>(mut make_iter: Mk, mut pred: F) -> bool
 where
     Mk: FnMut() -> apify_client::ListIterator<T>,

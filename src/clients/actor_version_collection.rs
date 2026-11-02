@@ -8,12 +8,15 @@ use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorVersion;
+use crate::timeouts::Timeout;
 
 /// Client for listing and creating Actor versions.
 #[derive(Debug, Clone)]
 pub struct ActorVersionCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(ActorVersionCollectionClient);
 
 impl ActorVersionCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -25,7 +28,7 @@ impl ActorVersionCollectionClient {
     /// Lists the Actor's versions. The endpoint takes no query parameters and returns every
     /// version in a single page.
     pub async fn list(&self) -> ApifyClientResult<PaginationList<ActorVersion>> {
-        list_resource(&self.ctx, None, &QueryParams::new()).await
+        list_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Lazily iterates over the Actor's versions.
@@ -39,6 +42,6 @@ impl ActorVersionCollectionClient {
 
     /// Creates a new Actor version.
     pub async fn create<T: Serialize>(&self, version: &T) -> ApifyClientResult<ActorVersion> {
-        create_resource(&self.ctx, &QueryParams::new(), version).await
+        create_resource(&self.ctx, &QueryParams::new(), version, Timeout::Short).await
     }
 }

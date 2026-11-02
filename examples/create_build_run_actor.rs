@@ -44,7 +44,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run the Actor and wait for it to finish.
     let run = actor_client
-        .call::<serde_json::Value>(None, Default::default(), Some(120))
+        .call::<serde_json::Value>(
+            None,
+            apify_client::ActorCallOptions {
+                wait_secs: Some(120),
+                ..Default::default()
+            },
+        )
         .await?;
     println!("Run {} status: {:?}", run.id, run.status);
 

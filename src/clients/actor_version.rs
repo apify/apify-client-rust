@@ -9,12 +9,15 @@ use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorVersion;
+use crate::timeouts::Timeout;
 
 /// Client for a specific Actor version.
 #[derive(Debug, Clone)]
 pub struct ActorVersionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(ActorVersionClient);
 
 impl ActorVersionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, version_number: &str) -> Self {
@@ -25,17 +28,17 @@ impl ActorVersionClient {
 
     /// Fetches the version, or `None` if it does not exist.
     pub async fn get(&self) -> ApifyClientResult<Option<ActorVersion>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
     /// Updates the version with the given fields.
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<ActorVersion> {
-        update_resource(&self.ctx, None, new_fields).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
     }
 
     /// Deletes the version.
     pub async fn delete(&self) -> ApifyClientResult<()> {
-        delete_resource(&self.ctx, None).await
+        delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
     /// Returns a client for a specific environment variable of this version.

@@ -6,6 +6,7 @@ use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::ActorStoreListItem;
+use crate::timeouts::Timeout;
 
 /// A lazy, page-fetching iterator over Apify Store Actors.
 ///
@@ -40,6 +41,10 @@ pub struct StoreListOptions {
     pub allows_agentic_users: Option<bool>,
     /// Response format requested from the API (`full` or `agent`, the API default is `full`).
     pub response_format: Option<String>,
+    /// If `true`, each Actor in the results includes an `inputSchema` field with a compact version
+    /// of the input schema of its default build (property types and required properties only).
+    /// With this option, the API defaults `limit` to `10` and does not accept a larger one.
+    pub include_input_schema: Option<bool>,
 }
 
 /// Client for the Apify Store.
@@ -47,6 +52,8 @@ pub struct StoreListOptions {
 pub struct StoreCollectionClient {
     ctx: ResourceContext,
 }
+
+crate::clients::base::impl_with_timeout!(StoreCollectionClient);
 
 impl StoreCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
@@ -64,7 +71,7 @@ impl StoreCollectionClient {
         options: StoreListOptions,
     ) -> ApifyClientResult<PaginationList<ActorStoreListItem>> {
         let params = self.build_params(&options);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates all Store Actors matching `options`, fetching pages on demand.
@@ -92,7 +99,8 @@ impl StoreCollectionClient {
             .add_str("pricingModel", options.pricing_model.clone())
             .add_bool("includeUnrunnableActors", options.include_unrunnable_actors)
             .add_bool("allowsAgenticUsers", options.allows_agentic_users)
-            .add_str("responseFormat", options.response_format.clone());
+            .add_str("responseFormat", options.response_format.clone())
+            .add_bool("includeInputSchema", options.include_input_schema);
         params
     }
 }

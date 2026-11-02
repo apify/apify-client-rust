@@ -8,6 +8,7 @@ use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
 use crate::models::Actor;
+use crate::timeouts::Timeout;
 
 /// Options for listing Actors (`GET /v2/actors`).
 #[derive(Debug, Default, Clone)]
@@ -30,6 +31,8 @@ pub struct ActorCollectionClient {
     ctx: ResourceContext,
 }
 
+crate::clients::base::impl_with_timeout!(ActorCollectionClient);
+
 impl ActorCollectionClient {
     pub(crate) fn new(http: HttpClient, base_url: &str) -> Self {
         Self {
@@ -51,7 +54,7 @@ impl ActorCollectionClient {
             .add_bool("desc", options.desc)
             .add_bool("my", options.my)
             .add_str("sortBy", options.sort_by);
-        list_resource(&self.ctx, None, &params).await
+        list_resource(&self.ctx, None, &params, Timeout::Medium).await
     }
 
     /// Lazily iterates over all Actors matching `options`, fetching pages on demand.
@@ -71,6 +74,6 @@ impl ActorCollectionClient {
     ///
     /// `actor` is any JSON-serializable Actor definition (at minimum a `name`).
     pub async fn create<T: Serialize>(&self, actor: &T) -> ApifyClientResult<Actor> {
-        create_resource(&self.ctx, &QueryParams::new(), actor).await
+        create_resource(&self.ctx, &QueryParams::new(), actor, Timeout::Medium).await
     }
 }

@@ -405,3 +405,46 @@ async fn actor_env_var_crud_flow() {
         "env var should be gone after delete"
     );
 }
+
+/// Simple GET: resolve the default build of an Actor and fetch it.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_default_build() {
+    let client = require_client!();
+    let build = client
+        .actor("apify/hello-world")
+        .default_build(None)
+        .await
+        .expect("resolve the default build");
+    let fetched = build
+        .get()
+        .await
+        .expect("get the default build")
+        .expect("the default build should exist");
+    assert!(!fetched.id.is_empty());
+}
+
+/// Simple GET: listing the webhooks of an Actor.
+#[tokio::test(flavor = "multi_thread")]
+async fn list_actor_webhooks() {
+    let client = require_client!();
+    let name = actor_name("actor-webhooks");
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&id).delete().await;
+    });
+
+    let page = client
+        .actor(&actor.id)
+        .webhooks()
+        .list(Default::default())
+        .await
+        .expect("listing the webhooks of an Actor should succeed");
+    assert!(page.total >= 0);
+}

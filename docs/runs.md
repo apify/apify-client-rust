@@ -15,6 +15,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `get()` | — | `Option<ActorRun>` | Fetches the run. |
+| `iterate_dataset_items::<T>(options)` | `DatasetListItemsOptions` | `RunDatasetItemsIterator<T>` | Lazily iterates the items of the run's default dataset while the run is still producing them, until it finishes. `with_chunk_size(n)` sets the rows per request (default 1000) and `with_poll_interval(d)` the wait for the run between polls (default 5s). `offset` and `limit` of the options bound the rows that are read; `desc: Some(true)` is rejected with `InvalidArgument`. A `last_run()` client sticks to the run its first request resolves to. |
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
@@ -23,19 +24,51 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
 | `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a run in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`). To continue a run that reached its cost limit, pass a higher `max_total_charge_usd`; the limit covers the whole run, including the cost before the resurrection. |
 | `charge(options)` | `RunChargeOptions` | `()` | Charges a pay-per-event run (always sends an idempotency key). |
-| `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely; `Some(n)` bounds the wait and may return a still-running (non-terminal) run if `n` elapses first. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
+| `wait_for_finish(wait_secs)` | `Option<i64>` | `ActorRun` | Polls until the run is terminal. `None` waits indefinitely, without a client-side timeout on the polls; `Some(n)` bounds the wait, gives each poll the `Medium` tier plus the hold it asks the API for, and may return a still-running (non-terminal) run if `n` elapses first. A timeout set with `with_timeout` replaces both. A run ID that keeps 404ing past a 3-second grace period (reset by any successful fetch) returns the `404` as an error instead of polling forever. |
 | `dataset()` / `key_value_store()` / `request_queue()` / `log()` | — | resource client | Access the run's default storages and log. |
-| `get_streamed_log()` | — | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Convenience for `log().stream()` — streams the run's log chunks live (log redirection). |
-| `get_streamed_log_with_options(options)` | `LogOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | As `get_streamed_log()`, forwarding `LogOptions` (e.g. `raw`) to the log stream. |
+| `get_streamed_log(options)` | `StreamedLogOptions { to_log, from_start }` | `Result<Option<StreamedLog>>` (async — `.await` it) | The [redirection](#log-redirection) of the run's log; `None` if `to_log` is `LogRedirect::Disabled`, or, for `LogRedirect::Default`, if the run does not exist. A custom sink makes no request, so a missing run shows up as the error of `stop()`. |
 
-`get_streamed_log()` / `get_streamed_log_with_options()` are `async` and yield the stream inside a
-`Result`, so `.await?` them to obtain it. Polling the returned stream with `.next()` requires the
-`futures_util::StreamExt` trait (from the `futures-util` crate — add `futures-util = "0.3"` to your
-`Cargo.toml`) in scope; the [`raw_log`](../examples/raw_log.rs) example drives
-`get_streamed_log_with_options` exactly this way. See
-[Logs](misc.md#logs--clientlogbuild_or_run_id) for a full streaming snippet.
+### Log redirection
 
-`RunResurrectOptions`: `build`, `memory_mbytes`, `timeout_secs`, `max_items`, `max_total_charge_usd`, `restart_on_error` (all optional).
+`get_streamed_log` returns a `StreamedLog`: `start()` spawns a task that follows the run's log, and
+`stop()` ends it (waiting up to a second for the lines in flight, then reading the rest of the
+log). The log is split into messages at the timestamps its lines begin with, so a stack trace
+stays in one piece, and each message goes to a `LogSink`:
+
+- `LogRedirect::Default` prints to the standard output, prefixing each message with
+  `"{Actor name} runId:{run id} -> "`. It costs a request for the run and one for its Actor.
+- `LogRedirect::to_sink(sink)` sends the messages, without a prefix, to a `LogSink`: a trait with
+  one method, implemented by every `Fn(&str) + Send + Sync + 'static` closure, so it can forward to
+  a logging framework.
+- `LogRedirect::Disabled` redirects nothing.
+
+`from_start: false` drops the messages stamped before the call. A run that has not logged yet is
+followed by reopening its empty log stream until the first bytes arrive. `ActorClient::call` does
+all of this for the run it waits for; when the redirection ends early on an error, it passes a
+`Log redirection stopped due to error: ..` message to the sink instead of failing the call. To
+read the log as raw chunks instead, use `run.log().stream_with_options(..)`; the
+[`raw_log`](../examples/raw_log.rs) example does.
+
+```rust,no_run
+use apify_client::{ApifyClient, LogRedirect, StreamedLogOptions};
+
+# async fn run(client: ApifyClient, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+let run = client.run(run_id);
+let mut streamed_log = run
+    .get_streamed_log(StreamedLogOptions {
+        to_log: LogRedirect::to_sink(|message: &str| println!("run -> {message}")),
+        from_start: true,
+    })
+    .await?
+    .ok_or("the run does not exist")?;
+streamed_log.start()?;
+run.wait_for_finish(None).await?;
+streamed_log.stop().await?;
+# Ok(())
+# }
+```
+
+`RunResurrectOptions`: `build`, `memory_mbytes`, `run_timeout_secs`, `max_items`, `max_total_charge_usd`, `restart_on_error` (all optional).
 
 `RunMetamorphOptions`: `build`, `content_type` (both optional; `content_type` defaults to `application/json`).
 
@@ -80,7 +113,9 @@ Leave a field as `None` to omit it.
 | `default_dataset_id` | `Option<String>` | Default dataset ID — pass to `client.dataset(..)` to read results. |
 | `default_key_value_store_id` | `Option<String>` | Default key-value store ID for the run. |
 | `default_request_queue_id` | `Option<String>` | Default request queue ID for the run. |
-| `container_url` | `Option<String>` | URL of the run's container, while running. |
+| `container_url` | `Option<String>` | URL of the run's container, while running. Normalized to its WHATWG URL serialization, like every URL field below. |
+| `console_url` | `Option<String>` | URL of the run in Apify Console. |
+| `output` | `Option<HashMap<String, String>>` | Output links of the run, generated from the output schema of the Actor build (present only if the build defines one). |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 The three `default_*_id` fields are `Option<String>` because they are only populated once the
@@ -94,7 +129,7 @@ use apify_client::ApifyClient;
 let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
 let run = client
     .actor("apify/hello-world")
-    .call::<serde_json::Value>(None, Default::default(), None)
+    .call::<serde_json::Value>(None, Default::default())
     .await?;
 
 println!("run {} finished with status {:?}", run.id, run.status);

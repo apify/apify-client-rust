@@ -17,7 +17,7 @@ Obtained via `client.schedules()` (collection) and `client.schedule(id)` (single
 | `get()` | — | `Option<Schedule>` | Fetches the schedule. |
 | `update(fields)` | `&impl Serialize` | `Schedule` | Updates the schedule. |
 | `delete()` | — | `()` | Deletes the schedule. |
-| `get_log()` | — | `Option<String>` | Fetches the schedule's invocation log. |
+| `get_log()` | — | `String` | Fetches the schedule's invocation log. A `404` is an error. |
 
 ## The `Schedule` model
 

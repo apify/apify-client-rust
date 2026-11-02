@@ -40,3 +40,21 @@ async fn iterate_store() {
     }
     assert!(seen > 0, "store iteration should yield at least one actor");
 }
+
+/// Simple GET: `include_input_schema` is accepted by the Store endpoint and adds the compact input
+/// schema to the listed Actors (the API then caps `limit` at 10).
+#[tokio::test(flavor = "multi_thread")]
+async fn list_store_with_input_schema() {
+    let client = require_client!();
+    let page = client
+        .store()
+        .list(StoreListOptions {
+            limit: Some(3),
+            include_input_schema: Some(true),
+            ..Default::default()
+        })
+        .await
+        .expect("listing the store with input schemas should succeed");
+    assert!(!page.items.is_empty(), "the Store lists Actors");
+    assert!(page.items.len() <= 3);
+}

@@ -87,3 +87,49 @@ async fn get_limits() {
     let limits = client.me().limits().await.expect("get limits");
     assert!(limits.is_object(), "limits should be a JSON object");
 }
+
+/// Simple GET: the by-id limits and monthly usage endpoints answer for the caller's own account,
+/// not only for `me`.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_limits_and_monthly_usage_by_user_id() {
+    let client = require_client!();
+    let user = client
+        .me()
+        .get()
+        .await
+        .expect("get current user")
+        .expect("current user should exist");
+
+    let by_id = client.user(&user.id);
+    let limits = by_id.limits().await.expect("get limits by user id");
+    assert!(limits.is_object(), "limits should be a JSON object");
+    let usage = by_id
+        .monthly_usage()
+        .await
+        .expect("get monthly usage by user id");
+    assert!(usage.is_object(), "monthly usage should be a JSON object");
+}
+
+/// A resource client with an explicit timeout aborts a request that outlives it. With no retries
+/// the first attempt is the only one, and no real request completes within a millisecond.
+#[tokio::test(flavor = "multi_thread")]
+async fn with_timeout_aborts_a_request_that_outlives_it() {
+    let Some(builder) = common::make_client_builder() else {
+        eprintln!("Skipping: APIFY_TOKEN is not set");
+        return;
+    };
+    let client = builder.max_retries(0).build();
+
+    let error = client
+        .me()
+        .with_timeout(apify_client::Timeout::Custom(
+            std::time::Duration::from_millis(1),
+        ))
+        .get()
+        .await
+        .expect_err("no response arrives within a millisecond");
+    assert!(
+        matches!(error, apify_client::ApifyClientError::Timeout),
+        "{error:?}"
+    );
+}

@@ -6,8 +6,9 @@ use serde_json::Value;
 use crate::clients::base::{get_resource, get_resource_required, ResourceContext};
 use crate::common::QueryParams;
 use crate::error::ApifyClientResult;
-use crate::http_client::HttpClient;
+use crate::http_client::{HttpClient, HttpMethod};
 use crate::models::User;
+use crate::timeouts::Timeout;
 
 /// Client for a specific user (or the current user via [`ApifyClient::me`]).
 ///
@@ -15,89 +16,76 @@ use crate::models::User;
 #[derive(Debug, Clone)]
 pub struct UserClient {
     ctx: ResourceContext,
-    is_me: bool,
 }
+
+crate::clients::base::impl_with_timeout!(UserClient);
 
 impl UserClient {
     pub(crate) fn new(http: HttpClient, base_url: &str, id: &str) -> Self {
         Self {
             ctx: ResourceContext::single(http, base_url, "users", id),
-            is_me: id == crate::client::ME_USER_PLACEHOLDER,
         }
     }
 
-    /// Fetches the user account information.
+    /// Fetches the user account information, or `None` if the user does not exist.
     ///
     /// For the current user (`me`) this returns private account details; for other users
     /// it returns the public profile.
     pub async fn get(&self) -> ApifyClientResult<Option<User>> {
-        get_resource(&self.ctx, None, &QueryParams::new()).await
+        get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }
 
-    /// Returns the current user's monthly usage for the current month. Only valid for the `me`
-    /// client. To fetch usage for a specific month, use [`UserClient::monthly_usage_for_date`].
+    /// Returns the user's monthly usage for the current month. To fetch usage for a specific
+    /// month, use [`UserClient::monthly_usage_for_date`].
+    ///
+    /// For a user other than the current one, only your own account and the organization your API
+    /// token belongs to can be accessed.
     pub async fn monthly_usage(&self) -> ApifyClientResult<Value> {
-        self.monthly_usage_for_date_named(None, "monthly_usage")
-            .await
+        self.monthly_usage_for_date(None).await
     }
 
-    /// Returns the current user's monthly usage, optionally for the month containing `date`.
+    /// Returns the user's monthly usage, optionally for the month containing `date`.
     ///
     /// `date` is an optional `YYYY-MM-DD` string selecting the month to report (the spec's
-    /// optional `date` query parameter on `GET /v2/users/me/usage/monthly`); passing `None`
-    /// returns the current month, which is equivalent to [`UserClient::monthly_usage`]. Only
-    /// valid for the `me` client.
+    /// optional `date` query parameter on `GET /v2/users/{userId}/usage/monthly`); passing `None`
+    /// returns the current month, which is equivalent to [`UserClient::monthly_usage`].
     pub async fn monthly_usage_for_date(&self, date: Option<&str>) -> ApifyClientResult<Value> {
-        self.monthly_usage_for_date_named(date, "monthly_usage_for_date")
-            .await
-    }
-
-    /// Shared implementation for [`UserClient::monthly_usage`] and
-    /// [`UserClient::monthly_usage_for_date`]. `method` is the caller's own public method name,
-    /// so the `me`-only guard error names the method the caller actually invoked.
-    async fn monthly_usage_for_date_named(
-        &self,
-        date: Option<&str>,
-        method: &str,
-    ) -> ApifyClientResult<Value> {
-        self.require_me(method)?;
         let mut params = QueryParams::new();
         params.add_str("date", date);
-        get_resource_required(&self.ctx, Some("usage/monthly"), &params).await
+        get_resource_required(&self.ctx, Some("usage/monthly"), &params, Timeout::Short).await
     }
 
-    /// Returns the current user's account and usage limits. Only valid for the `me` client.
+    /// Returns the user's account and usage limits.
+    ///
+    /// For a user other than the current one, only your own account and the organization your API
+    /// token belongs to can be accessed.
     pub async fn limits(&self) -> ApifyClientResult<Value> {
-        self.require_me("limits")?;
-        get_resource_required(&self.ctx, Some("limits"), &QueryParams::new()).await
+        get_resource_required(
+            &self.ctx,
+            Some("limits"),
+            &QueryParams::new(),
+            Timeout::Short,
+        )
+        .await
     }
 
-    /// Updates the current user's limits. Only valid for the `me` client.
+    /// Updates the user's limits.
+    ///
+    /// For a user other than the current one, only your own account and the organization your API
+    /// token belongs to can be accessed.
     pub async fn update_limits<T: Serialize>(&self, new_limits: &T) -> ApifyClientResult<()> {
-        self.require_me("update_limits")?;
-        let body = serde_json::to_vec(new_limits)?;
-        let url = self.ctx.url(Some("limits"));
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
+        // The endpoint's response body carries nothing, so it is ignored rather than parsed.
         self.ctx
-            .http
-            .call(crate::http_client::HttpRequest {
-                method: crate::http_client::HttpMethod::Put,
-                url,
+            .send_with(
+                HttpMethod::Put,
+                self.ctx.url(Some("limits")),
                 headers,
-                body: Some(body),
-                timeout: crate::clients::base::DEFAULT_REQUEST_TIMEOUT,
-            })
+                Some(serde_json::to_vec(new_limits)?),
+                self.ctx.timeout(Timeout::Short),
+            )
             .await?;
-        Ok(())
-    }
-
-    fn require_me(&self, method: &str) -> ApifyClientResult<()> {
-        if !self.is_me {
-            return Err(crate::error::ApifyClientError::InvalidArgument(format!(
-                "`{method}` is only available for the current user (use ApifyClient::me())"
-            )));
-        }
         Ok(())
     }
 }
