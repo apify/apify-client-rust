@@ -604,7 +604,7 @@ async fn a_non_positive_public_url_validity_is_rejected_before_any_request() {
     let dataset = client.dataset("d");
     let store = client.key_value_store("s");
 
-    for expires_in_secs in [0, -1] {
+    for expires_in_secs in [0, -1, i64::MAX] {
         assert!(is_invalid_argument(
             dataset
                 .create_items_public_url(Default::default(), Some(expires_in_secs))

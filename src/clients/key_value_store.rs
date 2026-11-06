@@ -9,7 +9,7 @@ use crate::clients::base::{
     update_resource, RawUpload, ResourceContext,
 };
 use crate::common::{
-    create_hmac_signature, sign_storage_content, to_path_segment, validate_expires_in_secs,
+    create_hmac_signature, public_url_expiry_millis, sign_storage_content, to_path_segment,
     QueryParams,
 };
 use crate::error::{ApifyClientError, ApifyClientResult};
@@ -351,14 +351,15 @@ impl KeyValueStoreClient {
     ///
     /// Like [`get_record_public_url`](Self::get_record_public_url), signs the URL with an
     /// HMAC-SHA256 `signature` for private stores. `expires_in_secs` optionally bounds a
-    /// signed URL's validity. It must be positive: `0` or a negative value fails with
+    /// signed URL's validity. It must be positive and not so large that its expiry overflows: `0`, a
+    /// negative or such a value fails with
     /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
     /// Leave it out for a URL that does not expire.
     pub async fn create_keys_public_url(
         &self,
         expires_in_secs: Option<i64>,
     ) -> ApifyClientResult<String> {
-        validate_expires_in_secs(expires_in_secs)?;
+        let expires_at_millis = public_url_expiry_millis(expires_in_secs)?;
         let mut params = QueryParams::new();
         if let Some(store) = self.get_for_public_url().await? {
             if let Some(secret) = store
@@ -366,7 +367,7 @@ impl KeyValueStoreClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &store.id, expires_in_secs);
+                let signature = sign_storage_content(secret, &store.id, expires_at_millis);
                 params.add_str("signature", Some(signature));
             }
         }

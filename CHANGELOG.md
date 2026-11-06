@@ -40,8 +40,9 @@ Ports the `apify-client-js` Server Actor support and the `count` of dataset item
   response starts, like the other calls, instead of failing on the first one.
 - `create_items_public_url`, `create_items_public_url_with_format` and `create_keys_public_url` fail
   with `InvalidArgument` for an `expires_in_secs` that is `0` or negative, before any request is
-  sent. Such a value used to sign a URL that had already expired. An enormous `expires_in_secs` no
-  longer overflows.
+  sent. Such a value used to sign a URL that had already expired. An `expires_in_secs` so large
+  that its expiry overflows fails with `InvalidArgument` too, instead of panicking or wrapping
+  around.
 - A `ListIterator` no longer ends in front of rows that match when a filter leaves a page with no
   items.
 

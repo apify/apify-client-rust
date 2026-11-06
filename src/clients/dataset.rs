@@ -9,7 +9,7 @@ use crate::clients::base::{
     ResourceContext,
 };
 use crate::clients::pagination::ListIterator;
-use crate::common::{sign_storage_content, validate_expires_in_secs, PaginationList, QueryParams};
+use crate::common::{public_url_expiry_millis, sign_storage_content, PaginationList, QueryParams};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
@@ -451,7 +451,8 @@ impl DatasetClient {
     /// public base URL. The served items are JSON; to request another export format, use
     /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
     ///
-    /// `expires_in_secs` must be positive: `0` or a negative value fails with
+    /// `expires_in_secs` must be positive and not so large that its expiry overflows: `0`, a
+    /// negative or such a value fails with
     /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
     /// Leave it out for a URL that does not expire.
     pub async fn create_items_public_url(
@@ -474,7 +475,7 @@ impl DatasetClient {
         expires_in_secs: Option<i64>,
         format: Option<DownloadItemsFormat>,
     ) -> ApifyClientResult<String> {
-        validate_expires_in_secs(expires_in_secs)?;
+        let expires_at_millis = public_url_expiry_millis(expires_in_secs)?;
         let mut params = QueryParams::new();
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
@@ -488,7 +489,7 @@ impl DatasetClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &dataset.id, expires_in_secs);
+                let signature = sign_storage_content(secret, &dataset.id, expires_at_millis);
                 params.add_str("signature", Some(signature));
             }
         }
