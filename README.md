@@ -436,16 +436,26 @@ The snippet below constructs a
 use std::sync::Arc;
 use apify_client::ApifyClient;
 use apify_client::http_client::ReqwestBackend;
+use reqwest::redirect::Policy;
 
-// Share a pre-configured reqwest client (proxy, TLS, connection pool, ...).
+// Share a pre-configured reqwest client (proxy, TLS, connection pool, ...). The requests that must
+// not follow redirects, such as those to an Actor's server, go through a second client: give it
+// the same settings, and a policy that follows no redirects.
 let reqwest_client = reqwest::Client::builder().build().unwrap();
-let backend = Arc::new(ReqwestBackend::with_client(reqwest_client));
+let no_redirect_client = reqwest::Client::builder()
+    .redirect(Policy::none())
+    .build()
+    .unwrap();
+let backend = Arc::new(
+    ReqwestBackend::with_client(reqwest_client).with_no_redirect_client(no_redirect_client),
+);
 let client = ApifyClient::builder().token("t").http_backend(backend).build();
 ```
 
 A `reqwest::Client` fixes its redirect policy when it is built, so `ReqwestBackend` sends the
 requests that must not follow redirects with a second client. `with_client` gives it a default one,
-and `with_no_redirect_client` replaces it with a client of yours, which has to be built with
+without your proxy, TLS or CA settings, so replace it with `with_no_redirect_client` when the
+requests to an Actor's server need those too. The replacement has to be built with
 `redirect(reqwest::redirect::Policy::none())`.
 
 ## License

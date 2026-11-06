@@ -53,8 +53,6 @@ pub enum HttpMethod {
     Patch,
     /// HTTP `OPTIONS`.
     Options,
-    /// HTTP `CONNECT`.
-    Connect,
     /// HTTP `TRACE`.
     Trace,
 }
@@ -70,7 +68,6 @@ impl HttpMethod {
             HttpMethod::Head => "HEAD",
             HttpMethod::Patch => "PATCH",
             HttpMethod::Options => "OPTIONS",
-            HttpMethod::Connect => "CONNECT",
             HttpMethod::Trace => "TRACE",
         }
     }
@@ -195,7 +192,6 @@ fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
         HttpMethod::Head => reqwest::Method::HEAD,
         HttpMethod::Patch => reqwest::Method::PATCH,
         HttpMethod::Options => reqwest::Method::OPTIONS,
-        HttpMethod::Connect => reqwest::Method::CONNECT,
         HttpMethod::Trace => reqwest::Method::TRACE,
     }
 }
@@ -408,6 +404,10 @@ pub(crate) struct CallOptions {
     /// Return a redirect response as it is, since the request carries a token that must not
     /// follow a redirect to a host the server picked.
     pub(crate) do_not_follow_redirects: bool,
+    /// For a streaming call: bound only the wait for the response to start, not the silence
+    /// between two chunks of its body. For a server that can stay silent while it keeps the
+    /// connection open.
+    pub(crate) no_stream_inactivity_timeout: bool,
 }
 
 /// The orchestrating HTTP client shared by every resource client.
@@ -537,9 +537,59 @@ impl HttpClient {
     /// instead of the error.
     pub(crate) async fn call_with_options(
         &self,
-        mut request: HttpRequest,
+        request: HttpRequest,
         options: CallOptions,
     ) -> ApifyClientResult<HttpResponse> {
+        self.call_with_retries(request, &options).await
+    }
+
+    /// Opens a streaming connection through the configured [`HttpBackend`]'s
+    /// [`HttpBackend::send_streaming`], with authentication, the user-agent header and the retry
+    /// policy applied like [`call_with_options`](Self::call_with_options), but with no request
+    /// compression. Like the reference clients, it retries until the response starts (an error
+    /// status or a transport error before it opens), and never once the body is being read: an
+    /// open stream, such as a log redirection or a large export already in flight, can't be
+    /// safely replayed from the start.
+    ///
+    /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
+    /// successful body below) and returns the same structured [`ApiError`] [`call_with_options`](Self::call_with_options)
+    /// would. On success, returns the body as a stream whose `.next()` must resolve within the
+    /// request's resolved timeout each time — bounding silence (a stalled connection) without
+    /// capping the stream's total duration, so a long-but-active stream (e.g. live log
+    /// redirection) is never cut off. The same timeout also bounds the initial wait for the
+    /// response to start.
+    pub(crate) async fn call_streaming(
+        &self,
+        request: HttpRequest,
+    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        let options = CallOptions {
+            compression: BodyCompression::Disabled,
+            ..CallOptions::default()
+        };
+        Ok(self.call_streaming_response(request, &options).await?.body)
+    }
+
+    /// Opens a streaming connection like [`call_streaming`](Self::call_streaming), but honors
+    /// `options` like [`call_with_options`](Self::call_with_options) does: with
+    /// [`CallOptions::return_error_responses`] the final error response is returned, with its
+    /// body unread, instead of the error. The body of the response is wrapped in the per-chunk
+    /// inactivity timeout that the request's timeout sets, unless
+    /// [`CallOptions::no_stream_inactivity_timeout`] says otherwise.
+    pub(crate) async fn call_streaming_response(
+        &self,
+        request: HttpRequest,
+        options: &CallOptions,
+    ) -> ApifyClientResult<StreamingHttpResponse> {
+        self.call_with_retries(request, options).await
+    }
+
+    /// The retry loop shared by the buffered and the streaming calls: sends `request` until an
+    /// attempt succeeds, no retry follows its failure, or the attempts run out.
+    async fn call_with_retries<R: AttemptResponse>(
+        &self,
+        mut request: HttpRequest,
+        options: &CallOptions,
+    ) -> ApifyClientResult<R> {
         self.fail_if_poisoned()?;
         self.stats.add_call();
         self.apply_headers(&mut request, options.authorization_header);
@@ -561,26 +611,27 @@ impl HttpClient {
         let mut attempt = 1;
         loop {
             // Grow the timeout of the attempt with each attempt, up to `timeout_max`.
+            let attempt_timeout = self.attempt_timeout(base_timeout, attempt);
             let mut attempt_request = request.clone();
-            attempt_request.timeout = self.attempt_timeout(base_timeout, attempt);
+            attempt_request.timeout = attempt_timeout;
 
             self.stats.add_request();
-            let outcome = match self.backend.send(attempt_request).await {
+            let outcome = match R::send(self.backend.as_ref(), attempt_request, options).await {
                 Ok(response) => {
-                    if response.status < MAX_SUCCESS_STATUS_CODE {
+                    let status = response.status();
+                    if status < MAX_SUCCESS_STATUS_CODE {
                         return Ok(response);
                     }
-                    if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE
-                        && !options.return_error_responses
+                    if status == RATE_LIMIT_EXCEEDED_STATUS_CODE && !options.return_error_responses
                     {
                         self.stats.add_rate_limit_error(attempt);
                     }
-                    let retryable =
-                        is_status_retryable(response.status, options.retry_status_codes);
+                    let retryable = is_status_retryable(status, options.retry_status_codes);
                     if options.return_error_responses && (!retryable || attempt == max_attempts) {
                         return Ok(response);
                     }
-                    let api_error = build_api_error(&response, attempt, &method_str, &path);
+                    let buffered = response.into_buffered(attempt_timeout).await;
+                    let api_error = build_api_error(&buffered, attempt, &method_str, &path);
                     (ApifyClientError::from(api_error), retryable)
                 }
                 Err(err) => {
@@ -625,81 +676,86 @@ impl HttpClient {
     pub(crate) fn user_agent(&self) -> &str {
         &self.user_agent
     }
+}
 
-    /// Sends `request` through the configured [`HttpBackend`]'s [`HttpBackend::send_streaming`],
-    /// with authentication and the user-agent header applied like [`call_with_options`](Self::call_with_options), but with
-    /// no retries and no request compression: matches the reference clients, which do not retry
-    /// an open stream (a log redirection or a large export already in flight can't be safely
-    /// replayed from the start).
-    ///
-    /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
-    /// successful body below) and returns the same structured [`ApiError`] [`call_with_options`](Self::call_with_options)
-    /// would. On success, returns the body as a stream whose `.next()` must resolve within the
-    /// request's resolved timeout each time — bounding silence (a stalled connection) without
-    /// capping the stream's total duration, so a long-but-active stream (e.g. live log
-    /// redirection) is never cut off. The same timeout also bounds the initial wait for the
-    /// response to start.
-    pub(crate) async fn call_streaming(
-        &self,
+/// A response that one attempt of a retried request yields: a buffered one, or a streaming one
+/// whose body is still unread.
+#[async_trait]
+trait AttemptResponse: Sized + Send {
+    /// Sends one attempt of `request` through `backend`.
+    async fn send(
+        backend: &dyn HttpBackend,
         request: HttpRequest,
-    ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
-        let method_str = request.method.as_str().to_string();
-        let path = extract_path(&request.url);
-        let options = CallOptions {
-            compression: BodyCompression::Disabled,
-            ..CallOptions::default()
-        };
-        let response = self.call_streaming_response(request, &options).await?;
-        if response.status < MAX_SUCCESS_STATUS_CODE {
-            return Ok(response.body);
-        }
+        options: &CallOptions,
+    ) -> ApifyClientResult<Self>;
 
-        // The error body arrives as a stream here too; read it so the failure carries the same
-        // structured `ApiError` (type/message/data) as every buffered endpoint, rather than losing
-        // the body to a generic transport error. A body that fails to read (e.g. the connection
-        // drops mid-response) still surfaces the status code, just without a parsed message.
-        let http_response = HttpResponse {
-            status: response.status,
-            headers: response.headers,
-            body: collect_body(response.body).await,
-        };
-        let api_error = build_api_error(&http_response, 1, &method_str, &path);
-        Err(ApifyClientError::from(api_error))
+    /// The HTTP status of the response.
+    fn status(&self) -> u16;
+
+    /// Reads the whole response within `timeout`, for the error of an error status.
+    async fn into_buffered(self, timeout: Duration) -> HttpResponse;
+}
+
+#[async_trait]
+impl AttemptResponse for HttpResponse {
+    async fn send(
+        backend: &dyn HttpBackend,
+        request: HttpRequest,
+        _options: &CallOptions,
+    ) -> ApifyClientResult<Self> {
+        backend.send(request).await
     }
 
-    /// Opens a streaming connection like [`call_streaming`](Self::call_streaming), but returns the
-    /// response of any status with its body unread, wrapped in the per-chunk inactivity timeout
-    /// that the request's timeout sets. The request is sent once, with no retries.
-    /// `options.compression` compresses the request body, and a `429` response counts toward the
-    /// [`Statistics`] unless `options.return_error_responses` takes the call for a non-API one.
-    pub(crate) async fn call_streaming_response(
-        &self,
-        mut request: HttpRequest,
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    async fn into_buffered(self, _timeout: Duration) -> HttpResponse {
+        self
+    }
+}
+
+#[async_trait]
+impl AttemptResponse for StreamingHttpResponse {
+    async fn send(
+        backend: &dyn HttpBackend,
+        request: HttpRequest,
         options: &CallOptions,
-    ) -> ApifyClientResult<StreamingHttpResponse> {
-        self.fail_if_poisoned()?;
-        self.stats.add_call();
-        self.stats.add_request();
-        self.apply_headers(&mut request, options.authorization_header);
-        self.compress_body(&mut request, &options.compression)?;
-
-        // The request timeout is both the response-start wait and the per-chunk inactivity
-        // window, so a stream that stays silent for that long (e.g. a run that logs nothing for
-        // the `Long` tier) times out. `Timeout::NoTimeout`, set with a resource client's
-        // `with_timeout`, turns that off.
-        let budget = request.timeout;
-
-        let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
+    ) -> ApifyClientResult<Self> {
+        // The request timeout bounds the wait for the response to start and, unless the options
+        // say otherwise, the silence between two chunks of the body: a stream that stays silent
+        // for that long (e.g. a run that logs nothing for the `Long` tier) times out.
+        // `Timeout::NoTimeout`, set with a resource client's `with_timeout`, turns that off.
+        let timeout = request.timeout;
+        let response = tokio::time::timeout(timeout, backend.send_streaming(request))
             .await
             .map_err(|_| ApifyClientError::Timeout)??;
-        if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE && !options.return_error_responses {
-            self.stats.add_rate_limit_error(1);
-        }
+        let body = if options.no_stream_inactivity_timeout {
+            response.body
+        } else {
+            with_inactivity_timeout(response.body, timeout)
+        };
         Ok(StreamingHttpResponse {
             status: response.status,
             headers: response.headers,
-            body: with_inactivity_timeout(response.body, budget),
+            body,
         })
+    }
+
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// The error body arrives as a stream here too; reading it lets the failure carry the same
+    /// structured `ApiError` (type/message/data) as every buffered endpoint, rather than losing
+    /// the body to a generic transport error. A body that fails to read (e.g. the connection
+    /// drops mid-response) still surfaces the status code, just without a parsed message.
+    async fn into_buffered(self, timeout: Duration) -> HttpResponse {
+        HttpResponse {
+            status: self.status,
+            headers: self.headers,
+            body: collect_body(with_inactivity_timeout(self.body, timeout)).await,
+        }
     }
 }
 

@@ -773,3 +773,112 @@ async fn the_default_backend_does_not_follow_a_redirect_when_asked_not_to() {
     assert_eq!(response.status, 302);
     assert_eq!(response.header("location"), Some("http://127.0.0.1:1/"));
 }
+
+#[tokio::test]
+async fn a_stream_response_is_retried_on_503_until_it_starts() {
+    let backend = MockBackend::new(vec![
+        actor(json!({})),
+        server_response(503, "starting"),
+        server_response(200, "ready"),
+    ]);
+    let client = client_with(backend.clone(), 2);
+
+    let mut response = client
+        .actor("a")
+        .server()
+        .request_stream("/", Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+    let chunk = response.body.next().await.unwrap().unwrap();
+    assert_eq!(chunk, b"ready");
+    assert_eq!(backend.call_count(), 3, "the actor and two attempts");
+}
+
+#[tokio::test]
+async fn a_stream_response_with_an_error_status_that_is_not_retried_is_returned_at_once() {
+    let backend = MockBackend::new(vec![actor(json!({})), server_response(500, "boom")]);
+    let client = client_with(backend.clone(), 3);
+
+    let response = client
+        .actor("a")
+        .server()
+        .request_stream("/", Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(backend.call_count(), 2);
+}
+
+/// A backend whose streaming responses start at once and then stay silent for a long while.
+#[derive(Debug)]
+struct SilentStreamBackend {
+    actor: Vec<u8>,
+}
+
+/// How long the stream of [`SilentStreamBackend`] stays silent between its two chunks.
+const SILENCE: std::time::Duration = std::time::Duration::from_secs(600);
+
+#[async_trait::async_trait]
+impl apify_client::http_client::HttpBackend for SilentStreamBackend {
+    async fn send(&self, _request: HttpRequest) -> apify_client::ApifyClientResult<HttpResponse> {
+        Ok(HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: self.actor.clone(),
+        })
+    }
+
+    async fn send_streaming(
+        &self,
+        _request: HttpRequest,
+    ) -> apify_client::ApifyClientResult<apify_client::http_client::StreamingHttpResponse> {
+        let body = futures_util::stream::unfold(0u8, |step| async move {
+            match step {
+                0 => Some((Ok(b"first".to_vec()), 1)),
+                1 => {
+                    tokio::time::sleep(SILENCE).await;
+                    Some((Ok(b"second".to_vec()), 2))
+                }
+                _ => None,
+            }
+        });
+        Ok(apify_client::http_client::StreamingHttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: Box::pin(body),
+        })
+    }
+}
+
+/// The timeout of a server stream bounds only the wait for the response to start: a server that
+/// keeps the connection open and stays silent between two chunks is not cut off.
+#[tokio::test(start_paused = true)]
+async fn a_server_stream_is_not_cut_off_while_the_server_stays_silent() {
+    let backend = Arc::new(SilentStreamBackend {
+        actor: json!({ "data": { "id": "a", "standbyUrl": SERVER_URL } })
+            .to_string()
+            .into_bytes(),
+    });
+    let client = apify_client::ApifyClient::builder()
+        .token("test-token")
+        .http_backend(backend)
+        .build();
+    let server = client
+        .actor("a")
+        .server()
+        .with_timeout(apify_client::Timeout::Short);
+
+    let mut response = server
+        .request_stream("/events", Default::default())
+        .await
+        .unwrap();
+    let mut chunks = Vec::new();
+    while let Some(chunk) = response.body.next().await {
+        chunks.push(chunk.expect("no timeout"));
+    }
+
+    assert_eq!(chunks, vec![b"first".to_vec(), b"second".to_vec()]);
+}

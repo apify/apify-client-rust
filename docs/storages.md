@@ -70,8 +70,8 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `get_statistics()` | — | `Value` | Field statistics. A `404` is an error. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
 | `download_items_stream(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Like `download_items`, but streams the export instead of buffering it, for constant-memory processing of a large export. |
-| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
-| `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. |
+| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. `expires` is the validity of the signed URL in seconds and must be positive: `0` or a negative value fails with `InvalidArgument`. Leave it out for a URL that does not expire. |
+| `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. `expires` must be positive too. |
 
 `DatasetListItemsOptions` (all optional):
 
@@ -164,7 +164,7 @@ println!("streamed {total_bytes} bytes of JSONL");
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
 | `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
-| `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
+| `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. `expires` is the validity of the signed URL in seconds and must be positive: `0` or a negative value fails with `InvalidArgument`. Leave it out for a URL that does not expire. |
 
 `ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`. Like
 `StoreListOptions.limit`, the meaning of `limit` depends on the method: for `list_keys` it is a

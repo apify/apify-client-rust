@@ -245,7 +245,7 @@ the old name.
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
 | `request(path, options)` | `&str`, `ActorServerRequestOptions` | `HttpResponse` | Sends a request to the Actor's server and buffers the response. |
-| `request_stream(path, options)` | `&str`, `ActorServerRequestOptions` | `StreamingHttpResponse` | Like `request`, with the response body as a stream. It is never retried. |
+| `request_stream(path, options)` | `&str`, `ActorServerRequestOptions` | `StreamingHttpResponse` | Like `request`, with the response body as a stream. It is retried like `request` until the response starts, and not once the body is being read. Its timeout bounds only the wait for the response to start, so a server that stays silent between two chunks, such as one that sends events, is not cut off. |
 | `get_url()` | — | `String` | The URL of the Actor's server. |
 | `get_open_api_spec()` | — | `Option<serde_json::Value>` | The Actor's web server schema, or `None` if its definition has none. |
 

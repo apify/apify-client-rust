@@ -343,6 +343,19 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
+/// Rejects a signed public URL validity that is not positive, before any request is sent. The
+/// signer reads an expiry of `0` as "never expires", so a `0` would make the URL permanent, and a
+/// negative value would make it expire before it is returned. Leave the validity out for a URL
+/// that does not expire.
+pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyClientResult<()> {
+    match expires_in_secs {
+        Some(secs) if secs <= 0 => Err(ApifyClientError::InvalidArgument(format!(
+            "`expires_in_secs` must be positive, got {secs}; leave it out for a URL that does not expire"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
 /// with the platform's `@apify/utilities` `createStorageContentSignature`.
 ///

@@ -1689,3 +1689,81 @@ async fn iterate_steps_by_the_count_the_api_reports_when_it_exceeds_the_items_re
     assert!(urls[1].contains("offset=3"), "{urls:?}");
     assert!(urls[2].contains("offset=6"), "{urls:?}");
 }
+
+/// A streaming call retries an error status until the response starts, like a buffered call.
+#[tokio::test]
+async fn a_stream_is_retried_on_an_error_status_until_the_response_starts() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(500, br#"{"error":{"message":"oops"}}"#.to_vec()),
+        MockOutcome::Status(429, br#"{"error":{"message":"slow down"}}"#.to_vec()),
+        MockOutcome::Status(200, b"log line".to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 3);
+
+    let stream = client
+        .log("run")
+        .stream()
+        .await
+        .expect("ok")
+        .expect("the log exists");
+    let chunks: Vec<Vec<u8>> = stream.map(|chunk| chunk.expect("a chunk")).collect().await;
+
+    assert_eq!(chunks.concat(), b"log line");
+    assert_eq!(backend.call_count(), 3);
+    assert_eq!(client.stats().rate_limit_errors().iter().sum::<u64>(), 1);
+}
+
+/// A streaming call retries a transport error before the response opens.
+#[tokio::test]
+async fn a_stream_is_retried_on_a_transport_error_before_the_response_opens() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::NetworkError,
+        MockOutcome::Status(200, b"items".to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 3);
+
+    let stream = client
+        .dataset("d")
+        .download_items_stream(apify_client::DownloadItemsFormat::Json, Default::default())
+        .await
+        .expect("the retry opens the response");
+    let chunks: Vec<Vec<u8>> = stream.map(|chunk| chunk.expect("a chunk")).collect().await;
+
+    assert_eq!(chunks.concat(), b"items");
+    assert_eq!(backend.call_count(), 2);
+}
+
+/// A streaming call that keeps failing fails with the structured API error of the last attempt,
+/// and one with a status that a retry cannot fix fails at once.
+#[tokio::test]
+async fn a_stream_fails_with_the_api_error_once_the_retries_run_out_or_cannot_help() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        503,
+        br#"{"error":{"type":"server-error","message":"down"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 2);
+    let error = client
+        .log("run")
+        .stream()
+        .await
+        .err()
+        .expect("the retries run out");
+    assert_eq!(backend.call_count(), 3);
+    let api = error.as_api_error().expect("an API error");
+    assert_eq!((api.status_code, api.attempt), (503, 3));
+    assert_eq!(api.message, "down");
+
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        400,
+        br#"{"error":{"message":"bad"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 2);
+    let error = client
+        .log("run")
+        .stream()
+        .await
+        .err()
+        .expect("a 400 is final");
+    assert_eq!(backend.call_count(), 1);
+    assert_eq!(error.status_code(), Some(400));
+}

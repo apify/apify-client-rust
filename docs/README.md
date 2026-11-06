@@ -149,7 +149,7 @@ Builder options:
 | `default_header(name, value)` | none | Header sent with every request. It wins over the built-in `User-Agent` and `Authorization` headers; a header a request sets itself wins over it. Names are compared case-insensitively. |
 | `request_compression(c)` | `Brotli` | Encoding for large request bodies: `RequestCompression::Brotli` (`br`) or `RequestCompression::Gzip` (`gzip`). |
 | `http_compressor(c)` | Brotli, quality 6 | A custom `Arc<dyn HttpCompressor>`: `BrotliHttpCompressor::new(quality)` (0 to 11, default 6), `GzipHttpCompressor::new(quality)` (1 to 9, default 6), or your own implementation. |
-| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). A request whose `timeout` is `timeouts::NO_TIMEOUT` may run for as long as it takes, so a backend must check for it before it applies a timeout of its own. |
+| `http_backend(b)` | reqwest | Replaceable HTTP transport (`apify_client::http_client::{HttpBackend, ReqwestBackend}`). A request whose `timeout` is `timeouts::NO_TIMEOUT` may run for as long as it takes, so a backend must check for it before it applies a timeout of its own. A request whose `follow_redirects` is `false`, such as one to an Actor's server, carries a token that must not follow a redirect to another host, so a backend must return a redirect response as it is. |
 
 Request bodies of at least 1024 bytes are compressed once (before retries) with the selected
 `request_compression` algorithm and sent with the matching `Content-Encoding` header. Brotli is

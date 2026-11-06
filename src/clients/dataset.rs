@@ -9,7 +9,7 @@ use crate::clients::base::{
     ResourceContext,
 };
 use crate::clients::pagination::ListIterator;
-use crate::common::{sign_storage_content, PaginationList, QueryParams};
+use crate::common::{sign_storage_content, validate_expires_in_secs, PaginationList, QueryParams};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
@@ -450,6 +450,10 @@ impl DatasetClient {
     /// optionally bounds the validity of a signed URL. The URL is built from the configured
     /// public base URL. The served items are JSON; to request another export format, use
     /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
+    ///
+    /// `expires_in_secs` must be positive: `0` or a negative value fails with
+    /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
+    /// Leave it out for a URL that does not expire.
     pub async fn create_items_public_url(
         &self,
         options: DatasetListItemsOptions,
@@ -462,13 +466,15 @@ impl DatasetClient {
     /// Like [`create_items_public_url`](Self::create_items_public_url), but lets the caller
     /// choose the `format` the items are served in (JSON, CSV, XLSX, ...) via a `format` query
     /// parameter on the generated URL. `None` defaults to `json`, matching the endpoint's own
-    /// default.
+    /// default. `expires_in_secs` must be positive, see
+    /// [`create_items_public_url`](Self::create_items_public_url).
     pub async fn create_items_public_url_with_format(
         &self,
         options: DatasetListItemsOptions,
         expires_in_secs: Option<i64>,
         format: Option<DownloadItemsFormat>,
     ) -> ApifyClientResult<String> {
+        validate_expires_in_secs(expires_in_secs)?;
         let mut params = QueryParams::new();
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));

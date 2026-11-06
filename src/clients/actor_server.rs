@@ -157,10 +157,7 @@ impl ActorServerClient {
     /// with a `404` [`ApiError`](crate::ApiError) when the Actor does not exist.
     pub async fn get_url(&self) -> ApifyClientResult<String> {
         self.server_url
-            .get_or_try_init(|| async {
-                let actor = self.fetch_server_actor().await?;
-                Ok(actor.standby_url.unwrap_or_default())
-            })
+            .get_or_try_init(|| async { Ok(self.fetch_server_actor().await?.1) })
             .await
             .cloned()
     }
@@ -177,7 +174,10 @@ impl ActorServerClient {
     /// the build that serves its server interface doesn't exist, and with a `404`
     /// [`ApiError`](crate::ApiError) when the Actor does not exist.
     pub async fn get_open_api_spec(&self) -> ApifyClientResult<Option<Value>> {
-        let actor = self.fetch_server_actor().await?;
+        let (actor, server_url) = self.fetch_server_actor().await?;
+        // Lets a later `get_url` and `request` skip fetching the Actor again. The URL is already
+        // set when an earlier call got there first, which is fine.
+        let _ = self.server_url.set(server_url);
         let build_ref = actor
             .actor_standby
             .as_ref()
@@ -264,10 +264,12 @@ impl ActorServerClient {
     /// Like [`request`](Self::request), but returns the response body as a stream instead of
     /// buffering it.
     ///
-    /// The response is returned with whatever status the server answers, and is never retried,
-    /// since a stream that is already open can't be replayed. The stream holds its connection open
-    /// until you read it to the end or drop it. The timeout of the request bounds the wait for
-    /// the server to start responding and the silence between two chunks of the body.
+    /// The response is returned with whatever status the server answers, and is retried like
+    /// [`request`](Self::request) until it starts. Once the body is being read, it is not, since a
+    /// stream that is already open can't be replayed. The stream holds its connection open until
+    /// you read it to the end or drop it. The timeout of the request bounds only the wait for the
+    /// server to start responding, so a server that keeps the connection open and stays silent
+    /// between two chunks, such as one that sends events, is not cut off.
     pub async fn request_stream(
         &self,
         path: &str,
@@ -344,13 +346,15 @@ impl ActorServerClient {
                 retry_status_codes: Some(SERVER_RETRY_STATUS_CODES),
                 do_not_retry_transport_errors: true,
                 do_not_follow_redirects: true,
+                no_stream_inactivity_timeout: true,
                 ..CallOptions::default()
             },
         })
     }
 
-    /// Fetches the Actor, checks that it is a Server Actor, and caches its server URL.
-    async fn fetch_server_actor(&self) -> ApifyClientResult<Actor> {
+    /// Fetches the Actor and checks that it is a Server Actor. Returns the Actor and its server
+    /// URL.
+    async fn fetch_server_actor(&self) -> ApifyClientResult<(Actor, String)> {
         let response = self
             .ctx
             .send(
@@ -360,12 +364,8 @@ impl ActorServerClient {
             )
             .await?;
         let actor: Actor = parse_data_envelope(&response.body)?;
-        match actor.standby_url.as_deref().filter(|url| !url.is_empty()) {
-            Some(url) => {
-                // Already set when a concurrent call got there first, which is fine.
-                let _ = self.server_url.set(url.to_string());
-                Ok(actor)
-            }
+        match actor.standby_url.clone().filter(|url| !url.is_empty()) {
+            Some(url) => Ok((actor, url)),
             None => Err(ApifyClientError::InvalidArgument(format!(
                 "Actor {} is not a Server Actor.",
                 self.id
@@ -394,14 +394,12 @@ impl ActorServerClient {
         Ok(None)
     }
 
-    /// The build collection of the Actor, with this client's timeout.
+    /// The build collection of the Actor, with this client's timeout. Without one, it lists with
+    /// the `Short` tier, like every other API request of this client, where the collection client
+    /// defaults to `Medium`.
     fn builds(&self) -> BuildCollectionClient {
-        let builds =
-            BuildCollectionClient::with_base(self.ctx.http.clone(), &self.ctx.url(None), "builds");
-        match self.ctx.timeout {
-            Some(timeout) => builds.with_timeout(timeout),
-            None => builds,
-        }
+        BuildCollectionClient::with_base(self.ctx.http.clone(), &self.ctx.url(None), "builds")
+            .with_timeout(self.ctx.timeout.unwrap_or(Timeout::Short))
     }
 
     /// A client for the build `id`, with this client's timeout.

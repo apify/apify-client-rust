@@ -19,7 +19,7 @@ Ports the `apify-client-js` Server Actor support and the `count` of dataset item
 - `Actor::standby_url`, `actor_standby` (`ActorStandby`, with the `tenancy` values `SINGLE_TENANT`
   and `MULTI_TENANT`) and `tagged_builds` (`TaggedBuildInfo`).
 - `ActorVersion::actor_path`, the Actor's directory inside an uploaded source.
-- `HttpMethod::Patch`, `Options`, `Connect` and `Trace`, `HttpRequest::follow_redirects`,
+- `HttpMethod::Patch`, `Options` and `Trace`, `HttpRequest::follow_redirects`,
   `ReqwestBackend::with_no_redirect_client`, and `HttpResponse::is_success`, `text` and `json`.
 
 ### Changed
@@ -35,6 +35,12 @@ Ports the `apify-client-js` Server Actor support and the `count` of dataset item
   response.
 
 ### Fixed
+- The streaming calls (`LogClient::stream`, `DatasetClient::download_items_stream` and
+  `ActorServerClient::request_stream`) retry an error status or a transport error until the
+  response starts, like the other calls, instead of failing on the first one.
+- `create_items_public_url`, `create_items_public_url_with_format` and `create_keys_public_url` fail
+  with `InvalidArgument` for an `expires_in_secs` that is `0` or negative, before any request is
+  sent. `0` used to make the URL permanent and a negative value made it expire at once.
 - A `ListIterator` no longer ends in front of rows that match when a filter leaves a page with no
   items.
 

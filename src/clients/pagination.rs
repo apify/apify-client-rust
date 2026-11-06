@@ -426,7 +426,7 @@ mod tests {
         let iter = ListIterator::new(0, None, fetch).with_chunk_size(3);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 3, 6]);
         // Offsets requested: 0, 3, 6, 9 (empty) — four calls, each advancing by the 3 rows counted
-        // rows rather than the 1 surviving item.
+        // rather than the 1 surviving item.
         assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
