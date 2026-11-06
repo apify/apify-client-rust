@@ -10,7 +10,7 @@ use crate::clients::base::{
 };
 use crate::common::{
     create_hmac_signature, public_url_expiry_millis, sign_storage_content, to_path_segment,
-    QueryParams,
+    validate_expires_in_secs, QueryParams,
 };
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
@@ -359,7 +359,7 @@ impl KeyValueStoreClient {
         &self,
         expires_in_secs: Option<i64>,
     ) -> ApifyClientResult<String> {
-        let expires_at_millis = public_url_expiry_millis(expires_in_secs)?;
+        validate_expires_in_secs(expires_in_secs)?;
         let mut params = QueryParams::new();
         if let Some(store) = self.get_for_public_url().await? {
             if let Some(secret) = store
@@ -367,7 +367,11 @@ impl KeyValueStoreClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &store.id, expires_at_millis);
+                let signature = sign_storage_content(
+                    secret,
+                    &store.id,
+                    public_url_expiry_millis(expires_in_secs),
+                );
                 params.add_str("signature", Some(signature));
             }
         }

@@ -9,7 +9,10 @@ use crate::clients::base::{
     ResourceContext,
 };
 use crate::clients::pagination::ListIterator;
-use crate::common::{public_url_expiry_millis, sign_storage_content, PaginationList, QueryParams};
+use crate::common::{
+    public_url_expiry_millis, sign_storage_content, validate_expires_in_secs, PaginationList,
+    QueryParams,
+};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
@@ -475,7 +478,7 @@ impl DatasetClient {
         expires_in_secs: Option<i64>,
         format: Option<DownloadItemsFormat>,
     ) -> ApifyClientResult<String> {
-        let expires_at_millis = public_url_expiry_millis(expires_in_secs)?;
+        validate_expires_in_secs(expires_in_secs)?;
         let mut params = QueryParams::new();
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
@@ -489,7 +492,11 @@ impl DatasetClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &dataset.id, expires_at_millis);
+                let signature = sign_storage_content(
+                    secret,
+                    &dataset.id,
+                    public_url_expiry_millis(expires_in_secs),
+                );
                 params.add_str("signature", Some(signature));
             }
         }

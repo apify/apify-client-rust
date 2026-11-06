@@ -271,8 +271,10 @@ impl ResourceContext {
     }
 
     /// Like [`send_with_options`](Self::send_with_options), for a response whose body the caller
-    /// reads incrementally: retries until the response starts, and returns the response of any
-    /// status that no retry follows (see [`HttpClient::call_streaming_response`]).
+    /// reads incrementally: retries until the response starts, then returns the response, or the
+    /// error of a failed one, like [`send_with_options`](Self::send_with_options). With
+    /// [`CallOptions::return_error_responses`] it returns the response of any status that no retry
+    /// follows (see [`HttpClient::call_streaming_response`]).
     pub(crate) async fn send_streaming_with_options(
         &self,
         method: HttpMethod,

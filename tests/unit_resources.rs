@@ -642,3 +642,60 @@ async fn a_positive_public_url_validity_signs_the_url() {
 
     assert!(url.contains("signature="), "{url}");
 }
+
+/// How long the slow storage lookup of the next test takes.
+const SLOW_LOOKUP: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// A backend whose responses take [`SLOW_LOOKUP`].
+#[derive(Debug)]
+struct SlowBackend;
+
+#[async_trait::async_trait]
+impl apify_client::http_client::HttpBackend for SlowBackend {
+    async fn send(
+        &self,
+        _request: apify_client::http_client::HttpRequest,
+    ) -> Result<apify_client::http_client::HttpResponse, ApifyClientError> {
+        tokio::time::sleep(SLOW_LOOKUP).await;
+        Ok(apify_client::http_client::HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: json!({ "data": { "id": "x", "urlSigningSecretKey": "secret" } })
+                .to_string()
+                .into_bytes(),
+        })
+    }
+}
+
+/// The validity of a signed URL counts from when the URL is signed, so the time the storage lookup
+/// before it takes does not come off the validity.
+#[tokio::test]
+async fn the_validity_of_a_signed_url_counts_from_after_the_storage_lookup() {
+    use base64::Engine;
+    const VALIDITY_SECS: i64 = 1;
+    const SLACK_MILLIS: i64 = 200;
+
+    let client = apify_client::ApifyClient::builder()
+        .token("test-token")
+        .http_backend(std::sync::Arc::new(SlowBackend))
+        .build();
+
+    let url = client
+        .key_value_store("s")
+        .create_keys_public_url(Some(VALIDITY_SECS))
+        .await
+        .unwrap();
+    let returned_at_millis = chrono::Utc::now().timestamp_millis();
+
+    let signature = url.split("signature=").nth(1).expect("a signature");
+    let envelope = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(signature)
+        .unwrap();
+    let envelope = String::from_utf8(envelope).unwrap();
+    let expires_at_millis: i64 = envelope.split('.').nth(1).unwrap().parse().unwrap();
+    assert!(
+        expires_at_millis - returned_at_millis >= VALIDITY_SECS * 1000 - SLACK_MILLIS,
+        "the lookup came off the validity: {} ms left",
+        expires_at_millis - returned_at_millis
+    );
+}

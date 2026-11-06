@@ -343,34 +343,42 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
-/// The expiry that a signed public URL gets, as the absolute time in milliseconds: `0` when
-/// `expires_in_secs` is left out, which signs a URL that does not expire.
-///
-/// Fails with [`ApifyClientError::InvalidArgument`], before any request is sent, for a validity
-/// that is not positive, since `0` and negative values would sign a URL that has already expired,
-/// and for one so large that its expiry overflows.
-pub(crate) fn public_url_expiry_millis(expires_in_secs: Option<i64>) -> ApifyClientResult<i64> {
-    let Some(secs) = expires_in_secs else {
-        return Ok(0);
-    };
-    if secs <= 0 {
-        return Err(ApifyClientError::InvalidArgument(format!(
+/// The longest validity of a signed public URL, in seconds. It is half of what fits in
+/// milliseconds in an `i64`, which keeps the current time plus the validity from overflowing.
+const MAX_EXPIRES_IN_SECS: i64 = i64::MAX / MILLIS_PER_SECOND / 2;
+
+/// Checks the validity of a signed public URL before any request is sent. `None` is a URL that
+/// does not expire. A validity has to be positive, since `0` and negative values would sign a URL
+/// that has already expired, and at most [`MAX_EXPIRES_IN_SECS`], so that its expiry can't
+/// overflow. Fails with [`ApifyClientError::InvalidArgument`] otherwise.
+pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyClientResult<()> {
+    match expires_in_secs {
+        Some(secs) if secs <= 0 => Err(ApifyClientError::InvalidArgument(format!(
             "`expires_in_secs` must be positive, got {secs}; leave it out for a URL that does not expire"
-        )));
+        ))),
+        Some(secs) if secs > MAX_EXPIRES_IN_SECS => Err(ApifyClientError::InvalidArgument(format!(
+            "`expires_in_secs` must be at most {MAX_EXPIRES_IN_SECS}, got {secs}"
+        ))),
+        _ => Ok(()),
     }
-    secs.checked_mul(MILLIS_PER_SECOND)
-        .and_then(|millis| chrono::Utc::now().timestamp_millis().checked_add(millis))
-        .ok_or_else(|| {
-            ApifyClientError::InvalidArgument(format!("`expires_in_secs` is too large, got {secs}"))
-        })
+}
+
+/// The expiry that a signed public URL gets, as the absolute time in milliseconds: the current
+/// time plus the validity, or `0` for a URL that does not expire. Call it when the URL is signed,
+/// so that the time the request before it took doesn't come off the validity, with a validity that
+/// passed [`validate_expires_in_secs`].
+pub(crate) fn public_url_expiry_millis(expires_in_secs: Option<i64>) -> i64 {
+    match expires_in_secs {
+        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
+        None => 0,
+    }
 }
 
 /// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
 /// with the platform's `@apify/utilities` `createStorageContentSignature`.
 ///
 /// It signs the message `"{version}.{expiresAtMillis}.{resourceId}"` (where `expiresAtMillis`
-/// is the absolute expiry in milliseconds, as [`public_url_expiry_millis`] returns it, or `0` for
-/// a non-expiring URL) with
+/// is the absolute expiry in milliseconds, as [`public_url_expiry_millis`] returns it) with
 /// [`create_hmac_signature`], then returns the base64url (no padding) encoding of
 /// `"{version}.{expiresAtMillis}.{hmac}"`. Used for dataset-items and key-list public URLs.
 pub(crate) fn sign_storage_content(
@@ -551,18 +559,24 @@ mod signature_tests {
         assert_eq!(decoded, format!("0.0.{expected_hmac}"));
     }
 
-    // A validity is positive and its expiry fits: `None` never expires, a positive one is in the
-    // future, and `0`, a negative one and one whose expiry overflows are refused.
+    // A validity is positive and at most the maximum: `None` never expires and a positive one is
+    // in the future, while `0`, a negative one and one beyond the maximum are refused.
     #[test]
-    fn public_url_expiry_is_validated() {
-        use super::public_url_expiry_millis;
+    fn public_url_validity_is_validated_and_turned_into_an_expiry() {
+        use super::{public_url_expiry_millis, validate_expires_in_secs, MAX_EXPIRES_IN_SECS};
         let now = chrono::Utc::now().timestamp_millis();
 
-        assert_eq!(public_url_expiry_millis(None).unwrap(), 0);
-        let expiry = public_url_expiry_millis(Some(60)).unwrap();
+        assert_eq!(public_url_expiry_millis(None), 0);
+        let expiry = public_url_expiry_millis(Some(60));
         assert!((now + 60_000..=now + 70_000).contains(&expiry), "{expiry}");
-        for secs in [0, -1, i64::MIN, i64::MAX, i64::MAX / 1000] {
-            let error = public_url_expiry_millis(Some(secs)).expect_err("refused");
+        // The longest validity still has an expiry that fits.
+        assert!(public_url_expiry_millis(Some(MAX_EXPIRES_IN_SECS)) > now);
+
+        for secs in [None, Some(1), Some(MAX_EXPIRES_IN_SECS)] {
+            validate_expires_in_secs(secs).expect("accepted");
+        }
+        for secs in [0, -1, i64::MIN, MAX_EXPIRES_IN_SECS + 1, i64::MAX] {
+            let error = validate_expires_in_secs(Some(secs)).expect_err("refused");
             assert!(
                 matches!(error, crate::ApifyClientError::InvalidArgument(_)),
                 "{secs}: {error:?}"
