@@ -299,6 +299,7 @@ async fn actor_version_crud_flow() {
         .update(&ActorVersion {
             version_number: "0.1".to_string(),
             source_type: Some("SOURCE_FILES".to_string()),
+            actor_path: None,
             extra: serde_json::from_value(json!({
                 "buildTag": "latest",
                 "sourceFiles": [
@@ -327,6 +328,92 @@ async fn actor_version_crud_flow() {
             .is_none(),
         "version 0.1 should be gone after delete"
     );
+}
+
+/// Actor version `actorPath`: set on create, kept by updates of other fields, removed by an upload
+/// without it or by `null`.
+#[tokio::test(flavor = "multi_thread")]
+async fn actor_version_actor_path_flow() {
+    let client = require_client!();
+    let name = actor_name("ver-path");
+    let actor = client
+        .actors()
+        .create(&actor_definition(&name))
+        .await
+        .expect("create actor");
+
+    let cleanup_client = client.clone();
+    let cleanup_id = actor.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.actor(&cleanup_id).delete().await;
+    });
+
+    let actor_path = "actors/typescript-actor";
+    let source_files = json!([
+        {
+            "name": "actors/typescript-actor/Dockerfile",
+            "format": "TEXT",
+            "content": "FROM apify/actor-node:20\nCOPY . ./\nCMD node main.js"
+        },
+        {
+            "name": "actors/typescript-actor/main.js",
+            "format": "TEXT",
+            "content": "console.log('monorepo');"
+        }
+    ]);
+    let actor_client = client.actor(&actor.id);
+
+    // Create a version with an `actorPath`.
+    let created = actor_client
+        .versions()
+        .create(&json!({
+            "versionNumber": "0.1",
+            "sourceType": "SOURCE_FILES",
+            "buildTag": "beta",
+            "sourceFiles": source_files,
+            "actorPath": actor_path,
+        }))
+        .await
+        .expect("create version with actorPath");
+    assert_eq!(created.actor_path.as_deref(), Some(actor_path));
+
+    let version_client = actor_client.version("0.1");
+    let fetched = version_client
+        .get()
+        .await
+        .expect("get version")
+        .expect("version 0.1 should exist");
+    assert_eq!(fetched.actor_path.as_deref(), Some(actor_path));
+
+    // An update of other fields keeps the path.
+    let updated = version_client
+        .update(&json!({ "buildTag": "latest" }))
+        .await
+        .expect("update build tag");
+    assert_eq!(updated.actor_path.as_deref(), Some(actor_path));
+
+    // An upload without the path removes it.
+    let updated = version_client
+        .update(&json!({ "sourceType": "SOURCE_FILES", "sourceFiles": source_files }))
+        .await
+        .expect("upload without actorPath");
+    assert_eq!(updated.actor_path, None);
+
+    // Sending it again with an upload sets it, and `null` removes it.
+    let updated = version_client
+        .update(&json!({
+            "sourceType": "SOURCE_FILES",
+            "sourceFiles": source_files,
+            "actorPath": actor_path,
+        }))
+        .await
+        .expect("upload with actorPath");
+    assert_eq!(updated.actor_path.as_deref(), Some(actor_path));
+    let updated = version_client
+        .update(&json!({ "actorPath": null }))
+        .await
+        .expect("remove actorPath");
+    assert_eq!(updated.actor_path, None);
 }
 
 /// Actor version environment variables: create -> get -> list -> update -> delete.

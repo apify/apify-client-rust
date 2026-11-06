@@ -592,3 +592,150 @@ async fn public_urls_of_storages_chained_from_a_filtered_last_run_carry_its_filt
         assert!(url.contains("status=SUCCEEDED"), "{url}");
     }
 }
+
+// ----- signed public URL validity ---------------------------------------------------------
+
+/// A validity of `0` or below would make a signed URL permanent or already expired, so it is
+/// refused before any request is sent.
+#[tokio::test]
+async fn a_non_positive_public_url_validity_is_rejected_before_any_request() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "id": "x" }))]);
+    let client = client_with(backend.clone(), 0);
+    let dataset = client.dataset("d");
+    let store = client.key_value_store("s");
+
+    for expires_in_secs in [0, -1, i64::MAX] {
+        assert!(is_invalid_argument(
+            dataset
+                .create_items_public_url(Default::default(), Some(expires_in_secs))
+                .await
+        ));
+        assert!(is_invalid_argument(
+            dataset
+                .create_items_public_url_with_format(
+                    Default::default(),
+                    Some(expires_in_secs),
+                    None
+                )
+                .await
+        ));
+        assert!(is_invalid_argument(
+            store.create_keys_public_url(Some(expires_in_secs)).await
+        ));
+    }
+    assert_eq!(backend.call_count(), 0);
+}
+
+/// A positive validity signs the URL of a private storage with an expiry.
+#[tokio::test]
+async fn a_positive_public_url_validity_signs_the_url() {
+    let backend = MockBackend::new(vec![ok_data(
+        json!({ "id": "x", "urlSigningSecretKey": "secret" }),
+    )]);
+    let client = client_with(backend, 0);
+
+    let url = client
+        .key_value_store("s")
+        .create_keys_public_url(Some(60))
+        .await
+        .unwrap();
+
+    assert!(url.contains("signature="), "{url}");
+}
+
+/// How long the slow storage lookup of the signing tests takes.
+const SLOW_LOOKUP: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// A backend whose responses take [`SLOW_LOOKUP`].
+#[derive(Debug)]
+struct SlowBackend;
+
+#[async_trait::async_trait]
+impl apify_client::http_client::HttpBackend for SlowBackend {
+    async fn send(
+        &self,
+        _request: apify_client::http_client::HttpRequest,
+    ) -> Result<apify_client::http_client::HttpResponse, ApifyClientError> {
+        tokio::time::sleep(SLOW_LOOKUP).await;
+        Ok(apify_client::http_client::HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: json!({ "data": { "id": "x", "urlSigningSecretKey": "secret" } })
+                .to_string()
+                .into_bytes(),
+        })
+    }
+}
+
+/// The validity the signing tests ask for, in seconds.
+const VALIDITY_SECS: i64 = 1;
+
+/// How much of the validity the signing tests tolerate to be lost to the time between signing the
+/// URL and reading the clock, in milliseconds. It stays well below [`SLOW_LOOKUP`].
+const SLACK_MILLIS: i64 = 200;
+
+/// Milliseconds in a second.
+const MILLIS_PER_SECOND: i64 = 1000;
+
+/// A client whose requests take [`SLOW_LOOKUP`].
+fn slow_client() -> apify_client::ApifyClient {
+    apify_client::ApifyClient::builder()
+        .token("test-token")
+        .http_backend(std::sync::Arc::new(SlowBackend))
+        .build()
+}
+
+/// Checks that the signed `url`, which was just returned, still has about [`VALIDITY_SECS`] left:
+/// the time the storage lookup before the signing took did not come off the validity.
+fn assert_validity_counts_from_signing(url: &str) {
+    use base64::Engine;
+
+    let returned_at_millis = chrono::Utc::now().timestamp_millis();
+    let signature = url.split("signature=").nth(1).expect("a signature");
+    let envelope = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(signature)
+        .unwrap();
+    let envelope = String::from_utf8(envelope).unwrap();
+    let expires_at_millis: i64 = envelope.split('.').nth(1).unwrap().parse().unwrap();
+    let left_millis = expires_at_millis - returned_at_millis;
+    assert!(
+        left_millis >= VALIDITY_SECS * MILLIS_PER_SECOND - SLACK_MILLIS,
+        "the lookup came off the validity: {left_millis} ms left"
+    );
+}
+
+/// The validity of a signed URL counts from when the URL is signed, so the time the storage lookup
+/// before it takes does not come off the validity.
+#[tokio::test]
+async fn the_validity_of_a_signed_keys_url_counts_from_after_the_storage_lookup() {
+    let url = slow_client()
+        .key_value_store("s")
+        .create_keys_public_url(Some(VALIDITY_SECS))
+        .await
+        .unwrap();
+
+    assert_validity_counts_from_signing(&url);
+}
+
+/// The same holds for the items URL of a dataset.
+#[tokio::test]
+async fn the_validity_of_a_signed_items_url_counts_from_after_the_dataset_lookup() {
+    let client = slow_client();
+    let dataset = client.dataset("d");
+
+    let url = dataset
+        .create_items_public_url(Default::default(), Some(VALIDITY_SECS))
+        .await
+        .unwrap();
+    assert_validity_counts_from_signing(&url);
+
+    let url = dataset
+        .create_items_public_url_with_format(
+            Default::default(),
+            Some(VALIDITY_SECS),
+            Some(apify_client::DownloadItemsFormat::Csv),
+        )
+        .await
+        .unwrap();
+    assert_validity_counts_from_signing(&url);
+}

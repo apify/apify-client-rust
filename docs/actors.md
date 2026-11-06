@@ -32,6 +32,8 @@ be an Actor ID or a `username~name` (or `username/name`) reference.
 | `runs()` | — | `RunCollectionClient` | The Actor's run collection. |
 | `version(n)` / `versions()` | `&str` / — | `ActorVersionClient` / collection | Version management. |
 | `webhooks()` | — | `WebhookCollectionClient` | The Actor's webhooks. |
+| `server()` | — | `ActorServerClient` | Client for the server interface of a [Server Actor](#server-actors). |
+| `standby()` | — | `ActorServerClient` | Deprecated alias of `server()`, named after Actor Standby, the former name of Server Actors. |
 
 ### `ActorStartOptions`
 
@@ -190,6 +192,9 @@ example:
 | `is_public` | `Option<bool>` | Whether the Actor is published in Apify Store. |
 | `created_at` | `Option<DateTime<Utc>>` | When the Actor was created. |
 | `modified_at` | `Option<DateTime<Utc>>` | When the Actor was last modified. |
+| `standby_url` | `Option<String>` | URL for sending requests to the Actor's server, or `None` if the Standby mode isn't enabled. |
+| `actor_standby` | `Option<ActorStandby>` | The Standby mode configuration: `is_enabled`, `desired_requests_per_actor_run`, `max_requests_per_actor_run`, `idle_timeout_secs`, `build`, `memory_mbytes`, `disable_standby_fields_override`, `should_pass_actor_input`, `tenancy` (`SINGLE_TENANT` or `MULTI_TENANT`), `is_console_auth_enabled` and `is_tokenless_enabled`. When creating an Actor, omit the last two or set them to `false`; when updating one, only Apify administrators can change them. |
+| `tagged_builds` | `Option<HashMap<String, Option<TaggedBuildInfo>>>` | Maps build tag names (e.g. `latest`) to `TaggedBuildInfo { build_id, build_number, finished_at }`. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
 ```rust,no_run
@@ -230,12 +235,138 @@ println!("build {} status {:?}", build.id, build.status);
 # }
 ```
 
+## Server Actors
+
+A Server Actor (formerly Actor Standby) runs a web server. You call it over HTTP, and the
+platform keeps a run ready to answer, so each call skips the run startup. `ActorClient::server()`
+returns an `ActorServerClient` for it. The Actor's `standbyUrl` and `actorStandby` fields still use
+the old name.
+
+| Method | Arguments | Returns | Description |
+|---|---|---|---|
+| `request(path, options)` | `&str`, `ActorServerRequestOptions` | `HttpResponse` | Sends a request to the Actor's server and buffers the response. |
+| `request_stream(path, options)` | `&str`, `ActorServerRequestOptions` | `StreamingHttpResponse` | Like `request`, with the response body as a stream. It is retried like `request` until the response starts, and not once the body is being read. Its timeout bounds only the wait for the response to start, so a server that stays silent between two chunks, such as one that sends events, is not cut off. |
+| `get_url()` | — | `String` | The URL of the Actor's server. |
+| `get_open_api_spec()` | — | `Option<serde_json::Value>` | The Actor's web server schema, or `None` if its definition has none. |
+
+`ActorServerRequestOptions` has these fields, all optional:
+
+| Field | Type | Description |
+|---|---|---|
+| `method` | `Option<HttpMethod>` | HTTP method of the request. Default is `GET`. |
+| `params` | `Vec<(String, String)>` | Query parameters of the request, in order. A key can repeat. |
+| `headers` | `HashMap<String, String>` | Additional headers of the request. They reach the Actor's server as they are, `Authorization` included. |
+| `body` | `Option<ActorServerBody>` | `Json(Value)` (sent with `Content-Type: application/json` unless you set a content type), `Text(String)` or `Bytes(Vec<u8>)` (both sent as they are). `ActorServerBody::json(&value)` serializes a value. |
+| `compression` | `Option<ActorServerCompression>` | `Algorithm(RequestCompression)` or `Custom(Arc<dyn HttpCompressor>)`. The body is sent uncompressed when it's `None`, since the Actor's server may not decode a compressed body. Set it only if the server decodes the resulting `Content-Encoding`. |
+
+```rust,no_run
+use apify_client::{ActorServerBody, ActorServerRequestOptions, ApifyClient};
+use apify_client::http_client::HttpMethod;
+use serde_json::json;
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new("my-api-token");
+let server = client.actor("username/actor-name").server();
+
+// Send a GET request to the /search endpoint of the Actor's server.
+// The method returns error responses too, so check the status first.
+let search = server
+    .request(
+        "/search",
+        ActorServerRequestOptions {
+            params: vec![("q".to_string(), "apify".to_string())],
+            ..Default::default()
+        },
+    )
+    .await?;
+if !search.is_success() {
+    return Err(format!("Search failed with status {}", search.status).into());
+}
+println!("{}", search.text());
+
+// Send a POST request with a JSON body.
+let items = server
+    .request(
+        "/items",
+        ActorServerRequestOptions {
+            method: Some(HttpMethod::Post),
+            body: Some(ActorServerBody::Json(json!({ "url": "https://apify.com" }))),
+            ..Default::default()
+        },
+    )
+    .await?;
+println!("{}", items.status);
+# Ok(())
+# }
+```
+
+`HttpResponse` has the `status`, the `headers` and the `body` bytes, with `header(name)`,
+`is_success()`, `text()` and `json::<T>()` to read them. The body of `request_stream` is a stream of
+byte chunks, like the other streaming methods.
+
+How the request is sent:
+
+- The server URL is the Actor's `standby_url`. The first call of `request`, `get_url` or
+  `get_open_api_spec` fetches the Actor and every client returned by the same `ActorClient` reuses
+  the URL. A call on an Actor that isn't a Server Actor fails with `InvalidArgument`, and one on a
+  missing Actor fails with the `404` `ApiError`.
+- The path is always resolved against that URL, so it can't send the request to another host. A
+  fragment (`#...`) is dropped.
+- The token goes in the `X-Apify-Authorization` header, which the platform removes before it
+  forwards the request, so the token doesn't reach the Actor's code. The headers you pass reach
+  the Actor as they are. If the Actor reads the `Authorization` header for its own
+  authentication, pass that header in `headers`.
+- Redirects are not followed, and a redirect response is returned as it is, since following it would
+  send the token to a host the Actor's code picked.
+- The timeout defaults to the `Long` tier, to cover a cold start. Set another one with the
+  client's `with_timeout`.
+- The server's response is returned whatever its status. Only `429` and `503` are retried, with
+  the client's retry settings, and the last response is returned once the retries run out. The
+  platform sends these when it can't pass the request to a server run, but the Actor's code can
+  return them too, and then a retry sends the request to the Actor again. Network errors and
+  timeouts are not retried, since the Actor may have already handled the request, and they fail
+  the call.
+
+`get_open_api_spec` returns the web server schema from the build that serves the server
+interface: the build in the Actor's `actor_standby.build` field (a tag or a build number), or
+`latest`. It fails with `InvalidArgument` if that build doesn't exist.
+
+```rust,no_run
+# use apify_client::ApifyClient;
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new("my-api-token");
+let server = client.actor("username/actor-name").server();
+
+// Get the URL of the Actor's server.
+println!("{}", server.get_url().await?);
+
+// Get the OpenAPI specification and list the server's endpoints.
+if let Some(spec) = server.get_open_api_spec().await? {
+    if let Some(paths) = spec["paths"].as_object() {
+        println!("{:?}", paths.keys().collect::<Vec<_>>());
+    }
+}
+# Ok(())
+# }
+```
+
 ## Actor versions and environment variables
 
 `ActorVersionClient`: `get`, `update`, `delete`, `env_var(name)`, `env_vars()`.
 `ActorVersionCollectionClient`: `list()`, `iterate()`, `create(version)`.
 `ActorEnvVarClient`: `get`, `update`, `delete`.
 `ActorEnvVarCollectionClient`: `list()`, `iterate()`, `create(env_var)`.
+
+A version of the `SOURCE_FILES` or `TARBALL` source type can set `actorPath`, the Actor's directory
+inside the uploaded source, for a monorepo: a path relative to the upload root with `/` separators,
+for example `actors/typescript-actor`. It has 1 to 255 characters, with no leading, trailing, or
+repeated `/` and no `.` or `..` segments, and the API rejects it for `GIT_REPO` and `GITHUB_GIST`
+versions. Without it, the upload root is the Actor's directory. `ActorVersion::actor_path` holds it
+(for a `TARBALL` version, only users with write access to the Actor get it). An update that sends
+`sourceType`, `sourceFiles` or `tarballUrl` without `actorPath` removes the stored path, so send it
+again with every upload. An update of other fields, such as `envVars` or `buildTag`, keeps it, and
+`"actorPath": null` removes it. An `ActorVersion` sent as an update body leaves `actor_path` out
+when it is `None`.
 
 Creating a version needs `versionNumber` and `sourceType` in the body, and so does every item of
 the `versions` array in an Actor create or update body. The writable source types are

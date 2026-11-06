@@ -1592,3 +1592,178 @@ async fn batch_add_requests_rejects_an_oversized_request_before_sending_anything
     );
     assert_eq!(backend.call_count(), 0, "nothing was sent");
 }
+
+/// A dataset-items response with the pagination headers the API sets.
+fn dataset_items_page(items: &str, scanned: Option<&str>) -> MockOutcome {
+    let mut headers = vec![
+        ("x-apify-pagination-total", "10".to_string()),
+        ("x-apify-pagination-offset", "0".to_string()),
+        ("x-apify-pagination-limit", "3".to_string()),
+    ];
+    if let Some(scanned) = scanned {
+        headers.push(("x-apify-pagination-count", scanned.to_string()));
+    }
+    MockOutcome::StatusWithHeaders(200, headers, items.as_bytes().to_vec())
+}
+
+/// `list_items` reports the larger of the rows the API scanned and the items returned in `count`.
+#[tokio::test]
+async fn list_items_count_is_the_larger_of_the_scanned_rows_and_the_items_returned() {
+    let cases = [
+        ("filtered page", "[{\"a\":1}]", Some("3"), 3),
+        ("lagging header", "[{\"a\":1},{\"a\":2}]", Some("0"), 2),
+        ("unwound page", "[{\"a\":1},{\"a\":2}]", Some("1"), 2),
+        ("missing header", "[{\"a\":1}]", None, 1),
+        ("empty scanned page", "[]", Some("1"), 1),
+    ];
+    for (name, items, scanned, expected) in cases {
+        let backend = MockBackend::new(vec![dataset_items_page(items, scanned)]);
+        let client = client_with(backend, 0);
+
+        let page = client
+            .dataset("some-id")
+            .list_items::<serde_json::Value>(Default::default())
+            .await
+            .expect("ok");
+
+        assert_eq!(page.count, expected, "{name}");
+    }
+}
+
+/// A page the filter emptied still advances the iteration by the rows it scanned, so the rows
+/// behind it are read.
+#[tokio::test]
+async fn iterate_items_continues_past_a_page_a_filter_emptied() {
+    let backend = MockBackend::new(vec![
+        dataset_items_page("[]", Some("3")),
+        dataset_items_page("[{\"i\":3}]", Some("3")),
+        dataset_items_page("[]", Some("0")),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let items = client
+        .dataset("some-id")
+        .iterate_items::<serde_json::Value>(Default::default())
+        .with_chunk_size(3)
+        .collect_all()
+        .await
+        .expect("ok");
+
+    assert_eq!(items, vec![serde_json::json!({ "i": 3 })]);
+    let urls = backend.urls();
+    assert_eq!(urls.len(), 3, "{urls:?}");
+    assert!(urls[1].contains("offset=3"), "{urls:?}");
+    assert!(urls[2].contains("offset=6"), "{urls:?}");
+}
+
+/// The store drops Actors after counting them, so its `count` exceeds the items returned and the
+/// iteration steps by it: the next page does not read the dropped entries again.
+#[tokio::test]
+async fn iterate_steps_by_the_count_the_api_reports_when_it_exceeds_the_items_returned() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":9,"count":3,"items":[{"id":"a"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":9,"count":3,"items":[{"id":"b"},{"id":"c"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":9,"count":0,"items":[]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let actors = client
+        .store()
+        .iterate(Default::default())
+        .with_chunk_size(3)
+        .collect_all()
+        .await
+        .expect("ok");
+
+    assert_eq!(actors.len(), 3);
+    let urls = backend.urls();
+    assert!(urls[1].contains("offset=3"), "{urls:?}");
+    assert!(urls[2].contains("offset=6"), "{urls:?}");
+}
+
+/// A streaming call retries an error status until the response starts, like a buffered call.
+#[tokio::test]
+async fn a_stream_is_retried_on_an_error_status_until_the_response_starts() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(500, br#"{"error":{"message":"oops"}}"#.to_vec()),
+        MockOutcome::Status(429, br#"{"error":{"message":"slow down"}}"#.to_vec()),
+        MockOutcome::Status(200, b"log line".to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 3);
+
+    let stream = client
+        .log("run")
+        .stream()
+        .await
+        .expect("ok")
+        .expect("the log exists");
+    let chunks: Vec<Vec<u8>> = stream.map(|chunk| chunk.expect("a chunk")).collect().await;
+
+    assert_eq!(chunks.concat(), b"log line");
+    assert_eq!(backend.call_count(), 3);
+    assert_eq!(client.stats().rate_limit_errors().iter().sum::<u64>(), 1);
+}
+
+/// A streaming call retries a transport error before the response opens.
+#[tokio::test]
+async fn a_stream_is_retried_on_a_transport_error_before_the_response_opens() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::NetworkError,
+        MockOutcome::Status(200, b"items".to_vec()),
+    ]);
+    let client = client_with(backend.clone(), 3);
+
+    let stream = client
+        .dataset("d")
+        .download_items_stream(apify_client::DownloadItemsFormat::Json, Default::default())
+        .await
+        .expect("the retry opens the response");
+    let chunks: Vec<Vec<u8>> = stream.map(|chunk| chunk.expect("a chunk")).collect().await;
+
+    assert_eq!(chunks.concat(), b"items");
+    assert_eq!(backend.call_count(), 2);
+}
+
+/// A streaming call that keeps failing fails with the structured API error of the last attempt,
+/// and one with a status that a retry cannot fix fails at once.
+#[tokio::test]
+async fn a_stream_fails_with_the_api_error_once_the_retries_run_out_or_cannot_help() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        503,
+        br#"{"error":{"type":"server-error","message":"down"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 2);
+    let error = client
+        .log("run")
+        .stream()
+        .await
+        .err()
+        .expect("the retries run out");
+    assert_eq!(backend.call_count(), 3);
+    let api = error.as_api_error().expect("an API error");
+    assert_eq!((api.status_code, api.attempt), (503, 3));
+    assert_eq!(api.message, "down");
+
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        400,
+        br#"{"error":{"message":"bad"}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 2);
+    let error = client
+        .log("run")
+        .stream()
+        .await
+        .err()
+        .expect("a 400 is final");
+    assert_eq!(backend.call_count(), 1);
+    assert_eq!(error.status_code(), Some(400));
+}

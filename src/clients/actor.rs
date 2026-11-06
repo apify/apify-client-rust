@@ -2,8 +2,11 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 use crate::client::ApifyClient;
+use crate::clients::actor_server::ActorServerClient;
 use crate::clients::actor_version::ActorVersionClient;
 use crate::clients::actor_version_collection::ActorVersionCollectionClient;
 use crate::clients::base::{
@@ -190,6 +193,9 @@ pub struct ActorClient {
     ctx: ResourceContext,
     base_url: String,
     id: String,
+    /// The server URL fetched by the clients returned by [`server`](Self::server), shared between
+    /// them so it is looked up once.
+    server_url: Arc<OnceCell<String>>,
 }
 
 crate::clients::base::impl_with_timeout!(ActorClient);
@@ -201,6 +207,7 @@ impl ActorClient {
             ctx: ResourceContext::single(http, base_url, "actors", id),
             base_url: base_url.to_string(),
             id: id.to_string(),
+            server_url: Arc::new(OnceCell::new()),
         }
     }
 
@@ -519,6 +526,29 @@ impl ActorClient {
     /// Returns a client for this Actor's webhook collection.
     pub fn webhooks(&self) -> WebhookCollectionClient {
         WebhookCollectionClient::with_base(self.ctx.http.clone(), &self.ctx.url(None))
+    }
+
+    /// Returns a client for the server interface of this Actor.
+    ///
+    /// A Server Actor runs a web server, its server interface, that is called over HTTP without
+    /// starting a run for each call. Server Actors were formerly called Actor Standby. The clients
+    /// returned by this method and by [`standby`](Self::standby) share the server URL they fetch.
+    /// They do not inherit the timeout set with `with_timeout`.
+    pub fn server(&self) -> ActorServerClient {
+        ActorServerClient::new(
+            self.ctx.http.clone(),
+            &self.base_url,
+            &self.id,
+            self.server_url.clone(),
+        )
+    }
+
+    /// Returns a client for the server interface of this Actor in Standby mode.
+    ///
+    /// Named after Actor Standby, the former name of Server Actors.
+    #[deprecated(note = "Use `server` instead.")]
+    pub fn standby(&self) -> ActorServerClient {
+        self.server()
     }
 
     /// The Actor's ID (or `username~name`) as provided.

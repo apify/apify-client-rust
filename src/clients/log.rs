@@ -144,7 +144,7 @@ impl LogClient {
     ) -> ApifyClientResult<impl Stream<Item = ApifyClientResult<Vec<u8>>>> {
         // Goes through `get_byte_stream` (the configured `HttpBackend`'s streaming path) instead
         // of `HttpClient::call`, whose buffered backend fully reads a response before returning
-        // it. The retry policy does not apply to an open stream.
+        // it. The retry policy applies until the response starts, not to an open stream.
         let mut params = QueryParams::new();
         params.push_raw("stream".to_string(), "1".to_string());
         params

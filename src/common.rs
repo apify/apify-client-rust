@@ -213,7 +213,12 @@ pub struct PaginationList<T> {
     /// Maximum number of items the API would return for this request.
     #[serde(default)]
     pub limit: i64,
-    /// Number of items actually returned in this page.
+    /// Number of entries on this page. On a page from
+    /// [`DatasetClient::list_items`](crate::clients::dataset::DatasetClient::list_items), the
+    /// number of dataset rows the API scanned for it, or the number of items returned when that
+    /// is larger. Filters (`clean`, `skip_empty`, `skip_hidden`) can leave it above `items.len()`.
+    /// The next page starts at `offset + min(count, limit)`; the cap matters only with `unwind`,
+    /// which can return more items than the rows scanned.
     #[serde(default)]
     pub count: i64,
     /// Whether the items are in descending order.
@@ -222,19 +227,6 @@ pub struct PaginationList<T> {
     /// The items of this page.
     #[serde(default = "Vec::new")]
     pub items: Vec<T>,
-    /// Number of underlying rows the endpoint scanned to produce this page, when that can
-    /// differ from `items.len()`. Currently only [`DatasetClient::list_items`]
-    /// (`x-apify-pagination-count` header) sets this: a `clean`/`skip_empty`/`skip_hidden`
-    /// filter can scan more rows than it returns, and `unwind` can return more items than rows
-    /// scanned. [`ListIterator`] uses it (capped at the requested page size) instead of
-    /// `items.len()` to advance the offset and decide when a listing is exhausted, so paging
-    /// neither re-scans nor skips rows. `None` for every other endpoint, where the two always
-    /// agree.
-    ///
-    /// [`DatasetClient::list_items`]: crate::clients::dataset::DatasetClient::list_items
-    /// [`ListIterator`]: crate::clients::pagination::ListIterator
-    #[serde(skip)]
-    pub(crate) scanned: Option<i64>,
 }
 
 /// Reports whether the environment variable `name` is set to a non-empty value.
@@ -351,24 +343,53 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
+/// The longest validity of a signed public URL, in seconds: `4611686018427387`, about 146 million
+/// years. It is half of what fits in milliseconds in an `i64`, which keeps the current time plus
+/// the validity from overflowing. The `expires_in_secs` of `create_items_public_url`,
+/// `create_items_public_url_with_format` and `create_keys_public_url` can be at most this.
+pub const MAX_EXPIRES_IN_SECS: i64 = i64::MAX / MILLIS_PER_SECOND / 2;
+
+/// Checks the validity of a signed public URL before any request is sent. `None` is a URL that
+/// does not expire. A validity has to be positive, since `0` and negative values would sign a URL
+/// that has already expired, and at most [`MAX_EXPIRES_IN_SECS`], so that its expiry can't
+/// overflow. Fails with [`ApifyClientError::InvalidArgument`] otherwise.
+pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyClientResult<()> {
+    match expires_in_secs {
+        Some(secs) if secs <= 0 => Err(ApifyClientError::InvalidArgument(format!(
+            "`expires_in_secs` must be positive, got {secs}; leave it out for a URL that does not expire"
+        ))),
+        Some(secs) if secs > MAX_EXPIRES_IN_SECS => Err(ApifyClientError::InvalidArgument(format!(
+            "`expires_in_secs` must be at most {MAX_EXPIRES_IN_SECS}, got {secs}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The expiry that a signed public URL gets, as the absolute time in milliseconds: the current
+/// time plus the validity, or `0` for a URL that does not expire. Call it when the URL is signed,
+/// so that the time the request before it took doesn't come off the validity, with a validity that
+/// passed [`validate_expires_in_secs`].
+pub(crate) fn public_url_expiry_millis(expires_in_secs: Option<i64>) -> i64 {
+    match expires_in_secs {
+        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
+        None => 0,
+    }
+}
+
 /// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
 /// with the platform's `@apify/utilities` `createStorageContentSignature`.
 ///
 /// It signs the message `"{version}.{expiresAtMillis}.{resourceId}"` (where `expiresAtMillis`
-/// is the absolute expiry in milliseconds, or `0` for a non-expiring URL) with
+/// is the absolute expiry in milliseconds, as [`public_url_expiry_millis`] returns it) with
 /// [`create_hmac_signature`], then returns the base64url (no padding) encoding of
 /// `"{version}.{expiresAtMillis}.{hmac}"`. Used for dataset-items and key-list public URLs.
 pub(crate) fn sign_storage_content(
     secret_key: &str,
     resource_id: &str,
-    expires_in_secs: Option<i64>,
+    expires_at_millis: i64,
 ) -> String {
     use base64::Engine;
 
-    let expires_at_millis = match expires_in_secs {
-        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
-        None => 0,
-    };
     let version = STORAGE_CONTENT_SIGNATURE_VERSION;
     let message = format!("{version}.{expires_at_millis}.{resource_id}");
     let hmac = create_hmac_signature(secret_key, &message);
@@ -531,12 +552,39 @@ mod signature_tests {
     #[test]
     fn storage_content_signature_non_expiring_envelope() {
         use base64::Engine;
-        let sig = sign_storage_content("secret", "RESID", None);
+        let sig = sign_storage_content("secret", "RESID", 0);
         let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(sig)
             .expect("valid base64url");
         let decoded = String::from_utf8(decoded).expect("utf8");
         let expected_hmac = create_hmac_signature("secret", "0.0.RESID");
         assert_eq!(decoded, format!("0.0.{expected_hmac}"));
+    }
+
+    // A validity is positive and at most the maximum: `None` never expires and a positive one is
+    // in the future, while `0`, a negative one and one beyond the maximum are refused.
+    #[test]
+    fn public_url_validity_is_validated_and_turned_into_an_expiry() {
+        use super::{public_url_expiry_millis, validate_expires_in_secs, MAX_EXPIRES_IN_SECS};
+        // The documented value.
+        assert_eq!(MAX_EXPIRES_IN_SECS, 4_611_686_018_427_387);
+        let now = chrono::Utc::now().timestamp_millis();
+
+        assert_eq!(public_url_expiry_millis(None), 0);
+        let expiry = public_url_expiry_millis(Some(60));
+        assert!((now + 60_000..=now + 70_000).contains(&expiry), "{expiry}");
+        // The longest validity still has an expiry that fits.
+        assert!(public_url_expiry_millis(Some(MAX_EXPIRES_IN_SECS)) > now);
+
+        for secs in [None, Some(1), Some(MAX_EXPIRES_IN_SECS)] {
+            validate_expires_in_secs(secs).expect("accepted");
+        }
+        for secs in [0, -1, i64::MIN, MAX_EXPIRES_IN_SECS + 1, i64::MAX] {
+            let error = validate_expires_in_secs(Some(secs)).expect_err("refused");
+            assert!(
+                matches!(error, crate::ApifyClientError::InvalidArgument(_)),
+                "{secs}: {error:?}"
+            );
+        }
     }
 }

@@ -86,6 +86,9 @@ pub use clients::actor::{
     ActorBuildOptions, ActorCallOptions, ActorStartOptions, TaskStartOptions, WaitForResources,
 };
 pub use clients::actor_collection::ActorListOptions;
+pub use clients::actor_server::{
+    ActorServerBody, ActorServerCompression, ActorServerRequestOptions,
+};
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
 pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
 pub use clients::log::LogOptions;
