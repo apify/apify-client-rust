@@ -882,3 +882,153 @@ async fn a_server_stream_is_not_cut_off_while_the_server_stays_silent() {
 
     assert_eq!(chunks, vec![b"first".to_vec(), b"second".to_vec()]);
 }
+
+#[tokio::test]
+async fn a_stream_response_is_not_retried_on_a_network_error_or_a_timeout() {
+    for outcome in [MockOutcome::NetworkError, MockOutcome::Timeout] {
+        let backend = MockBackend::new(vec![actor(json!({})), outcome]);
+        let client = client_with(backend.clone(), 3);
+
+        let error = client
+            .actor("a")
+            .server()
+            .request_stream("/", Default::default())
+            .await
+            .err()
+            .expect("the transport error ends the call");
+
+        assert!(
+            matches!(error, ApifyClientError::Http(_) | ApifyClientError::Timeout),
+            "{error:?}"
+        );
+        assert_eq!(backend.call_count(), 2, "the actor and one attempt");
+    }
+}
+
+#[tokio::test]
+async fn a_stream_response_returns_the_last_retried_status_once_the_retries_run_out() {
+    let backend = MockBackend::new(vec![
+        actor(json!({})),
+        server_response(429, "slow down"),
+        server_response(503, "unavailable"),
+    ]);
+    let client = client_with(backend.clone(), 1);
+
+    let mut response = client
+        .actor("a")
+        .server()
+        .request_stream("/", Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(response.body.next().await.unwrap().unwrap(), b"unavailable");
+    assert_eq!(backend.call_count(), 3, "the actor and two attempts");
+    assert_eq!(
+        client.stats().rate_limit_errors().iter().sum::<u64>(),
+        0,
+        "a server's rate limit is not one of the API"
+    );
+}
+
+/// The body of a streaming response.
+type ErrorBody = std::pin::Pin<
+    Box<dyn futures_util::Stream<Item = apify_client::ApifyClientResult<Vec<u8>>> + Send>,
+>;
+
+/// A backend whose streaming error responses never finish their body: the status arrives at once
+/// and the body then stays silent for as long as the test lets it.
+#[derive(Debug)]
+struct HangingErrorBodyBackend {
+    actor: Vec<u8>,
+    stream_calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl apify_client::http_client::HttpBackend for HangingErrorBodyBackend {
+    async fn send(&self, _request: HttpRequest) -> apify_client::ApifyClientResult<HttpResponse> {
+        Ok(HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: self.actor.clone(),
+        })
+    }
+
+    async fn send_streaming(
+        &self,
+        _request: HttpRequest,
+    ) -> apify_client::ApifyClientResult<apify_client::http_client::StreamingHttpResponse> {
+        let call = self
+            .stream_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // The first attempt fails with a `503` whose body never ends, the second one succeeds.
+        let (status, body): (u16, ErrorBody) = if call == 0 {
+            (503, Box::pin(futures_util::stream::pending()))
+        } else {
+            (
+                200,
+                Box::pin(futures_util::stream::once(async { Ok(b"ready".to_vec()) })),
+            )
+        };
+        Ok(apify_client::http_client::StreamingHttpResponse {
+            status,
+            headers: Default::default(),
+            body,
+        })
+    }
+}
+
+/// A retry that follows drops the failed response unread: a `503` whose body never ends does not
+/// delay or prevent the retry.
+#[tokio::test(start_paused = true)]
+async fn a_stream_retry_does_not_wait_for_the_body_of_the_failed_response() {
+    let backend = Arc::new(HangingErrorBodyBackend {
+        actor: json!({ "data": { "id": "a", "standbyUrl": SERVER_URL } })
+            .to_string()
+            .into_bytes(),
+        stream_calls: Default::default(),
+    });
+    let client = apify_client::ApifyClient::builder()
+        .token("test-token")
+        .max_retries(1)
+        .min_delay_between_retries(std::time::Duration::from_millis(1))
+        .http_backend(backend)
+        .build();
+
+    let started = tokio::time::Instant::now();
+    let mut response = client
+        .actor("a")
+        .server()
+        .request_stream("/", Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body.next().await.unwrap().unwrap(), b"ready");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the retry waited for the body of the failed response"
+    );
+}
+
+/// The builds listing that looks up a build number uses the `Short` tier, like every API request
+/// of the server client, unless the client has a timeout of its own.
+#[tokio::test]
+async fn the_build_number_lookup_lists_builds_with_the_short_tier() {
+    let backend = MockBackend::new(vec![
+        actor(json!({ "actorStandby": { "build": "0.1.2" }, "taggedBuilds": {} })),
+        builds(json!([{ "id": "b2", "buildNumber": "0.1.2" }])),
+        build(json!({ "id": "b2", "actorDefinition": { "webServerSchema": {} } })),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    client
+        .actor("a")
+        .server()
+        .get_open_api_spec()
+        .await
+        .unwrap();
+
+    let short = std::time::Duration::from_secs(5);
+    assert_eq!(backend.timeouts(), vec![short, short, short]);
+}

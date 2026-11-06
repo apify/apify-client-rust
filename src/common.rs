@@ -343,10 +343,9 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
-/// Rejects a signed public URL validity that is not positive, before any request is sent. The
-/// signer reads an expiry of `0` as "never expires", so a `0` would make the URL permanent, and a
-/// negative value would make it expire before it is returned. Leave the validity out for a URL
-/// that does not expire.
+/// Rejects a signed public URL validity that is not positive, before any request is sent. `0` and
+/// negative values would sign a URL that has already expired, and only leaving the validity out
+/// (the signer then writes an expiry of `0`) makes a URL that does not expire.
 pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyClientResult<()> {
     match expires_in_secs {
         Some(secs) if secs <= 0 => Err(ApifyClientError::InvalidArgument(format!(
@@ -370,8 +369,12 @@ pub(crate) fn sign_storage_content(
 ) -> String {
     use base64::Engine;
 
+    // Saturating, so an enormous validity signs a URL that effectively never expires instead of
+    // overflowing.
     let expires_at_millis = match expires_in_secs {
-        Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
+        Some(secs) => chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_add(secs.saturating_mul(MILLIS_PER_SECOND)),
         None => 0,
     };
     let version = STORAGE_CONTENT_SIGNATURE_VERSION;
@@ -543,5 +546,22 @@ mod signature_tests {
         let decoded = String::from_utf8(decoded).expect("utf8");
         let expected_hmac = create_hmac_signature("secret", "0.0.RESID");
         assert_eq!(decoded, format!("0.0.{expected_hmac}"));
+    }
+
+    // An enormous validity saturates instead of overflowing, and signs an expiry far in the future.
+    #[test]
+    fn storage_content_signature_with_an_enormous_validity_does_not_overflow() {
+        use base64::Engine;
+        let sig = sign_storage_content("secret", "RESID", Some(i64::MAX));
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(sig)
+            .expect("valid base64url");
+        let decoded = String::from_utf8(decoded).expect("utf8");
+        let expires_at: i64 = decoded
+            .split('.')
+            .nth(1)
+            .and_then(|millis| millis.parse().ok())
+            .expect("an expiry in milliseconds");
+        assert_eq!(expires_at, i64::MAX);
     }
 }

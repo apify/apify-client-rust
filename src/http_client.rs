@@ -304,8 +304,8 @@ impl HttpBackend for ReqwestBackend {
         // Deliberately no `.timeout(request.timeout)` here: reqwest's per-request timeout bounds
         // the *entire* request including reading the whole body (it wraps the body stream in a
         // `TotalTimeoutBody`), which would cut off a long-but-active stream (e.g. live log
-        // redirection). `HttpClient::call_streaming` applies its own response-start and
-        // per-chunk-inactivity bounds instead, uniformly across backends.
+        // redirection). `HttpClient` applies its own response-start bound and, unless the call
+        // opts out, a per-chunk-inactivity bound instead, uniformly across backends.
         let mut builder = self.client_for(&request).request(method, &request.url);
         for (key, value) in &request.headers {
             builder = builder.header(key, value);
@@ -616,7 +616,10 @@ impl HttpClient {
             attempt_request.timeout = attempt_timeout;
 
             self.stats.add_request();
-            let outcome = match R::send(self.backend.as_ref(), attempt_request, options).await {
+            // The error that ends the call, or `None` when a retry follows. A retry that follows
+            // drops the failed response unread: reading the body of an error that is thrown away
+            // would only delay the retry, or never end for a body that keeps streaming.
+            let final_error = match R::send(self.backend.as_ref(), attempt_request, options).await {
                 Ok(response) => {
                     let status = response.status();
                     if status < MAX_SUCCESS_STATUS_CODE {
@@ -626,26 +629,29 @@ impl HttpClient {
                     {
                         self.stats.add_rate_limit_error(attempt);
                     }
-                    let retryable = is_status_retryable(status, options.retry_status_codes);
-                    if options.return_error_responses && (!retryable || attempt == max_attempts) {
+                    // Give up immediately on a status a retry cannot fix, or after the last attempt.
+                    let is_final = !is_status_retryable(status, options.retry_status_codes)
+                        || attempt == max_attempts;
+                    if !is_final {
+                        None
+                    } else if options.return_error_responses {
                         return Ok(response);
+                    } else {
+                        let buffered = response.into_buffered(attempt_timeout).await;
+                        let api_error = build_api_error(&buffered, attempt, &method_str, &path);
+                        Some(ApifyClientError::from(api_error))
                     }
-                    let buffered = response.into_buffered(attempt_timeout).await;
-                    let api_error = build_api_error(&buffered, attempt, &method_str, &path);
-                    (ApifyClientError::from(api_error), retryable)
                 }
                 Err(err) => {
                     let retryable = is_error_retryable(&err)
                         && !options.do_not_retry_transport_errors
                         && !(options.do_not_retry_timeouts
                             && matches!(err, ApifyClientError::Timeout));
-                    (err, retryable)
+                    // Give up immediately on a non-retryable error or after the last attempt.
+                    (!retryable || attempt == max_attempts).then_some(err)
                 }
             };
-
-            let (error, retryable) = outcome;
-            // Give up immediately on non-retryable errors or after the last attempt.
-            if !retryable || attempt == max_attempts {
+            if let Some(error) = final_error {
                 return Err(error);
             }
 
@@ -761,8 +767,8 @@ impl AttemptResponse for StreamingHttpResponse {
 
 /// Wraps a streaming body so each chunk must arrive within `timeout` of the previous one (or of
 /// the stream opening), erroring with [`ApifyClientError::Timeout`] otherwise — an inactivity
-/// timeout, not a cap on the stream's total duration. Used by
-/// [`HttpClient::call_streaming_response`].
+/// timeout, not a cap on the stream's total duration. Used by the streaming attempts of
+/// [`HttpClient`], for the body of a response and for the body of an error response they read.
 ///
 /// A timeout yields exactly one `Err(Timeout)` and then ends the stream (further polls return
 /// `None`), rather than retrying the same read forever: the underlying body is dropped once it
