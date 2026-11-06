@@ -19,6 +19,7 @@ Ports the `apify-client-js` Server Actor support and the `count` of dataset item
 - `Actor::standby_url`, `actor_standby` (`ActorStandby`, with the `tenancy` values `SINGLE_TENANT`
   and `MULTI_TENANT`) and `tagged_builds` (`TaggedBuildInfo`).
 - `ActorVersion::actor_path`, the Actor's directory inside an uploaded source.
+- `common::MAX_EXPIRES_IN_SECS`, the longest `expires_in_secs` of a signed public URL.
 - `HttpMethod::Patch`, `Options` and `Trace`, `HttpRequest::follow_redirects`,
   `ReqwestBackend::with_no_redirect_client`, and `HttpResponse::is_success`, `text` and `json`.
 
@@ -40,8 +41,8 @@ Ports the `apify-client-js` Server Actor support and the `count` of dataset item
   response starts, like the other calls, instead of failing on the first one.
 - `create_items_public_url`, `create_items_public_url_with_format` and `create_keys_public_url` fail
   with `InvalidArgument` for an `expires_in_secs` that is `0` or negative, before any request is
-  sent. Such a value used to sign a URL that had already expired. An `expires_in_secs` so large
-  that its expiry overflows fails with `InvalidArgument` too, instead of panicking or wrapping
+  sent. Such a value used to sign a URL that had already expired. An `expires_in_secs` above the new
+  `common::MAX_EXPIRES_IN_SECS` fails with `InvalidArgument` too, instead of panicking or wrapping
   around.
 - A `ListIterator` no longer ends in front of rows that match when a filter leaves a page with no
   items.

@@ -343,9 +343,11 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
-/// The longest validity of a signed public URL, in seconds. It is half of what fits in
-/// milliseconds in an `i64`, which keeps the current time plus the validity from overflowing.
-const MAX_EXPIRES_IN_SECS: i64 = i64::MAX / MILLIS_PER_SECOND / 2;
+/// The longest validity of a signed public URL, in seconds: `4611686018427387`, about 146 million
+/// years. It is half of what fits in milliseconds in an `i64`, which keeps the current time plus
+/// the validity from overflowing. The `expires_in_secs` of `create_items_public_url`,
+/// `create_items_public_url_with_format` and `create_keys_public_url` can be at most this.
+pub const MAX_EXPIRES_IN_SECS: i64 = i64::MAX / MILLIS_PER_SECOND / 2;
 
 /// Checks the validity of a signed public URL before any request is sent. `None` is a URL that
 /// does not expire. A validity has to be positive, since `0` and negative values would sign a URL
@@ -564,6 +566,8 @@ mod signature_tests {
     #[test]
     fn public_url_validity_is_validated_and_turned_into_an_expiry() {
         use super::{public_url_expiry_millis, validate_expires_in_secs, MAX_EXPIRES_IN_SECS};
+        // The documented value.
+        assert_eq!(MAX_EXPIRES_IN_SECS, 4_611_686_018_427_387);
         let now = chrono::Utc::now().timestamp_millis();
 
         assert_eq!(public_url_expiry_millis(None), 0);

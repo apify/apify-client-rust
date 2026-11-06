@@ -351,8 +351,9 @@ impl KeyValueStoreClient {
     ///
     /// Like [`get_record_public_url`](Self::get_record_public_url), signs the URL with an
     /// HMAC-SHA256 `signature` for private stores. `expires_in_secs` optionally bounds a
-    /// signed URL's validity. It must be positive and not so large that its expiry overflows: `0`, a
-    /// negative or such a value fails with
+    /// signed URL's validity. It must be positive and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS): `0`, a negative or a larger
+    /// value fails with
     /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
     /// Leave it out for a URL that does not expire.
     pub async fn create_keys_public_url(

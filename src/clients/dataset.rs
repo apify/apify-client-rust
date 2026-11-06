@@ -454,8 +454,9 @@ impl DatasetClient {
     /// public base URL. The served items are JSON; to request another export format, use
     /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
     ///
-    /// `expires_in_secs` must be positive and not so large that its expiry overflows: `0`, a
-    /// negative or such a value fails with
+    /// `expires_in_secs` must be positive and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS): `0`, a negative or a larger
+    /// value fails with
     /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
     /// Leave it out for a URL that does not expire.
     pub async fn create_items_public_url(
@@ -470,8 +471,9 @@ impl DatasetClient {
     /// Like [`create_items_public_url`](Self::create_items_public_url), but lets the caller
     /// choose the `format` the items are served in (JSON, CSV, XLSX, ...) via a `format` query
     /// parameter on the generated URL. `None` defaults to `json`, matching the endpoint's own
-    /// default. `expires_in_secs` must be positive, see
-    /// [`create_items_public_url`](Self::create_items_public_url).
+    /// default. `expires_in_secs` follows the same rule as in
+    /// [`create_items_public_url`](Self::create_items_public_url): positive, and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS).
     pub async fn create_items_public_url_with_format(
         &self,
         options: DatasetListItemsOptions,
