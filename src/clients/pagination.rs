@@ -100,7 +100,11 @@ fn min_positive_limit(a: Option<i64>, b: Option<i64>) -> Option<i64> {
 /// listing. The page size is a distinct concern: set it with [`with_chunk_size`](Self::with_chunk_size);
 /// when unset, the API's default page size is used. So `iterate(opts{ limit: 10 })` yields at most
 /// 10 items, and `iterate(opts).with_chunk_size(50)` fetches 50 per request while yielding
-/// everything.
+/// everything. Without a page size, each request gets the API's default page size, capped by
+/// the remaining `limit`. Dataset items have no default limit, so iterating
+/// [`DatasetClient::iterate_items`](crate::clients::dataset::DatasetClient::iterate_items)
+/// without a page size loads the whole dataset, or all `limit` items, in one response: set one
+/// to iterate a large dataset.
 ///
 /// **Large caps and the first page.** When a total cap is set but no page size is, the first page
 /// requests `limit == cap` (the reference client does the same, via
@@ -177,15 +181,22 @@ impl<T> ListIterator<T> {
     }
 
     /// Returns the next item, or `None` when the listing is exhausted. Fetches another page from
-    /// the API when the local buffer is empty.
+    /// the API when the local buffer is empty, and keeps fetching while the pages come back empty
+    /// but scanned rows, as a filter can leave a page with no items in front of rows that match.
     pub async fn next(&mut self) -> ApifyClientResult<Option<T>> {
-        if let Some(item) = self.buffer.pop_front() {
-            return Ok(Some(item));
+        loop {
+            if let Some(item) = self.buffer.pop_front() {
+                return Ok(Some(item));
+            }
+            if self.exhausted {
+                return Ok(None);
+            }
+            self.fetch_next_page().await?;
         }
-        if self.exhausted {
-            return Ok(None);
-        }
+    }
 
+    /// Fetches the page at the current offset into the buffer and advances the offset.
+    async fn fetch_next_page(&mut self) -> ApifyClientResult<()> {
         // Request the smaller of the items still allowed under the caller's cap (`remaining`) and
         // the configured page size (`chunk_size`); `None` lets the API pick its default page size.
         // On the first page `remaining` is the full cap, matching the reference client's initial
@@ -194,13 +205,15 @@ impl<T> ListIterator<T> {
         let page = (self.fetch)(self.next_offset, page_limit).await?;
         let received = page.items.len() as i64;
 
-        // The number of rows this page *scanned*, used to advance the offset and decide when the
-        // listing is exhausted. For every endpoint except dataset items this equals `received`
-        // (`page.scanned` is `None`); dataset items can report it separately (see
-        // `PaginationList::scanned`), since a filter can scan more rows than it returns and
-        // `unwind` can return more items than rows scanned. It is capped at the page size actually
-        // requested so an unwound page never advances past rows the next request would then skip.
-        let scanned = page.scanned.unwrap_or(received).max(received);
+        // The number of rows this page covered, used to advance the offset and decide when the
+        // listing is exhausted: the larger of `count` and the items returned, capped at the page
+        // size actually requested. Dataset items report the rows scanned in `count` (see
+        // `PaginationList::count`), since a filter can scan more rows than it returns and
+        // `unwind` can return more items than rows scanned; the cap keeps an unwound page from
+        // advancing past rows the next request would then skip. Other listings report the items
+        // returned, except the store, which drops entries after counting them: stepping by
+        // `count` keeps the next page from reading them again.
+        let scanned = page.count.max(received);
         let scanned = match page_limit {
             Some(limit) if limit > 0 => scanned.min(limit),
             _ => scanned,
@@ -239,7 +252,7 @@ impl<T> ListIterator<T> {
         }
 
         self.buffer.extend(items);
-        Ok(self.buffer.pop_front())
+        Ok(())
     }
 
     /// Eagerly drains the iterator into a single `Vec`, fetching every remaining page.
@@ -289,7 +302,6 @@ mod tests {
                     count: items.len() as i64,
                     desc: false,
                     items,
-                    scanned: None,
                 })
             })
         })
@@ -373,7 +385,6 @@ mod tests {
                     count: items.len() as i64,
                     desc: false,
                     items,
-                    scanned: None,
                 })
             })
         });
@@ -384,10 +395,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn advances_by_the_scanned_count_when_it_exceeds_items_returned() {
-        // Models a dataset `listItems` filter: each page scans 3 rows (`x-apify-pagination-count`)
+    async fn advances_by_count_when_it_exceeds_items_returned() {
+        // Models a dataset `listItems` filter: each page scans 3 rows (reported in `count`)
         // but a `skip_empty`-style filter leaves only 1 item per page. Advancing by `items.len()`
-        // alone would re-request the same rows forever; advancing by the scanned count moves past
+        // alone would re-request the same rows forever; advancing by `count` moves past
         // them.
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
@@ -406,23 +417,22 @@ mod tests {
                     total: 0,
                     offset,
                     limit: 3,
-                    count: items.len() as i64,
+                    count: scanned,
                     desc: false,
                     items,
-                    scanned: Some(scanned),
                 })
             })
         });
         let iter = ListIterator::new(0, None, fetch).with_chunk_size(3);
         assert_eq!(iter.collect_all().await.unwrap(), vec![0, 3, 6]);
-        // Offsets requested: 0, 3, 6, 9 (empty) — four calls, each advancing by the scanned 3
+        // Offsets requested: 0, 3, 6, 9 (empty) — four calls, each advancing by the 3 rows counted
         // rows rather than the 1 surviving item.
         assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]
-    async fn scanned_count_is_capped_at_the_requested_page_size() {
-        // A lagging `x-apify-pagination-count` header can occasionally overshoot what was asked
+    async fn count_is_capped_at_the_requested_page_size() {
+        // A lagging `count` can occasionally overshoot what was asked
         // for (e.g. counting rows added by a concurrent push); the cap keeps the offset from
         // jumping past rows the next request would then never read.
         let calls = Arc::new(AtomicUsize::new(0));
@@ -442,10 +452,9 @@ mod tests {
                     total: 0,
                     offset,
                     limit: page_size,
-                    count: items.len() as i64,
+                    count: scanned,
                     desc: false,
                     items,
-                    scanned: Some(scanned),
                 })
             })
         });
@@ -485,7 +494,6 @@ mod tests {
                     count: items.len() as i64,
                     desc: false,
                     items,
-                    scanned: None,
                 })
             })
         });
@@ -545,7 +553,6 @@ mod tests {
                     count: 5,
                     desc: false,
                     items: vec![0, 1, 2, 3, 4],
-                    scanned: None,
                 })
             })
         });
@@ -582,7 +589,6 @@ mod tests {
                     count: 3,
                     desc: false,
                     items: vec![10, 20, 30],
-                    scanned: None,
                 })
             })
         });

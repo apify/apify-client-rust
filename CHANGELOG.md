@@ -4,6 +4,40 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] - 2026-11-06
+
+Ports the `apify-client-js` Server Actor support and the `count` of dataset item pages.
+
+### Added
+- `ActorClient::server`, which returns an `ActorServerClient` for a Server Actor (formerly Actor
+  Standby), and its deprecated alias `ActorClient::standby`.
+- `ActorServerClient::request` and `request_stream`, which send an HTTP request to the Actor's
+  server with the token in `X-Apify-Authorization`, without following redirects, retrying only `429`
+  and `503`, and returning error statuses as responses. Their options are
+  `ActorServerRequestOptions`, `ActorServerBody` and `ActorServerCompression`.
+- `ActorServerClient::get_url` and `get_open_api_spec`.
+- `Actor::standby_url`, `actor_standby` (`ActorStandby`, with the `tenancy` values `SINGLE_TENANT`
+  and `MULTI_TENANT`) and `tagged_builds` (`TaggedBuildInfo`).
+- `ActorVersion::actor_path`, the Actor's directory inside an uploaded source.
+- `HttpMethod::Patch`, `Options`, `Connect` and `Trace`, `HttpRequest::follow_redirects`,
+  `ReqwestBackend::with_no_redirect_client`, and `HttpResponse::is_success`, `text` and `json`.
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-11-04T151257Z` (`API_SPEC_VERSION`).
+- **Breaking:** `PaginationList::count` of `DatasetClient::list_items` is the number of rows the API
+  scanned, or the number of items returned when that is larger, so filters can leave it above
+  `items.len()`. The iterators step by it, capped at the page size.
+- **Breaking:** `HttpRequest` has the new field `follow_redirects`, which a custom `HttpBackend`
+  must honor, and `HttpMethod` has new variants.
+- **Breaking:** `Actor` and `ActorVersion` have new fields, and `standbyUrl`, `actorStandby` and
+  `taggedBuilds` are no longer in `Actor::extra`.
+- Documented that iterating `iterate_items` without a page size loads the whole dataset in one
+  response.
+
+### Fixed
+- A `ListIterator` no longer ends in front of rows that match when a filter leaves a page with no
+  items.
+
 ## [0.15.0] - 2026-10-29
 
 Ports the `apify-client-js` v3 changes.

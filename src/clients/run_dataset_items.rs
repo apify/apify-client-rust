@@ -228,7 +228,7 @@ impl<T: DeserializeOwned> RunDatasetItemsIterator<T> {
         // Only an empty page marks the end, as filters can shorten a full one. A page that
         // `clean`, `skip_empty` or `unwind` emptied past a lagging `itemCount` reports no scanned
         // rows either, so a plain read checks.
-        let is_empty = page.items.is_empty() && page.scanned.unwrap_or(0) == 0;
+        let is_empty = page.count == 0;
         self.buffer.extend(page.items);
         if is_empty && !self.filters_can_hide_rows() {
             self.phase = Phase::Done;

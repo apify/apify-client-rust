@@ -84,9 +84,82 @@ pub struct Actor {
     /// When the Actor was last modified.
     #[serde(default)]
     pub modified_at: Option<DateTime<Utc>>,
+    /// URL for sending requests to the Actor's server (Standby mode), or `None` if the Standby
+    /// mode isn't enabled. Use [`ActorClient::server`](crate::clients::actor::ActorClient::server)
+    /// to send the requests.
+    #[serde(default)]
+    pub standby_url: Option<String>,
+    /// The Standby mode configuration of the Actor, or `None` if it has none.
+    #[serde(default)]
+    pub actor_standby: Option<ActorStandby>,
+    /// Maps build tag names (e.g. `latest`) to their build information. A tag the API reports
+    /// without a build maps to `None`.
+    #[serde(default)]
+    pub tagged_builds: Option<HashMap<String, Option<TaggedBuildInfo>>>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// The Standby mode configuration of an Actor.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorStandby {
+    /// Whether standby mode is enabled for the Actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_enabled: Option<bool>,
+    /// Target number of concurrent HTTP requests a single run is configured to handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desired_requests_per_actor_run: Option<i64>,
+    /// Maximum number of concurrent HTTP requests that can be routed to a single run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_requests_per_actor_run: Option<i64>,
+    /// In seconds, how long a run can stay idle without incoming requests before it's terminated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<i64>,
+    /// Which build to run in standby mode. Either a build tag or a version number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    /// In MB, the amount of memory allocated to the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mbytes: Option<i64>,
+    /// If `true`, prevents the standby mode configuration from being overridden elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_standby_fields_override: Option<bool>,
+    /// Whether to pass the Actor's input to the standby run. If `false`, the standby runs start
+    /// with no input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub should_pass_actor_input: Option<bool>,
+    /// Whether each user gets their own standby runs (`SINGLE_TENANT`) or runs are shared across
+    /// users (`MULTI_TENANT`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenancy: Option<String>,
+    /// Whether standby requests can be authenticated with an Apify Console session. When creating
+    /// an Actor, omit this field or set it to `false`. When updating an Actor, only Apify
+    /// administrators can change it; other users can only send the current value, or `false` if
+    /// it's not set yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_console_auth_enabled: Option<bool>,
+    /// Whether standby requests can be made without an API token. When creating an Actor, omit
+    /// this field or set it to `false`. When updating an Actor, only Apify administrators can
+    /// change it; other users can only send the current value, or `false` if it's not set yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_tokenless_enabled: Option<bool>,
+}
+
+/// Information about the build a tag of an Actor points to.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaggedBuildInfo {
+    /// ID of the build the tag points to.
+    #[serde(default)]
+    pub build_id: Option<String>,
+    /// Number of the build the tag points to, e.g. `0.0.2`.
+    #[serde(default)]
+    pub build_number: Option<String>,
+    /// When the build finished.
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
 }
 
 /// A single execution of an Actor (an Actor run).
@@ -751,6 +824,18 @@ pub struct ActorVersion {
     /// The source type of the version, e.g. `SOURCE_FILES`, `GIT_REPO`, `TARBALL`, `GITHUB_GIST`.
     #[serde(default)]
     pub source_type: Option<String>,
+    /// The Actor's directory inside the uploaded source, as a path relative to the upload root
+    /// with `/` separators, e.g. `actors/typescript-actor`. Applies to the `SOURCE_FILES` and
+    /// `TARBALL` source types. `None` when the upload root is the Actor's directory. On a
+    /// `TARBALL` version, only users with write access to the Actor get it. It has 1 to 255
+    /// characters, with no leading, trailing, or repeated `/` and no `.` or `..` segments.
+    ///
+    /// When updating a version, an update that sends `sourceType`, `sourceFiles`, or `tarballUrl`
+    /// without `actorPath` removes the stored one, so send it again with every upload. An update
+    /// of other fields, such as `envVars` or `buildTag`, keeps it. `None` is not sent: to remove
+    /// the stored path, send `"actorPath": null` in a JSON update body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_path: Option<String>,
     /// Any other fields returned by the API.
     #[serde(flatten)]
     pub extra: Extra,

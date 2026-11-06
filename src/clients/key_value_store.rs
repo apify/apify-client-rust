@@ -277,6 +277,7 @@ impl KeyValueStoreClient {
             },
             CallOptions {
                 do_not_retry_timeouts: options.do_not_retry_timeouts,
+                ..CallOptions::default()
             },
             Timeout::Long,
         )

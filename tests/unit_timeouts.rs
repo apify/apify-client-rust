@@ -269,6 +269,7 @@ async fn reqwest_backend_sends_a_request_without_a_timeout() {
             headers: Default::default(),
             body: None,
             timeout: NO_TIMEOUT,
+            follow_redirects: true,
         })
         .await
         .expect("a request without a timeout is sent");
@@ -293,6 +294,7 @@ async fn reqwest_backend_aborts_a_request_that_outlives_its_timeout() {
             headers: Default::default(),
             body: None,
             timeout: Duration::from_millis(50),
+            follow_redirects: true,
         })
         .await
         .expect_err("the request must time out");

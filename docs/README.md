@@ -79,6 +79,7 @@ types is:
 - Store: `StoreListOptions`
 - Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StreamedLog`, `StreamedLogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
+- Server Actors: `ActorServerRequestOptions`, `ActorServerBody`, `ActorServerCompression`
 - Client configuration: `RequestCompression`
 
 plus the common container `PaginationList`, `ListIterator`
@@ -272,7 +273,12 @@ iterates everything); to control the per-request page size, call `.with_chunk_si
 returned iterator (offset-paginated iterators only). An offset-paginated iterator ignores the
 `total` a page reports and keeps requesting pages until one scans no rows, so a listing that grows
 while being iterated (e.g. a dataset a still-running Actor keeps pushing to) is read to the end
-rather than cut off at the size it had when the loop started.
+rather than cut off at the size it had when the loop started. Each page advances the offset by the
+page's `count` or by the number of items it returned, whichever is larger, capped at the page size
+requested. Without `with_chunk_size`, each request gets the API's default page size, capped by
+`limit`. Dataset items have no default limit, so iterating `iterate_items()` without
+`with_chunk_size` loads the whole dataset, or all `limit` items, in one response: set a page size
+to iterate a large dataset.
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions};

@@ -215,6 +215,10 @@ Every request carries a `User-Agent` of the form
 | `client.me()` / `client.user(id)` | single | User accounts |
 | `client.log(build_or_run_id)` | single | Build/run logs |
 
+`client.actor(id).server()` returns a client for the server interface of a Server Actor (formerly
+Actor Standby): it sends HTTP requests to the Actor's web server with the client's token, and gets
+the server's URL and OpenAPI specification. See [Actors](docs/actors.md#server-actors).
+
 `client.api_base_url()` returns the API base URL the client targets, including `/v2` and any
 `base_url` override. The iterators returned by `iterate(..)` (and by `RunClient::iterate_dataset_items`)
 yield one item per `next().await?`; `collect_all().await?` drains the remaining items into a `Vec`.
@@ -392,7 +396,9 @@ pool, …), as shown below; to route requests through an entirely different HTTP
 `log().stream()` and `download_items_stream()`) has a default implementation that buffers the
 whole response via `send`, so it is optional unless you want true incremental streaming. A request
 whose `timeout` is `timeouts::NO_TIMEOUT` (see [Timeouts](#timeouts)) may run for as long as it
-takes, so a backend must check for it before it applies a timeout of its own:
+takes, so a backend must check for it before it applies a timeout of its own. A request whose
+`follow_redirects` is `false`, such as one to an Actor's server, carries a token that must not
+follow a redirect to another host, so a backend must return a redirect response as it is:
 
 ```rust,no_run
 use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
@@ -436,6 +442,11 @@ let reqwest_client = reqwest::Client::builder().build().unwrap();
 let backend = Arc::new(ReqwestBackend::with_client(reqwest_client));
 let client = ApifyClient::builder().token("t").http_backend(backend).build();
 ```
+
+A `reqwest::Client` fixes its redirect policy when it is built, so `ReqwestBackend` sends the
+requests that must not follow redirects with a second client. `with_client` gives it a default one,
+and `with_no_redirect_client` replaces it with a client of yours, which has to be built with
+`redirect(reqwest::redirect::Policy::none())`.
 
 ## License
 

@@ -285,10 +285,10 @@ impl DatasetClient {
             .await?;
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
-        let count = items.len() as i64;
-        // `PaginationList::total` is informational only here (`ListIterator` never consults it,
-        // see `scanned` below); falling back to `0` rather than `count` just avoids implying a
-        // precise total when the API did not report one.
+        let returned = items.len() as i64;
+        // `PaginationList::total` is informational only here (`ListIterator` never consults it);
+        // falling back to `0` rather than `returned` just avoids implying a precise total when the
+        // API did not report one.
         let total = response
             .header("x-apify-pagination-total")
             .and_then(|v| v.parse().ok())
@@ -300,13 +300,15 @@ impl DatasetClient {
         let limit = response
             .header("x-apify-pagination-limit")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(count);
-        // The number of rows scanned to produce this page, when the API reports it separately
-        // from the item count (see `PaginationList::scanned`): a filter can scan more rows than
-        // it returns, and `unwind` can return more items than rows scanned.
-        let scanned = response
+            .unwrap_or(returned);
+        // `x-apify-pagination-count` reports the rows scanned, which filters and `unwind` can leave
+        // above or below the items returned. It is derived from the dataset's item count, which
+        // lags a fresh push, so it can also fall below the items returned on an unfiltered page.
+        let count = response
             .header("x-apify-pagination-count")
-            .and_then(|v| v.parse().ok());
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+            .max(returned);
 
         Ok(PaginationList {
             total,
@@ -315,7 +317,6 @@ impl DatasetClient {
             count,
             desc: options.desc.unwrap_or(false),
             items,
-            scanned,
         })
     }
 
@@ -324,7 +325,9 @@ impl DatasetClient {
     /// The idiomatic-Rust counterpart of the reference client's async-iterable
     /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
     /// transparently paging. The caller's `options.limit` caps the total number of items yielded
-    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
+    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size. Dataset
+    /// items have no default page limit, so without a page size the whole dataset, or all `limit`
+    /// items, is loaded in one response: set one to iterate a large dataset.
     ///
     /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) and `unwind` are forwarded on
     /// every page request. Paging advances the offset by the number of underlying rows each page
@@ -432,6 +435,7 @@ impl DatasetClient {
                 self.ctx.timeout(Timeout::Medium),
                 CallOptions {
                     do_not_retry_timeouts: true,
+                    ..CallOptions::default()
                 },
             )
             .await?;

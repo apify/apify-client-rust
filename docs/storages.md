@@ -397,7 +397,7 @@ return `PaginationList<T>`. Re-exported at the crate root (`apify_client::Pagina
 | `total` | `i64` | Total items available across all pages. |
 | `offset` | `i64` | Items skipped at the start. |
 | `limit` | `i64` | Max items the API would return for this request. |
-| `count` | `i64` | Items actually returned in this page. |
+| `count` | `i64` | Entries on this page. On a page from `list_items`, the number of dataset rows the API scanned for it, or the number of items returned when that is larger: filters (`clean`, `skip_empty`, `skip_hidden`) can leave it above `items.len()`. |
 | `desc` | `bool` | Whether the items are in descending order. |
 | `items` | `Vec<T>` | The items of this page. |
 

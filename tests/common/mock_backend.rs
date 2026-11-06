@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use apify_client::http_client::{HttpBackend, HttpRequest, HttpResponse};
+use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, HttpResponse};
 use apify_client::{ApifyClient, ApifyClientError};
 use async_trait::async_trait;
 
@@ -21,11 +21,17 @@ pub struct MockBackend {
     last_body: Mutex<Option<Vec<u8>>>,
     /// The `timeout` of every request in call order, so tests can assert the timeout tiers.
     timeouts: Mutex<Vec<Duration>>,
+    /// The method of every request in call order.
+    methods: Mutex<Vec<HttpMethod>>,
+    /// The `follow_redirects` setting of every request in call order.
+    follow_redirects: Mutex<Vec<bool>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum MockOutcome {
     Status(u16, Vec<u8>),
+    /// A response with headers.
+    StatusWithHeaders(u16, Vec<(&'static str, String)>, Vec<u8>),
     NetworkError,
     /// The transport gave up on the request because it outlived its timeout.
     Timeout,
@@ -41,7 +47,19 @@ impl MockBackend {
             last_headers: Mutex::new(std::collections::HashMap::new()),
             last_body: Mutex::new(None),
             timeouts: Mutex::new(Vec::new()),
+            methods: Mutex::new(Vec::new()),
+            follow_redirects: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The method of every request in call order.
+    pub fn methods(&self) -> Vec<HttpMethod> {
+        self.methods.lock().unwrap().clone()
+    }
+
+    /// The `follow_redirects` setting of every request in call order.
+    pub fn follow_redirects(&self) -> Vec<bool> {
+        self.follow_redirects.lock().unwrap().clone()
     }
 
     /// The timeout of every request in call order.
@@ -90,6 +108,11 @@ impl HttpBackend for MockBackend {
         *self.last_headers.lock().unwrap() = request.headers.clone();
         *self.last_body.lock().unwrap() = request.body.clone();
         self.timeouts.lock().unwrap().push(request.timeout);
+        self.methods.lock().unwrap().push(request.method);
+        self.follow_redirects
+            .lock()
+            .unwrap()
+            .push(request.follow_redirects);
         let mut queue = self.responses.lock().unwrap();
         let outcome = if queue.len() > 1 {
             queue.remove(0)
@@ -104,6 +127,14 @@ impl HttpBackend for MockBackend {
             MockOutcome::Status(status, body) => Ok(HttpResponse {
                 status,
                 headers: Default::default(),
+                body,
+            }),
+            MockOutcome::StatusWithHeaders(status, headers, body) => Ok(HttpResponse {
+                status,
+                headers: headers
+                    .into_iter()
+                    .map(|(name, value)| (name.to_string(), value))
+                    .collect(),
                 body,
             }),
             MockOutcome::NetworkError => Err(ApifyClientError::Http("boom".to_string())),

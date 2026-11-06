@@ -15,7 +15,9 @@ use crate::common::{
     catch_not_found, parse_data_envelope, to_path_segment, to_safe_id, PaginationList, QueryParams,
 };
 use crate::error::{ApifyClientError, ApifyClientResult};
-use crate::http_client::{CallOptions, HttpClient, HttpMethod, HttpRequest, HttpResponse};
+use crate::http_client::{
+    CallOptions, HttpClient, HttpMethod, HttpRequest, HttpResponse, StreamingHttpResponse,
+};
 use crate::timeouts::Timeout;
 
 /// How long to wait between polls while waiting for a run/build to finish.
@@ -261,6 +263,35 @@ impl ResourceContext {
                     headers,
                     body,
                     timeout,
+                    follow_redirects: !options.do_not_follow_redirects,
+                },
+                options,
+            )
+            .await
+    }
+
+    /// Like [`send_with_options`](Self::send_with_options), for a response whose body the caller
+    /// reads incrementally: sends the request once, with no retries, and returns the response of
+    /// any status (see [`HttpClient::call_streaming_response`]).
+    pub(crate) async fn send_streaming_with_options(
+        &self,
+        method: HttpMethod,
+        url: String,
+        headers: HashMap<String, String>,
+        body: Option<Vec<u8>>,
+        timeout: Duration,
+        options: &CallOptions,
+    ) -> ApifyClientResult<StreamingHttpResponse> {
+        self.check_request_allowed()?;
+        self.http
+            .call_streaming_response(
+                HttpRequest {
+                    method,
+                    url,
+                    headers,
+                    body,
+                    timeout,
+                    follow_redirects: !options.do_not_follow_redirects,
                 },
                 options,
             )
@@ -474,6 +505,7 @@ pub(crate) async fn post_creating<T: DeserializeOwned>(
 ) -> ApifyClientResult<T> {
     let options = CallOptions {
         do_not_retry_timeouts: true,
+        ..CallOptions::default()
     };
     let response = post_send(
         ctx,
@@ -638,6 +670,7 @@ pub(crate) async fn get_byte_stream(
             headers: Default::default(),
             body: None,
             timeout: ctx.timeout(tier),
+            follow_redirects: true,
         })
         .await
 }

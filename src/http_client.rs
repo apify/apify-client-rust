@@ -27,6 +27,11 @@ use crate::timeouts::{Timeout, TimeoutTiers, NO_TIMEOUT};
 
 /// Responses with status `< 300` are treated as success.
 const MAX_SUCCESS_STATUS_CODE: u16 = 300;
+/// The header that carries the API token to the Apify API.
+const AUTHORIZATION_HEADER: &str = "Authorization";
+/// The header that carries the API token to an Actor's server. The platform removes it before the
+/// request reaches the Actor, which keeps `Authorization` free for the Actor's own authentication.
+const X_APIFY_AUTHORIZATION_HEADER: &str = "X-Apify-Authorization";
 /// Multiplier applied to the inter-retry delay after each attempt (exponential backoff).
 /// Matches the reference client's `async-retry` default factor of 2.
 const BACKOFF_FACTOR: u32 = 2;
@@ -44,6 +49,14 @@ pub enum HttpMethod {
     Delete,
     /// HTTP `HEAD`.
     Head,
+    /// HTTP `PATCH`.
+    Patch,
+    /// HTTP `OPTIONS`.
+    Options,
+    /// HTTP `CONNECT`.
+    Connect,
+    /// HTTP `TRACE`.
+    Trace,
 }
 
 impl HttpMethod {
@@ -55,6 +68,10 @@ impl HttpMethod {
             HttpMethod::Put => "PUT",
             HttpMethod::Delete => "DELETE",
             HttpMethod::Head => "HEAD",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Options => "OPTIONS",
+            HttpMethod::Connect => "CONNECT",
+            HttpMethod::Trace => "TRACE",
         }
     }
 }
@@ -77,6 +94,10 @@ pub struct HttpRequest {
     /// is [`NO_TIMEOUT`]: such a request may run for as long as it
     /// takes and the backend must not impose a timeout of its own.
     pub timeout: Duration,
+    /// Whether the backend follows redirects. When `false`, the backend must return a redirect
+    /// response as it is: the request carries a token that must not follow a redirect to a host
+    /// the server picked.
+    pub follow_redirects: bool,
 }
 
 /// An HTTP response returned by an [`HttpBackend`].
@@ -98,6 +119,21 @@ impl HttpResponse {
             .iter()
             .find(|(k, _)| k.to_ascii_lowercase() == lower)
             .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns `true` for a success status, below `300`.
+    pub fn is_success(&self) -> bool {
+        self.status < MAX_SUCCESS_STATUS_CODE
+    }
+
+    /// Returns the body as text, replacing any invalid UTF-8 sequences.
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    /// Parses the body as JSON.
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> ApifyClientResult<T> {
+        Ok(serde_json::from_slice(&self.body)?)
     }
 }
 
@@ -157,29 +193,69 @@ fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
         HttpMethod::Put => reqwest::Method::PUT,
         HttpMethod::Delete => reqwest::Method::DELETE,
         HttpMethod::Head => reqwest::Method::HEAD,
+        HttpMethod::Patch => reqwest::Method::PATCH,
+        HttpMethod::Options => reqwest::Method::OPTIONS,
+        HttpMethod::Connect => reqwest::Method::CONNECT,
+        HttpMethod::Trace => reqwest::Method::TRACE,
     }
 }
 
 /// The default [`HttpBackend`] implementation, backed by [`reqwest`].
+///
+/// A `reqwest::Client` fixes its redirect policy when it is built, so the backend keeps a second
+/// client that never follows redirects, for the requests with
+/// [`follow_redirects`](HttpRequest::follow_redirects) set to `false`.
 #[derive(Debug, Clone)]
 pub struct ReqwestBackend {
     client: reqwest::Client,
+    /// Used for requests that must not follow redirects.
+    no_redirect_client: reqwest::Client,
 }
 
 impl ReqwestBackend {
     /// Creates a new backend with a default `reqwest::Client`.
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
+        Self::with_client(reqwest::Client::new())
     }
 
     /// Creates a backend wrapping a caller-provided `reqwest::Client`.
     ///
-    /// Useful for sharing a connection pool or customizing proxy/TLS settings.
+    /// Useful for sharing a connection pool or customizing proxy/TLS settings. The requests that
+    /// must not follow redirects, such as those to an Actor's server, are sent by a default
+    /// client that follows none: replace it with
+    /// [`with_no_redirect_client`](Self::with_no_redirect_client) to configure it too.
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            no_redirect_client: default_no_redirect_client(),
+        }
     }
+
+    /// Replaces the client that sends the requests that must not follow redirects. It has to be
+    /// built with `redirect(reqwest::redirect::Policy::none())`, or those requests would follow
+    /// redirects.
+    #[must_use]
+    pub fn with_no_redirect_client(mut self, client: reqwest::Client) -> Self {
+        self.no_redirect_client = client;
+        self
+    }
+
+    /// The `reqwest` client that sends `request`, following its redirect setting.
+    fn client_for(&self, request: &HttpRequest) -> &reqwest::Client {
+        if request.follow_redirects {
+            &self.client
+        } else {
+            &self.no_redirect_client
+        }
+    }
+}
+
+/// A default `reqwest::Client` that follows no redirects.
+fn default_no_redirect_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("a default reqwest client without redirects builds, like `reqwest::Client::new`")
 }
 
 impl Default for ReqwestBackend {
@@ -193,7 +269,7 @@ impl HttpBackend for ReqwestBackend {
     async fn send(&self, request: HttpRequest) -> ApifyClientResult<HttpResponse> {
         let method = to_reqwest_method(request.method);
 
-        let mut builder = self.client.request(method, &request.url);
+        let mut builder = self.client_for(&request).request(method, &request.url);
         if request.timeout != NO_TIMEOUT {
             builder = builder.timeout(request.timeout);
         }
@@ -234,7 +310,7 @@ impl HttpBackend for ReqwestBackend {
         // `TotalTimeoutBody`), which would cut off a long-but-active stream (e.g. live log
         // redirection). `HttpClient::call_streaming` applies its own response-start and
         // per-chunk-inactivity bounds instead, uniformly across backends.
-        let mut builder = self.client.request(method, &request.url);
+        let mut builder = self.client_for(&request).request(method, &request.url);
         for (key, value) in &request.headers {
             builder = builder.header(key, value);
         }
@@ -286,14 +362,52 @@ pub(crate) struct HttpClientConfig {
     pub(crate) stats: Arc<Statistics>,
 }
 
+/// The header that carries the client's API token.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum AuthorizationHeader {
+    /// `Authorization`, which the Apify API reads.
+    #[default]
+    Authorization,
+    /// `X-Apify-Authorization`, which Actor servers accept.
+    XApifyAuthorization,
+}
+
+/// How the body of a request is compressed.
+#[derive(Debug, Clone, Default)]
+pub(crate) enum BodyCompression {
+    /// With the client's compressor.
+    #[default]
+    ClientDefault,
+    /// Not at all.
+    Disabled,
+    /// With this compressor, for this request only.
+    With(Arc<dyn HttpCompressor>),
+}
+
 /// Options of a single [`HttpClient::call_with_options`].
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct CallOptions {
     /// Give up on the first transport timeout instead of retrying it. For a call that is not
     /// idempotent, such as pushing dataset items, whose request may have reached the API before
     /// the client gave up on it: a retry could then store the same data twice. Other errors are
     /// retried as usual.
     pub(crate) do_not_retry_timeouts: bool,
+    /// How to compress the request body.
+    pub(crate) compression: BodyCompression,
+    /// The header that carries the API token.
+    pub(crate) authorization_header: AuthorizationHeader,
+    /// Return an error response as it is once no retry follows, instead of failing with an
+    /// [`ApiError`]. A rate limit (`429`) then stays out of the [`Statistics`], which track the
+    /// API's rate limits: only calls to the API fail on an error status.
+    pub(crate) return_error_responses: bool,
+    /// The statuses to retry, instead of the rate limit and the server errors.
+    pub(crate) retry_status_codes: Option<&'static [u16]>,
+    /// Give up on the first transport error, timeouts included, since the request may have
+    /// reached the server before it failed.
+    pub(crate) do_not_retry_transport_errors: bool,
+    /// Return a redirect response as it is, since the request carries a token that must not
+    /// follow a redirect to a host the server picked.
+    pub(crate) do_not_follow_redirects: bool,
 }
 
 /// The orchestrating HTTP client shared by every resource client.
@@ -368,20 +482,48 @@ impl HttpClient {
 
     /// Adds the headers every request carries: the built-in `User-Agent` and `Authorization`,
     /// overridden by the client's default headers, overridden by the request's own headers.
-    /// Header names are compared case-insensitively.
-    fn apply_headers(&self, request: &mut HttpRequest) {
+    /// Header names are compared case-insensitively. With
+    /// [`AuthorizationHeader::XApifyAuthorization`], the `Authorization` header of the client,
+    /// default headers included, is sent as `X-Apify-Authorization`; a request header of either
+    /// name still wins.
+    fn apply_headers(&self, request: &mut HttpRequest, authorization_header: AuthorizationHeader) {
         let mut merged: HashMap<String, String> = HashMap::new();
         merged.insert("User-Agent".to_string(), self.user_agent.clone());
         if let Some(token) = &self.token {
-            merged.insert("Authorization".to_string(), format!("Bearer {token}"));
+            merged.insert(AUTHORIZATION_HEADER.to_string(), format!("Bearer {token}"));
         }
         for (name, value) in &self.default_headers {
             set_header(&mut merged, name, value);
+        }
+        if authorization_header == AuthorizationHeader::XApifyAuthorization {
+            move_header(
+                &mut merged,
+                AUTHORIZATION_HEADER,
+                X_APIFY_AUTHORIZATION_HEADER,
+            );
         }
         for (name, value) in std::mem::take(&mut request.headers) {
             set_header(&mut merged, &name, &value);
         }
         request.headers = merged;
+    }
+
+    /// Compresses the body of `request` once (not per attempt) with the compressor `compression`
+    /// picks, when the body is large enough.
+    fn compress_body(
+        &self,
+        request: &mut HttpRequest,
+        compression: &BodyCompression,
+    ) -> ApifyClientResult<()> {
+        let compressor = match compression {
+            BodyCompression::ClientDefault => self.compressor.as_ref(),
+            BodyCompression::Disabled => return Ok(()),
+            BodyCompression::With(compressor) => compressor.as_ref(),
+        };
+        if let Some(body) = request.body.take() {
+            request.body = Some(maybe_compress(compressor, &mut request.headers, body)?);
+        }
+        Ok(())
     }
 
     /// The statistics of the calls made through this client.
@@ -391,7 +533,8 @@ impl HttpClient {
 
     /// Sends `request` with authentication, the user-agent header, and the retry policy
     /// applied, as `options` adjust it. Returns the first successful response, or the final
-    /// error.
+    /// error. With [`CallOptions::return_error_responses`], the final error response is returned
+    /// instead of the error.
     pub(crate) async fn call_with_options(
         &self,
         mut request: HttpRequest,
@@ -399,17 +542,11 @@ impl HttpClient {
     ) -> ApifyClientResult<HttpResponse> {
         self.fail_if_poisoned()?;
         self.stats.add_call();
-        self.apply_headers(&mut request);
+        self.apply_headers(&mut request, options.authorization_header);
 
         // Compress the request body once (not per attempt) when it is large enough, mirroring the
         // reference client. The API accepts both brotli- and gzip-encoded request bodies.
-        if let Some(body) = request.body.take() {
-            request.body = Some(maybe_compress(
-                self.compressor.as_ref(),
-                &mut request.headers,
-                body,
-            )?);
-        }
+        self.compress_body(&mut request, &options.compression)?;
 
         let method_str = request.method.as_str().to_string();
         let path = extract_path(&request.url);
@@ -433,15 +570,22 @@ impl HttpClient {
                     if response.status < MAX_SUCCESS_STATUS_CODE {
                         return Ok(response);
                     }
-                    if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+                    if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE
+                        && !options.return_error_responses
+                    {
                         self.stats.add_rate_limit_error(attempt);
                     }
+                    let retryable =
+                        is_status_retryable(response.status, options.retry_status_codes);
+                    if options.return_error_responses && (!retryable || attempt == max_attempts) {
+                        return Ok(response);
+                    }
                     let api_error = build_api_error(&response, attempt, &method_str, &path);
-                    let retryable = is_status_retryable(response.status);
                     (ApifyClientError::from(api_error), retryable)
                 }
                 Err(err) => {
                     let retryable = is_error_retryable(&err)
+                        && !options.do_not_retry_transport_errors
                         && !(options.do_not_retry_timeouts
                             && matches!(err, ApifyClientError::Timeout));
                     (err, retryable)
@@ -497,15 +641,48 @@ impl HttpClient {
     /// response to start.
     pub(crate) async fn call_streaming(
         &self,
-        mut request: HttpRequest,
+        request: HttpRequest,
     ) -> ApifyClientResult<impl futures_util::Stream<Item = ApifyClientResult<Vec<u8>>>> {
+        let method_str = request.method.as_str().to_string();
+        let path = extract_path(&request.url);
+        let options = CallOptions {
+            compression: BodyCompression::Disabled,
+            ..CallOptions::default()
+        };
+        let response = self.call_streaming_response(request, &options).await?;
+        if response.status < MAX_SUCCESS_STATUS_CODE {
+            return Ok(response.body);
+        }
+
+        // The error body arrives as a stream here too; read it so the failure carries the same
+        // structured `ApiError` (type/message/data) as every buffered endpoint, rather than losing
+        // the body to a generic transport error. A body that fails to read (e.g. the connection
+        // drops mid-response) still surfaces the status code, just without a parsed message.
+        let http_response = HttpResponse {
+            status: response.status,
+            headers: response.headers,
+            body: collect_body(response.body).await,
+        };
+        let api_error = build_api_error(&http_response, 1, &method_str, &path);
+        Err(ApifyClientError::from(api_error))
+    }
+
+    /// Opens a streaming connection like [`call_streaming`](Self::call_streaming), but returns the
+    /// response of any status with its body unread, wrapped in the per-chunk inactivity timeout
+    /// that the request's timeout sets. The request is sent once, with no retries.
+    /// `options.compression` compresses the request body, and a `429` response counts toward the
+    /// [`Statistics`] unless `options.return_error_responses` takes the call for a non-API one.
+    pub(crate) async fn call_streaming_response(
+        &self,
+        mut request: HttpRequest,
+        options: &CallOptions,
+    ) -> ApifyClientResult<StreamingHttpResponse> {
         self.fail_if_poisoned()?;
         self.stats.add_call();
         self.stats.add_request();
-        self.apply_headers(&mut request);
+        self.apply_headers(&mut request, options.authorization_header);
+        self.compress_body(&mut request, &options.compression)?;
 
-        let method_str = request.method.as_str().to_string();
-        let path = extract_path(&request.url);
         // The request timeout is both the response-start wait and the per-chunk inactivity
         // window, so a stream that stays silent for that long (e.g. a run that logs nothing for
         // the `Long` tier) times out. `Timeout::NoTimeout`, set with a resource client's
@@ -515,34 +692,21 @@ impl HttpClient {
         let response = tokio::time::timeout(budget, self.backend.send_streaming(request))
             .await
             .map_err(|_| ApifyClientError::Timeout)??;
-
-        if response.status < MAX_SUCCESS_STATUS_CODE {
-            return Ok(with_inactivity_timeout(response.body, budget));
-        }
-
-        // The error body arrives as a stream here too; read it (under the same inactivity
-        // budget) so the failure carries the same structured `ApiError` (type/message/data) as
-        // every buffered endpoint, rather than losing the body to a generic transport error. A
-        // body that fails to read (e.g. the connection drops mid-response) still surfaces the
-        // status code, just without a parsed message.
-        let body = collect_with_timeout(response.body, budget).await;
-        if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE {
+        if response.status == RATE_LIMIT_EXCEEDED_STATUS_CODE && !options.return_error_responses {
             self.stats.add_rate_limit_error(1);
         }
-        let http_response = HttpResponse {
+        Ok(StreamingHttpResponse {
             status: response.status,
             headers: response.headers,
-            body,
-        };
-        let api_error = build_api_error(&http_response, 1, &method_str, &path);
-        Err(ApifyClientError::from(api_error))
+            body: with_inactivity_timeout(response.body, budget),
+        })
     }
 }
 
 /// Wraps a streaming body so each chunk must arrive within `timeout` of the previous one (or of
 /// the stream opening), erroring with [`ApifyClientError::Timeout`] otherwise — an inactivity
-/// timeout, not a cap on the stream's total duration. Shared by
-/// [`HttpClient::call_streaming`]'s success and error-body-reading paths.
+/// timeout, not a cap on the stream's total duration. Used by
+/// [`HttpClient::call_streaming_response`].
 ///
 /// A timeout yields exactly one `Err(Timeout)` and then ends the stream (further polls return
 /// `None`), rather than retrying the same read forever: the underlying body is dropped once it
@@ -574,16 +738,16 @@ fn with_inactivity_timeout(
     ))
 }
 
-/// Drains a streaming body into a single buffer, under the same per-chunk inactivity timeout as
-/// [`with_inactivity_timeout`]. Used only for a non-success response's (typically small) error
-/// body, so buffering it is fine — unlike a successful body, which callers stream incrementally.
-async fn collect_with_timeout(
-    body: std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
-    timeout: Duration,
+/// Drains a streaming body into a single buffer, stopping at the first error. Used only for a
+/// non-success response's (typically small) error body, so buffering it is fine — unlike a
+/// successful body, which callers stream incrementally.
+async fn collect_body(
+    mut body: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>,
+    >,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    let mut timed = with_inactivity_timeout(body, timeout);
-    while let Some(chunk) = futures_util::StreamExt::next(&mut timed).await {
+    while let Some(chunk) = futures_util::StreamExt::next(&mut body).await {
         match chunk {
             Ok(bytes) => buf.extend(bytes),
             Err(_) => break,
@@ -599,6 +763,21 @@ fn set_header(headers: &mut HashMap<String, String>, name: &str, value: &str) {
     headers.insert(name.to_string(), value.to_string());
 }
 
+/// Renames header `from` to `to`, whatever the casing of `from`, replacing any `to` header. Does
+/// nothing when there is no `from` header.
+fn move_header(headers: &mut HashMap<String, String>, from: &str, to: &str) {
+    let Some(name) = headers
+        .keys()
+        .find(|name| name.eq_ignore_ascii_case(from))
+        .cloned()
+    else {
+        return;
+    };
+    if let Some(value) = headers.remove(&name) {
+        set_header(headers, to, &value);
+    }
+}
+
 /// Returns the path + query portion of a URL, for error reporting.
 fn extract_path(url: &str) -> Option<String> {
     // Find the start of the path after the scheme+host.
@@ -609,9 +788,13 @@ fn extract_path(url: &str) -> Option<String> {
 }
 
 /// We retry `429` (rate limit) and `5xx` (internal server errors), matching the
-/// reference client policy. Other `4xx` statuses are caller errors and are not retried.
-fn is_status_retryable(status: u16) -> bool {
-    status == RATE_LIMIT_EXCEEDED_STATUS_CODE || status >= MIN_SERVER_ERROR_STATUS_CODE
+/// reference client policy, unless the request lists its own `retry_status_codes`. Other `4xx`
+/// statuses are caller errors and are not retried.
+fn is_status_retryable(status: u16, retry_status_codes: Option<&[u16]>) -> bool {
+    match retry_status_codes {
+        Some(codes) => codes.contains(&status),
+        None => status == RATE_LIMIT_EXCEEDED_STATUS_CODE || status >= MIN_SERVER_ERROR_STATUS_CODE,
+    }
 }
 
 /// Only transport-level failures are retryable. Programming errors (serde, invalid
