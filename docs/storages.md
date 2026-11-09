@@ -70,8 +70,8 @@ let scratch = client.datasets().get_or_create(None).await?;
 | `get_statistics()` | — | `Value` | Field statistics. A `404` is an error. |
 | `download_items(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Vec<u8>` | Export items as JSON/JSONL/CSV/XLSX/XML/RSS/HTML. |
 | `download_items_stream(format, options)` | `DownloadItemsFormat`, `DatasetDownloadOptions` | `Result<impl Stream<Item = Result<Vec<u8>>>>` (async — `.await` it) | Like `download_items`, but streams the export instead of buffering it, for constant-memory processing of a large export. |
-| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. |
-| `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. |
+| `create_items_public_url(options, expires)` | `DatasetListItemsOptions`, `Option<i64>` | `String` | Shareable (HMAC-signed for private) items URL, served as `json`. `expires` is the validity of the signed URL in seconds and must be positive and at most `common::MAX_EXPIRES_IN_SECS` (4611686018427387, about 146 million years): `0`, a negative or a larger value fails with `InvalidArgument`. Leave it out for a URL that does not expire. |
+| `create_items_public_url_with_format(options, expires, format)` | `DatasetListItemsOptions`, `Option<i64>`, `Option<DownloadItemsFormat>` | `String` | Like `create_items_public_url`, but lets the URL serve another export format (CSV, XLSX, ...). `None` defaults to `json`. `expires` follows the same rule as in `create_items_public_url`. |
 
 `DatasetListItemsOptions` (all optional):
 
@@ -164,7 +164,7 @@ println!("streamed {total_bytes} bytes of JSONL");
 | `delete_record(key)` | `&str` | `()` | Deletes a record. |
 | `get_record_with_options(key, options)` | `&str`, `GetRecordOptions { attachment, signature }` | `Option<KeyValueStoreRecord>` | Reads a record with explicit attachment/signature options. |
 | `get_record_public_url(key)` | `&str` | `String` | Shareable (HMAC-signed for private) record URL. |
-| `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. |
+| `create_keys_public_url(expires)` | `Option<i64>` | `String` | Shareable keys-list URL. `expires` is the validity of the signed URL in seconds and must be positive and at most `common::MAX_EXPIRES_IN_SECS` (4611686018427387, about 146 million years): `0`, a negative or a larger value fails with `InvalidArgument`. Leave it out for a URL that does not expire. |
 
 `ListKeysOptions`: `limit`, `exclusive_start_key`, `prefix`, `collection`, `signature`. Like
 `StoreListOptions.limit`, the meaning of `limit` depends on the method: for `list_keys` it is a
@@ -397,7 +397,7 @@ return `PaginationList<T>`. Re-exported at the crate root (`apify_client::Pagina
 | `total` | `i64` | Total items available across all pages. |
 | `offset` | `i64` | Items skipped at the start. |
 | `limit` | `i64` | Max items the API would return for this request. |
-| `count` | `i64` | Items actually returned in this page. |
+| `count` | `i64` | Entries on this page. On a page from `list_items`, the number of dataset rows the API scanned for it, or the number of items returned when that is larger: filters (`clean`, `skip_empty`, `skip_hidden`) can leave it above `items.len()`. |
 | `desc` | `bool` | Whether the items are in descending order. |
 | `items` | `Vec<T>` | The items of this page. |
 

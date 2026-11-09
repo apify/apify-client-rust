@@ -123,6 +123,70 @@ async fn iterate_dataset_items() {
     );
 }
 
+/// How many times the count test lists the items while it waits for the pushed rows to be counted.
+const COUNT_WAIT_ATTEMPTS: usize = 30;
+
+/// How long the count test waits between two listings.
+const COUNT_WAIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// `list_items` reports in `count` the rows the API scanned: a filter can leave it above the items
+/// returned, and iterating by it reads every row behind a page the filter emptied.
+#[tokio::test(flavor = "multi_thread")]
+async fn list_items_count_follows_the_rows_scanned_when_a_filter_drops_items() {
+    let client = require_client!();
+    let name = common::unique_name("dataset-count");
+    let dataset = client
+        .datasets()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create dataset");
+
+    let cleanup_client = client.clone();
+    let id = dataset.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.dataset(&id).delete().await;
+    });
+
+    let dataset_client = client.dataset(&dataset.id);
+    // Four empty rows in front of the only item that survives `skip_empty`.
+    let rows = json!([{}, {}, {}, {}, { "n": 1 }]);
+    let row_count = rows.as_array().expect("an array of rows").len() as i64;
+    dataset_client.push_items(&rows).await.expect("push items");
+
+    let filtered = apify_client::DatasetListItemsOptions {
+        skip_empty: Some(true),
+        ..Default::default()
+    };
+    // The item count of a fresh dataset lags the push, so wait for the rows to be counted.
+    let mut page = None;
+    for _ in 0..COUNT_WAIT_ATTEMPTS {
+        let current = dataset_client
+            .list_items::<serde_json::Value>(filtered.clone())
+            .await
+            .expect("list items");
+        let counted = current.count >= row_count;
+        page = Some(current);
+        if counted {
+            break;
+        }
+        tokio::time::sleep(COUNT_WAIT_INTERVAL).await;
+    }
+    let page = page.expect("a page was listed");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(
+        page.count, row_count,
+        "the rows scanned, not the one item returned"
+    );
+
+    let items = dataset_client
+        .iterate_items::<serde_json::Value>(filtered)
+        .with_chunk_size(2)
+        .collect_all()
+        .await
+        .expect("iterate items");
+    assert_eq!(items, vec![json!({ "n": 1 })]);
+}
+
 /// Complex flow: create -> get -> push items -> read items -> update -> delete.
 #[tokio::test(flavor = "multi_thread")]
 async fn dataset_crud_flow() {

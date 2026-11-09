@@ -9,7 +9,10 @@ use crate::clients::base::{
     ResourceContext,
 };
 use crate::clients::pagination::ListIterator;
-use crate::common::{sign_storage_content, PaginationList, QueryParams};
+use crate::common::{
+    public_url_expiry_millis, sign_storage_content, validate_expires_in_secs, PaginationList,
+    QueryParams,
+};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::Dataset;
@@ -285,10 +288,10 @@ impl DatasetClient {
             .await?;
 
         let items: Vec<T> = serde_json::from_slice(&response.body)?;
-        let count = items.len() as i64;
-        // `PaginationList::total` is informational only here (`ListIterator` never consults it,
-        // see `scanned` below); falling back to `0` rather than `count` just avoids implying a
-        // precise total when the API did not report one.
+        let returned = items.len() as i64;
+        // `PaginationList::total` is informational only here (`ListIterator` never consults it);
+        // falling back to `0` rather than `returned` just avoids implying a precise total when the
+        // API did not report one.
         let total = response
             .header("x-apify-pagination-total")
             .and_then(|v| v.parse().ok())
@@ -300,13 +303,15 @@ impl DatasetClient {
         let limit = response
             .header("x-apify-pagination-limit")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(count);
-        // The number of rows scanned to produce this page, when the API reports it separately
-        // from the item count (see `PaginationList::scanned`): a filter can scan more rows than
-        // it returns, and `unwind` can return more items than rows scanned.
-        let scanned = response
+            .unwrap_or(returned);
+        // `x-apify-pagination-count` reports the rows scanned, which filters and `unwind` can leave
+        // above or below the items returned. It is derived from the dataset's item count, which
+        // lags a fresh push, so it can also fall below the items returned on an unfiltered page.
+        let count = response
             .header("x-apify-pagination-count")
-            .and_then(|v| v.parse().ok());
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+            .max(returned);
 
         Ok(PaginationList {
             total,
@@ -315,7 +320,6 @@ impl DatasetClient {
             count,
             desc: options.desc.unwrap_or(false),
             items,
-            scanned,
         })
     }
 
@@ -324,7 +328,9 @@ impl DatasetClient {
     /// The idiomatic-Rust counterpart of the reference client's async-iterable
     /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
     /// transparently paging. The caller's `options.limit` caps the total number of items yielded
-    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size.
+    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size. Dataset
+    /// items have no default page limit, so without a page size the whole dataset, or all `limit`
+    /// items, is loaded in one response: set one to iterate a large dataset.
     ///
     /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) and `unwind` are forwarded on
     /// every page request. Paging advances the offset by the number of underlying rows each page
@@ -432,6 +438,7 @@ impl DatasetClient {
                 self.ctx.timeout(Timeout::Medium),
                 CallOptions {
                     do_not_retry_timeouts: true,
+                    ..CallOptions::default()
                 },
             )
             .await?;
@@ -446,6 +453,12 @@ impl DatasetClient {
     /// optionally bounds the validity of a signed URL. The URL is built from the configured
     /// public base URL. The served items are JSON; to request another export format, use
     /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
+    ///
+    /// `expires_in_secs` must be positive and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS): `0`, a negative or a larger
+    /// value fails with
+    /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
+    /// Leave it out for a URL that does not expire.
     pub async fn create_items_public_url(
         &self,
         options: DatasetListItemsOptions,
@@ -458,13 +471,16 @@ impl DatasetClient {
     /// Like [`create_items_public_url`](Self::create_items_public_url), but lets the caller
     /// choose the `format` the items are served in (JSON, CSV, XLSX, ...) via a `format` query
     /// parameter on the generated URL. `None` defaults to `json`, matching the endpoint's own
-    /// default.
+    /// default. `expires_in_secs` follows the same rule as in
+    /// [`create_items_public_url`](Self::create_items_public_url): positive, and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS).
     pub async fn create_items_public_url_with_format(
         &self,
         options: DatasetListItemsOptions,
         expires_in_secs: Option<i64>,
         format: Option<DownloadItemsFormat>,
     ) -> ApifyClientResult<String> {
+        validate_expires_in_secs(expires_in_secs)?;
         let mut params = QueryParams::new();
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
@@ -478,7 +494,11 @@ impl DatasetClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &dataset.id, expires_in_secs);
+                let signature = sign_storage_content(
+                    secret,
+                    &dataset.id,
+                    public_url_expiry_millis(expires_in_secs),
+                );
                 params.add_str("signature", Some(signature));
             }
         }

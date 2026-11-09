@@ -10,6 +10,7 @@ pub mod actor;
 pub mod actor_collection;
 pub mod actor_env_var;
 pub mod actor_env_var_collection;
+pub mod actor_server;
 pub mod actor_version;
 pub mod actor_version_collection;
 pub mod build;

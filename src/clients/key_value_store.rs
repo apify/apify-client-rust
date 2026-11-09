@@ -8,7 +8,10 @@ use crate::clients::base::{
     delete_resource, get_raw, get_resource, get_resource_required, head_exists, put_raw,
     update_resource, RawUpload, ResourceContext,
 };
-use crate::common::{create_hmac_signature, sign_storage_content, to_path_segment, QueryParams};
+use crate::common::{
+    create_hmac_signature, public_url_expiry_millis, sign_storage_content, to_path_segment,
+    validate_expires_in_secs, QueryParams,
+};
 use crate::error::{ApifyClientError, ApifyClientResult};
 use crate::http_client::{CallOptions, HttpClient, HttpMethod};
 use crate::models::{KeyValueStore, KeyValueStoreKey, KeyValueStoreKeysPage, KeyValueStoreRecord};
@@ -277,6 +280,7 @@ impl KeyValueStoreClient {
             },
             CallOptions {
                 do_not_retry_timeouts: options.do_not_retry_timeouts,
+                ..CallOptions::default()
             },
             Timeout::Long,
         )
@@ -347,11 +351,16 @@ impl KeyValueStoreClient {
     ///
     /// Like [`get_record_public_url`](Self::get_record_public_url), signs the URL with an
     /// HMAC-SHA256 `signature` for private stores. `expires_in_secs` optionally bounds a
-    /// signed URL's validity.
+    /// signed URL's validity. It must be positive and at most
+    /// [`MAX_EXPIRES_IN_SECS`](crate::common::MAX_EXPIRES_IN_SECS): `0`, a negative or a larger
+    /// value fails with
+    /// [`InvalidArgument`](crate::ApifyClientError::InvalidArgument) before any request is sent.
+    /// Leave it out for a URL that does not expire.
     pub async fn create_keys_public_url(
         &self,
         expires_in_secs: Option<i64>,
     ) -> ApifyClientResult<String> {
+        validate_expires_in_secs(expires_in_secs)?;
         let mut params = QueryParams::new();
         if let Some(store) = self.get_for_public_url().await? {
             if let Some(secret) = store
@@ -359,7 +368,11 @@ impl KeyValueStoreClient {
                 .get("urlSigningSecretKey")
                 .and_then(|v| v.as_str())
             {
-                let signature = sign_storage_content(secret, &store.id, expires_in_secs);
+                let signature = sign_storage_content(
+                    secret,
+                    &store.id,
+                    public_url_expiry_millis(expires_in_secs),
+                );
                 params.add_str("signature", Some(signature));
             }
         }
