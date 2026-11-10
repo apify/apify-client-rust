@@ -46,7 +46,7 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
 
 By default the client uses the system TLS (`native-tls`) and has the `zstd` feature. To use rustls
 instead, disable the default features and name `rustls`. The `"zstd"` entry keeps zstd compression,
-so drop it if you don't need it:
+so drop it if you do not need it:
 
 ```toml
 apify-client = { version = "0.17", default-features = false, features = ["rustls", "zstd"] }
