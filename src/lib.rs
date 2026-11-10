@@ -67,9 +67,10 @@ mod version;
 pub use client::{ApifyClient, ApifyClientBuilder};
 pub use common::{ListOptions, PaginationList, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
+#[cfg(feature = "zstd")]
+pub use http_compressors::ZstdHttpCompressor;
 pub use http_compressors::{
     BrotliHttpCompressor, GzipHttpCompressor, HttpCompressor, RequestCompression,
-    ZstdHttpCompressor,
 };
 pub use statistics::Statistics;
 pub use timeouts::Timeout;

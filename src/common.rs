@@ -158,7 +158,7 @@ pub struct ListOptions {
     pub desc: Option<bool>,
 }
 
-/// Options of the storage collection list endpoints (datasets, key-value stores and request
+/// Options of the storage collection list endpoints (datasets, key-value stores, and request
 /// queues): the offset/limit pagination plus `unnamed` and `ownership` filters.
 #[derive(Debug, Default, Clone)]
 pub struct StorageListOptions {

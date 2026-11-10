@@ -756,7 +756,7 @@ where
             }
         }
 
-        // Pause before polling again.
+        // Let the replicas catch up before polling again.
         crate::http_client::sleep_public(WAIT_FOR_FINISH_POLL_INTERVAL).await;
     }
 }

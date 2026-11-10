@@ -336,6 +336,7 @@ async fn set_record_with_content_encoding_round_trips_without_corruption() {
 }
 
 /// A large record uploaded by a client that compresses with zstd reads back unchanged.
+#[cfg(feature = "zstd")]
 #[tokio::test(flavor = "multi_thread")]
 async fn set_record_compressed_with_zstd() {
     use apify_client::RequestCompression;

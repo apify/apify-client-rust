@@ -70,7 +70,7 @@ impl HttpMethod {
 }
 
 /// An HTTP request ready to be sent by an [`HttpBackend`]. The client has already applied the auth
-/// header, the user agent and the compression.
+/// header, the user agent, and the compression.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     /// The HTTP method.
@@ -141,7 +141,7 @@ pub struct StreamingHttpResponse {
 }
 
 /// The transport that sends requests. An implementation performs one network round-trip per
-/// request: the client handles retries, authentication and serialization.
+/// request: the client handles retries, authentication, and serialization.
 #[async_trait]
 pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// Sends a single HTTP request and returns the response.

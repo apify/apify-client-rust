@@ -328,6 +328,41 @@ How the request is sent:
   timeouts are not retried, since the Actor may have already handled the request, and they fail
   the call.
 
+#### Calling a Server Actor from a Server Actor
+
+A multi-tenant Server Actor shares the developer's runs among its users, so the platform tells
+requests apart by an ID it sends in the `X-Actor-Request-ID` header of each request it forwards to
+the Actor. The Actor uses that ID to charge the caller of the request, and to pass the caller's
+pricing tier on to the Actors it calls.
+
+When your multi-tenant Server Actor calls another one while it handles a request, pass the incoming
+`X-Actor-Request-ID` header in `parent_request_id`. The client sends it as the same header, so the
+called Actor charges at the pricing tier of your incoming request. Use a client created with the
+run's `APIFY_TOKEN`. For details, see
+[Compose multi-tenant Server Actors](https://docs.apify.com/platform/actors/development/programming-interface/standby#compose-server-actors).
+
+```rust,no_run
+use apify_client::{ActorServerRequestOptions, ApifyClient};
+
+# async fn run(incoming_request_id: String) -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new("my-api-token");
+let response = client
+    .actor("username/other-actor")
+    .server()
+    .request(
+        "/search",
+        ActorServerRequestOptions {
+            params: vec![("q".to_string(), "apify".to_string())],
+            parent_request_id: Some(incoming_request_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+println!("{}", response.text());
+# Ok(())
+# }
+```
+
 `get_open_api_spec` returns the web server schema from the build that serves the server
 interface: the build in the Actor's `actor_standby.build` field (a tag or a build number), or
 `latest`. It fails with `InvalidArgument` if that build doesn't exist.

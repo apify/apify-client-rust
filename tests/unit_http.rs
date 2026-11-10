@@ -564,6 +564,7 @@ async fn large_request_body_is_gzip_compressed_when_selected() {
 
 /// With the zstd encoding selected, a large request body is sent with `Content-Encoding: zstd` and
 /// decodes back to the original bytes.
+#[cfg(feature = "zstd")]
 #[tokio::test]
 async fn large_request_body_is_zstd_compressed_when_selected() {
     let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
@@ -755,8 +756,8 @@ async fn start_raw_defaults_content_type_and_sends_bytes_verbatim() {
 }
 
 /// The status-only `last_run(status)` and the options-based `last_run_with_options` thread the
-/// optional `status` and `origin` filters into the last-run request as query parameters, matching
-/// the JS reference's `lastRun({ status, origin })`. Leaving a filter as `None` omits it.
+/// optional `status` and `origin` filters into the last-run request as query parameters. Leaving a
+/// filter as `None` omits it.
 #[tokio::test]
 async fn last_run_sends_status_and_origin_query_params() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -1059,8 +1060,8 @@ async fn iterate_keys_stops_on_is_truncated_even_with_trailing_cursor() {
     );
 }
 
-/// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size
-/// (reference parity): with `limit=2` the first request asks for `limit=2` and, once two keys
+/// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size:
+/// with `limit=2` the first request asks for `limit=2` and, once two keys
 /// are consumed, the walk stops without a second fetch even though the API advertised more keys.
 #[tokio::test]
 async fn iterate_keys_limit_caps_the_walk() {

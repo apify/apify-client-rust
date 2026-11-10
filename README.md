@@ -107,7 +107,7 @@ let client = ApifyClient::builder()
     .timeout_max(Duration::from_secs(360))   // default: 360s, cap on a single attempt
     .user_agent_suffix("my-app/1.0")
     .default_header("X-My-Header", "value")  // sent with every request
-    .request_compression(RequestCompression::Brotli) // default: Brotli; or Gzip, Zstd
+    .request_compression(RequestCompression::Brotli) // default: Brotli; or Gzip or Zstd
     .build();
 ```
 
@@ -163,8 +163,9 @@ or `RequestCompression::Zstd` (`zstd`) for fast compression at a good ratio.
 (`use apify_client::RequestCompression;`). To tune the quality or use another algorithm, pass an
 `HttpCompressor` to `ApifyClientBuilder::http_compressor`: the built-in
 `BrotliHttpCompressor` (quality 0 to 11, default 6), `GzipHttpCompressor` (quality 1 to 9,
-default 6) and `ZstdHttpCompressor` (level 1 to 19, default 3), or your own implementation of the
-trait.
+default 6), and `ZstdHttpCompressor` (quality 1 to 19, default 3), or your own implementation of
+the trait. Zstd needs the `zstd` cargo feature, which is on by default and compiles a C library, so
+turn it off with `default-features = false` if you don't need it.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -380,7 +381,7 @@ Methods take no cancellation parameter. Drop the future a method returns, for ex
 ## Custom HTTP transport
 
 Any type that implements `http_client::HttpBackend` can be injected with
-`ApifyClientBuilder::http_backend`. To customize the proxy, TLS or connection pool, wrap a
+`ApifyClientBuilder::http_backend`. To customize the proxy, TLS, or connection pool, wrap a
 `reqwest::Client` you configure in the built-in `ReqwestBackend`, as shown below. To use another
 HTTP stack, implement `HttpBackend` yourself: `send` is required, and `send_streaming` (used by
 `log().stream()` and `download_items_stream()`) buffers the whole response through `send` unless

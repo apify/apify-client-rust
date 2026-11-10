@@ -7,8 +7,9 @@ to [Semantic Versioning](https://semver.org/).
 ## [0.17.0] - 2026-11-10
 
 ### Added
-- `ZstdHttpCompressor` (level 1 to 19, default 3) and `RequestCompression::Zstd`, which send request
-  bodies with `Content-Encoding: zstd`.
+- `ZstdHttpCompressor` (quality 1 to 19, default 3) and `RequestCompression::Zstd`, which send
+  request bodies with `Content-Encoding: zstd`. They need the new `zstd` cargo feature, which is
+  on by default.
 - `ActorServerRequestOptions::parent_request_id`, sent as the `X-Actor-Request-ID` header so a
   Server Actor that calls another one passes on the pricing tier of the request it handles.
 

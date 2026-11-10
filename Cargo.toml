@@ -27,7 +27,7 @@ hmac = "0.12"
 sha2 = "0.10"
 brotli = "7"
 flate2 = "1"
-zstd = "0.13"
+zstd = { version = "0.13", optional = true }
 # Minimum-version floors for the TLS trust stack behind the `rustls` feature. The crates are not
 # used directly: `reqwest` pulls them in, and the floor here makes Cargo resolve at least the
 # releases that no longer trust the compromised intermediate CA certificates.
@@ -39,6 +39,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-
 uuid = { version = "1", features = ["v4"] }
 
 [features]
-default = ["native-tls"]
+default = ["native-tls", "zstd"]
 native-tls = ["reqwest/native-tls"]
 rustls = ["reqwest/rustls-tls", "dep:rustls-webpki", "dep:webpki-roots"]
+# Zstd request compression. `zstd` compiles a C library, so turn it off if you do not need it.
+zstd = ["dep:zstd"]

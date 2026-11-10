@@ -171,7 +171,7 @@ impl ApifyClientBuilder {
     /// [`RequestCompression::Brotli`]), at its default quality.
     ///
     /// The client compresses request bodies of at least 1024 bytes with brotli (`br`), gzip
-    /// (`gzip`) or zstd (`zstd`). Select [`RequestCompression::Gzip`] for environments or
+    /// (`gzip`), or zstd (`zstd`). Select [`RequestCompression::Gzip`] for environments or
     /// intermediaries that do not handle brotli. To tune the quality or use another algorithm,
     /// pass an [`HttpCompressor`] to [`http_compressor`](Self::http_compressor).
     pub fn request_compression(mut self, compression: RequestCompression) -> Self {
