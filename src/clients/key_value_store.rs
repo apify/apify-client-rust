@@ -59,8 +59,8 @@ pub struct GetRecordOptions {
 /// [`KeyValueStoreClient::set_record_json_with_options`].
 #[derive(Debug, Default, Clone)]
 pub struct SetRecordOptions {
-    /// `Content-Encoding` of a value that is already compressed (`gzip`, `br`, `deflate` or
-    /// `identity`). The client then sends the bytes as they are, instead of compressing them
+    /// `Content-Encoding` of a value that is already compressed (`gzip`, `br`, `zstd`, `deflate`
+    /// or `identity`). The client then sends the bytes as they are, instead of compressing them
     /// again.
     pub content_encoding: Option<String>,
     /// Give up on the first transport timeout instead of retrying it. A retry of an upload that
@@ -234,7 +234,7 @@ impl KeyValueStoreClient {
     /// `Content-Encoding` header so it is uploaded (and later served) exactly as given, without
     /// the client compressing it again.
     ///
-    /// The API accepts `gzip`, `br`, `deflate`, and `identity`. Unlike the reference client's
+    /// The API accepts `gzip`, `br`, `zstd`, `deflate`, and `identity`. Unlike the reference client's
     /// `setRecord({ contentEncoding })`, there is no separate runtime check rejecting a
     /// non-identity encoding on a string or JSON value: this method, like
     /// [`set_record_raw`](Self::set_record_raw), only ever accepts bytes that are already the

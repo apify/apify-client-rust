@@ -348,6 +348,49 @@ async fn set_record_with_content_encoding_round_trips_without_corruption() {
     );
 }
 
+/// A large record uploaded by a client that compresses with zstd reads back unchanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn set_record_compressed_with_zstd() {
+    use apify_client::RequestCompression;
+
+    let client = common::make_client_builder().map(|builder| {
+        builder
+            .request_compression(RequestCompression::Zstd)
+            .build()
+    });
+    let Some(client) = client else {
+        eprintln!("Skipping: APIFY_TOKEN is not set");
+        return;
+    };
+    let name = common::unique_name("kvs-zstd");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    let payload = json!({ "data": "x".repeat(4096) });
+    store_client
+        .set_record_json("zstd-record", &payload)
+        .await
+        .expect("set zstd-compressed record");
+
+    let record = store_client
+        .get_record("zstd-record")
+        .await
+        .expect("get record")
+        .expect("record should exist");
+    let stored: serde_json::Value = serde_json::from_slice(&record.value).expect("JSON record");
+    assert_eq!(stored, payload);
+}
+
 /// Builds a record public URL and confirms it is well-formed and fetchable without auth.
 ///
 /// The URL points at the public records endpoint; when the store exposes a URL-signing

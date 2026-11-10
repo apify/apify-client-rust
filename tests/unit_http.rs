@@ -569,6 +569,32 @@ async fn large_request_body_is_gzip_compressed_when_selected() {
     assert_eq!(decompressed, original, "gzip round-trip must be lossless");
 }
 
+/// With the zstd encoding selected, a large request body is sent with `Content-Encoding: zstd` and
+/// decodes back to the original bytes.
+#[tokio::test]
+async fn large_request_body_is_zstd_compressed_when_selected() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with_compression(backend.clone(), RequestCompression::Zstd);
+
+    let original = vec![b'a'; 4096];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("zstd")
+    );
+    let sent = backend.last_body().expect("a body was sent");
+    assert!(sent.len() < original.len());
+    assert_eq!(
+        zstd::bulk::decompress(&sent, original.len()).expect("decode"),
+        original
+    );
+}
+
 /// When `request_compression()` is never called on the builder, large bodies are brotli-compressed:
 /// the builder's default encoding is brotli, so the backend sees `Content-Encoding: br`. This
 /// exercises the builder default via the public builder path (not the `Default` derive), guarding

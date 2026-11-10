@@ -76,6 +76,7 @@ pub use common::{ListOptions, PaginationList, StorageListOptions};
 pub use error::{ApiError, ApifyClientError, ApifyClientResult};
 pub use http_compressors::{
     BrotliHttpCompressor, GzipHttpCompressor, HttpCompressor, RequestCompression,
+    ZstdHttpCompressor,
 };
 pub use statistics::Statistics;
 pub use timeouts::Timeout;

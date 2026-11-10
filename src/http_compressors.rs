@@ -2,8 +2,8 @@
 //!
 //! The client compresses request bodies of at least 1024 bytes whose content type
 //! is not already compressed and that carry no `Content-Encoding` of their own. The algorithm is an
-//! [`HttpCompressor`]: the built-in [`BrotliHttpCompressor`] (the default) and
-//! [`GzipHttpCompressor`], or a custom implementation passed to
+//! [`HttpCompressor`]: the built-in [`BrotliHttpCompressor`] (the default),
+//! [`GzipHttpCompressor`] and [`ZstdHttpCompressor`], or a custom implementation passed to
 //! [`ApifyClientBuilder::http_compressor`](crate::ApifyClientBuilder::http_compressor).
 
 use std::collections::HashMap;
@@ -31,6 +31,8 @@ const BROTLI_DEFAULT_QUALITY: u32 = 6;
 const BROTLI_WINDOW_SIZE: u32 = 22;
 /// Internal buffer size for the brotli encoder.
 const BROTLI_BUFFER_SIZE: usize = 4096;
+/// `Content-Encoding` value used for zstd-compressed request bodies.
+const CONTENT_ENCODING_ZSTD: &str = "zstd";
 /// Lowest gzip quality, the fastest with the least compression.
 const GZIP_MIN_QUALITY: u32 = 1;
 /// Highest gzip quality, the slowest with the best compression.
@@ -39,6 +41,15 @@ const GZIP_MAX_QUALITY: u32 = 9;
 /// client uses too. The levels above it roughly double the CPU cost for about a percent fewer
 /// bytes.
 const GZIP_DEFAULT_QUALITY: u32 = 6;
+/// Lowest zstd level, the fastest with the least compression.
+const ZSTD_MIN_QUALITY: u32 = 1;
+/// Highest zstd level the compressor accepts. zstd itself goes up to 22, but levels 20 to 22 use a
+/// window above the 8 MB that RFC 9659 requires HTTP decoders to support, so a body compressed at
+/// those levels could fail to decode.
+const ZSTD_MAX_QUALITY: u32 = 19;
+/// Zstd level used by [`ZstdHttpCompressor::default`]: zstd's own default, which the reference
+/// client uses too.
+const ZSTD_DEFAULT_QUALITY: u32 = 3;
 
 /// Media-type prefixes whose payloads already carry their own compression, so running them
 /// through brotli/gzip burns CPU and memory for a result that is usually no smaller — and the
@@ -201,9 +212,48 @@ impl HttpCompressor for GzipHttpCompressor {
     }
 }
 
+/// Zstd compressor (`Content-Encoding: zstd`). Fast at its default level, with a ratio close to
+/// brotli at the higher ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZstdHttpCompressor {
+    quality: u32,
+}
+
+impl ZstdHttpCompressor {
+    /// Creates a zstd compressor with the given level, from 1 (fastest, least compression) to 19
+    /// (slowest, best compression). Returns [`ApifyClientError::InvalidArgument`] when `quality`
+    /// is out of range.
+    pub fn new(quality: u32) -> ApifyClientResult<Self> {
+        check_quality("zstd", quality, ZSTD_MIN_QUALITY, ZSTD_MAX_QUALITY)?;
+        Ok(Self { quality })
+    }
+}
+
+impl Default for ZstdHttpCompressor {
+    /// Zstd at level 3.
+    fn default() -> Self {
+        Self {
+            quality: ZSTD_DEFAULT_QUALITY,
+        }
+    }
+}
+
+impl HttpCompressor for ZstdHttpCompressor {
+    fn content_encoding(&self) -> &str {
+        CONTENT_ENCODING_ZSTD
+    }
+
+    fn compress(&self, data: &[u8]) -> ApifyClientResult<Vec<u8>> {
+        // The level is validated in `new` and fits `i32`.
+        zstd::bulk::compress(data, self.quality as i32)
+            .map_err(|error| ApifyClientError::Http(format!("zstd compression failed: {error}")))
+    }
+}
+
 /// Built-in compression algorithm selected by name, at its default quality. A shorthand for
-/// [`BrotliHttpCompressor::default`] and [`GzipHttpCompressor::default`]; use the compressor
-/// structs directly to tune the quality, or implement [`HttpCompressor`] for another algorithm.
+/// [`BrotliHttpCompressor::default`], [`GzipHttpCompressor::default`] and
+/// [`ZstdHttpCompressor::default`]; use the compressor structs directly to tune the quality, or
+/// implement [`HttpCompressor`] for another algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum RequestCompression {
@@ -214,6 +264,8 @@ pub enum RequestCompression {
     /// Gzip (`Content-Encoding: gzip`). Choose this for environments or intermediaries that do not
     /// handle brotli.
     Gzip,
+    /// Zstd (`Content-Encoding: zstd`). Fast at a good ratio.
+    Zstd,
 }
 
 impl RequestCompression {
@@ -222,6 +274,7 @@ impl RequestCompression {
         match self {
             RequestCompression::Brotli => std::sync::Arc::new(BrotliHttpCompressor::default()),
             RequestCompression::Gzip => std::sync::Arc::new(GzipHttpCompressor::default()),
+            RequestCompression::Zstd => std::sync::Arc::new(ZstdHttpCompressor::default()),
         }
     }
 }
@@ -332,6 +385,10 @@ mod tests {
         assert!(GzipHttpCompressor::new(1).is_ok());
         assert!(GzipHttpCompressor::new(0).is_err());
         assert!(GzipHttpCompressor::new(10).is_err());
+        assert!(ZstdHttpCompressor::new(1).is_ok());
+        assert!(ZstdHttpCompressor::new(19).is_ok());
+        assert!(ZstdHttpCompressor::new(0).is_err());
+        assert!(ZstdHttpCompressor::new(20).is_err());
     }
 
     #[test]
@@ -361,6 +418,22 @@ mod tests {
     fn built_in_compressors_report_their_content_encoding() {
         assert_eq!(BrotliHttpCompressor::default().content_encoding(), "br");
         assert_eq!(GzipHttpCompressor::default().content_encoding(), "gzip");
+        assert_eq!(ZstdHttpCompressor::default().content_encoding(), "zstd");
+    }
+
+    #[test]
+    fn zstd_output_decodes_to_the_input() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        for compressor in [
+            ZstdHttpCompressor::default(),
+            ZstdHttpCompressor::new(19).unwrap(),
+        ] {
+            let compressed = compressor.compress(&data).unwrap();
+            assert_eq!(
+                zstd::bulk::decompress(&compressed, data.len()).unwrap(),
+                data
+            );
+        }
     }
 
     #[test]

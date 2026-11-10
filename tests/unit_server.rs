@@ -156,6 +156,31 @@ async fn the_token_goes_in_the_x_apify_authorization_header_and_own_headers_reac
 }
 
 #[tokio::test]
+async fn parent_request_id_is_sent_as_the_actor_request_id_header_over_one_in_headers() {
+    let backend = MockBackend::new(vec![actor(json!({})), server_response(200, "ok")]);
+    let client = client_with(backend.clone(), 0);
+
+    let mut options = ActorServerRequestOptions {
+        parent_request_id: Some("parent-id".to_string()),
+        ..Default::default()
+    };
+    options
+        .headers
+        .insert("x-actor-request-id".to_string(), "stale".to_string());
+    client
+        .actor("a")
+        .server()
+        .request("/", options)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        backend.last_header("X-Actor-Request-ID").as_deref(),
+        Some("parent-id")
+    );
+}
+
+#[tokio::test]
 async fn the_token_does_not_travel_in_the_authorization_header_by_default() {
     let backend = MockBackend::new(vec![actor(json!({})), server_response(200, "ok")]);
     let client = client_with(backend.clone(), 0);

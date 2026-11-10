@@ -594,8 +594,7 @@ impl HttpClient {
         self.stats.add_call();
         self.apply_headers(&mut request, options.authorization_header);
 
-        // Compress the request body once (not per attempt) when it is large enough, mirroring the
-        // reference client. The API accepts both brotli- and gzip-encoded request bodies.
+        // Compress the request body once, not per attempt, when it is large enough.
         self.compress_body(&mut request, &options.compression)?;
 
         let method_str = request.method.as_str().to_string();

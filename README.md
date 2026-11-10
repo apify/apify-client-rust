@@ -108,7 +108,7 @@ let client = ApifyClient::builder()
     .timeout_max(Duration::from_secs(360))   // default: 360s, cap on a single attempt
     .user_agent_suffix("my-app/1.0")
     .default_header("X-My-Header", "value")  // sent with every request
-    .request_compression(RequestCompression::Brotli) // default: Brotli; or RequestCompression::Gzip
+    .request_compression(RequestCompression::Brotli) // default: Brotli; or Gzip, Zstd
     .build();
 ```
 
@@ -158,12 +158,14 @@ let items = client
 
 Request bodies of at least 1024 bytes are compressed once (before retries) and sent with the
 matching `Content-Encoding` header. The default is Brotli (`br`); select
-`RequestCompression::Gzip` (`gzip`) for environments or intermediaries that do not handle brotli.
+`RequestCompression::Gzip` (`gzip`) for environments or intermediaries that do not handle brotli,
+or `RequestCompression::Zstd` (`zstd`) for fast compression at a good ratio.
 `RequestCompression` is re-exported at the crate root
 (`use apify_client::RequestCompression;`). To tune the quality or use another algorithm, pass an
 `HttpCompressor` to `ApifyClientBuilder::http_compressor`: the built-in
-`BrotliHttpCompressor` (quality 0 to 11, default 6) and `GzipHttpCompressor` (quality 1 to 9,
-default 6), or your own implementation of the trait.
+`BrotliHttpCompressor` (quality 0 to 11, default 6), `GzipHttpCompressor` (quality 1 to 9,
+default 6) and `ZstdHttpCompressor` (level 1 to 19, default 3), or your own implementation of the
+trait.
 
 ```rust,no_run
 use std::sync::Arc;

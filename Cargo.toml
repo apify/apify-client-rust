@@ -1,6 +1,6 @@
 [package]
 name = "apify-client"
-version = "0.16.0"
+version = "0.17.0"
 authors = ["Apify Technologies <support@apify.com>"]
 description = "Rust client for the Apify API (https://apify.com)."
 license = "Apache-2.0"
@@ -27,6 +27,7 @@ hmac = "0.12"
 sha2 = "0.10"
 brotli = "7"
 flate2 = "1"
+zstd = "0.13"
 # Minimum-version floors for the TLS trust stack behind the `rustls` feature. The crates are not
 # used directly: `reqwest` pulls them in, and the floor here makes Cargo resolve at least the
 # releases that no longer trust the compromised intermediate CA certificates.

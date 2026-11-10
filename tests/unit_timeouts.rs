@@ -14,7 +14,7 @@ use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, ReqwestBac
 use apify_client::timeouts::NO_TIMEOUT;
 use apify_client::{
     ActorStartOptions, ApifyClient, ApifyClientError, BrotliHttpCompressor, GzipHttpCompressor,
-    HttpCompressor, Timeout,
+    HttpCompressor, Timeout, ZstdHttpCompressor,
 };
 use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use serde_json::{json, Value};
@@ -415,6 +415,21 @@ async fn gzip_quality_is_configurable() {
     assert_eq!(decompressed, vec![b'a'; COMPRESSIBLE_BODY_BYTES]);
 }
 
+#[tokio::test]
+async fn zstd_quality_is_configurable() {
+    let compressor = ZstdHttpCompressor::new(19).expect("19 is a valid zstd level");
+    let backend = upload_with(Arc::new(compressor)).await;
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("zstd")
+    );
+    let sent = backend.last_body().unwrap();
+    assert_eq!(
+        zstd::bulk::decompress(&sent, COMPRESSIBLE_BODY_BYTES).expect("decode"),
+        vec![b'a'; COMPRESSIBLE_BODY_BYTES]
+    );
+}
+
 #[test]
 fn a_quality_outside_the_range_of_the_algorithm_is_rejected() {
     assert!(matches!(
@@ -423,6 +438,10 @@ fn a_quality_outside_the_range_of_the_algorithm_is_rejected() {
     ));
     assert!(matches!(
         GzipHttpCompressor::new(0),
+        Err(ApifyClientError::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        ZstdHttpCompressor::new(20),
         Err(ApifyClientError::InvalidArgument(_))
     ));
 }

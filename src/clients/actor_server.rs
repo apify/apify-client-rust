@@ -28,6 +28,9 @@ use crate::timeouts::Timeout;
 /// returns one itself gets the request again.
 const SERVER_RETRY_STATUS_CODES: &[u16] = &[429, 503];
 
+/// Header that carries the ID of a request the platform forwards to a Server Actor.
+const ACTOR_REQUEST_ID_HEADER: &str = "X-Actor-Request-ID";
+
 /// The tag of the build that serves the server interface when the Actor's `actorStandby.build`
 /// names none.
 const DEFAULT_SERVER_BUILD: &str = "latest";
@@ -72,6 +75,10 @@ pub struct ActorServerRequestOptions {
     pub headers: HashMap<String, String>,
     /// The request body.
     pub body: Option<ActorServerBody>,
+    /// The `X-Actor-Request-ID` header of the request your Server Actor is handling. It is sent on
+    /// as the same header, replacing one in `headers`, so the called Actor charges at that
+    /// request's pricing tier.
+    pub parent_request_id: Option<String>,
     /// Compression of the request body. The body is sent uncompressed when it's `None`, since the
     /// Actor's server may not decode a compressed body. Set it only if the Actor's server decodes
     /// the resulting `Content-Encoding`. The body is compressed under the same conditions as for
@@ -311,6 +318,10 @@ impl ActorServerClient {
         ));
 
         let mut headers = options.headers;
+        if let Some(parent_request_id) = options.parent_request_id {
+            headers.retain(|name, _| !name.eq_ignore_ascii_case(ACTOR_REQUEST_ID_HEADER));
+            headers.insert(ACTOR_REQUEST_ID_HEADER.to_string(), parent_request_id);
+        }
         let body = match options.body {
             None => None,
             Some(ActorServerBody::Json(value)) => {

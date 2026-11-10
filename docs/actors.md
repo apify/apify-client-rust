@@ -257,6 +257,7 @@ the old name.
 | `params` | `Vec<(String, String)>` | Query parameters of the request, in order. A key can repeat. |
 | `headers` | `HashMap<String, String>` | Additional headers of the request. They reach the Actor's server as they are, `Authorization` included. |
 | `body` | `Option<ActorServerBody>` | `Json(Value)` (sent with `Content-Type: application/json` unless you set a content type), `Text(String)` or `Bytes(Vec<u8>)` (both sent as they are). `ActorServerBody::json(&value)` serializes a value. |
+| `parent_request_id` | `Option<String>` | The `X-Actor-Request-ID` header of the request your Server Actor is handling, sent on as the same header (replacing one in `headers`) so the called Actor charges at that request's pricing tier. Use a client created with the run's `APIFY_TOKEN`. |
 | `compression` | `Option<ActorServerCompression>` | `Algorithm(RequestCompression)` or `Custom(Arc<dyn HttpCompressor>)`. The body is sent uncompressed when it's `None`, since the Actor's server may not decode a compressed body. Set it only if the server decodes the resulting `Content-Encoding`. |
 
 ```rust,no_run
