@@ -38,10 +38,9 @@ pub(crate) struct ApiErrorDetail {
 
 /// An error response returned by the Apify API.
 ///
-/// This is raised for HTTP requests that reach the API but return a non-success
-/// status code. It mirrors the `ApifyApiError` of the reference clients and exposes
-/// the parsed error `type`, the human-readable `message`, the HTTP `status_code`,
-/// the number of the final `attempt`, and the request `http_method`/`path`.
+/// Returned when a request reaches the API and gets a non-success status. It holds the error
+/// `type` and `message`, the HTTP `status_code`, the number of the final `attempt`, and the request
+/// `http_method` and `path`.
 #[derive(Debug, Clone)]
 pub struct ApiError {
     /// HTTP status code of the error response.
@@ -76,10 +75,6 @@ impl std::error::Error for ApiError {}
 
 impl ApiError {
     /// `true` for HTTP 400 Bad Request, typically because the request failed validation.
-    ///
-    /// The reference clients throw a distinct `InvalidRequestError` subclass for this status;
-    /// since Rust has no exception hierarchy to mirror, these `is_*` predicates are the
-    /// idiomatic equivalent classification on the one [`ApiError`] type.
     pub fn is_invalid_request(&self) -> bool {
         self.status_code == BAD_REQUEST_STATUS_CODE
     }
@@ -124,13 +119,12 @@ impl ApiError {
     }
 }
 
-/// The top-level error type for all client operations: every method returns
-/// `Result<T, ApifyClientError>`, so one `match`/`if let` already catches every kind of failure.
+/// The error type of every client method.
 #[derive(Debug, thiserror::Error)]
 pub enum ApifyClientError {
     /// The API returned a non-success status code with a structured error body.
     ///
-    /// Boxed to keep the overall `Result` size small (the error path is rare).
+    /// Boxed to keep `Result` small.
     #[error(transparent)]
     Api(Box<ApiError>),
 

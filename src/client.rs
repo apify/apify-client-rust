@@ -36,7 +36,7 @@ const DEFAULT_BASE_URL: &str = "https://api.apify.com";
 /// Apify's API version path segment, appended to a configured base URL unless it is already
 /// present there (see [`to_api_base_url`]).
 const API_VERSION_PATH: &str = "/v2";
-/// Default maximum number of retries, matching the reference clients.
+/// Default maximum number of retries.
 const DEFAULT_MAX_RETRIES: u32 = 8;
 /// Default minimum delay between retries.
 const DEFAULT_MIN_DELAY_BETWEEN_RETRIES: Duration = Duration::from_millis(500);
@@ -91,10 +91,9 @@ impl ApifyClientBuilder {
         self
     }
 
-    /// Overrides the base URL of the API, with or without the `/v2` version path — it is
-    /// appended automatically when not already the URL's final path segment, so passing a URL
-    /// that already ends in `/v2` (e.g. one read back from [`ApifyClient::api_base_url`]) does
-    /// not double it up.
+    /// Overrides the base URL of the API, with or without the `/v2` version path. The path is
+    /// appended unless the URL already ends in it, so a URL read back from
+    /// [`ApifyClient::api_base_url`] can be passed as it is.
     ///
     /// Defaults to `https://api.apify.com`.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -102,9 +101,9 @@ impl ApifyClientBuilder {
         self
     }
 
-    /// Overrides the base URL used when building public, shareable resource URLs (e.g. a
-    /// signed dataset-items URL). Defaults to the API base URL. Like [`base_url`](Self::base_url),
-    /// the `/v2` version path is appended automatically only when not already present.
+    /// Overrides the base URL used to build public, shareable resource URLs, such as a signed
+    /// dataset-items URL. Defaults to the API base URL. The `/v2` path is handled like in
+    /// [`base_url`](Self::base_url).
     pub fn public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
         self.public_base_url = Some(public_base_url.into());
         self
@@ -199,8 +198,6 @@ impl ApifyClientBuilder {
     }
 
     /// Replaces the default [`reqwest`]-based HTTP backend with a custom implementation.
-    ///
-    /// This is the seam that makes the transport a replaceable component.
     pub fn http_backend(mut self, backend: Arc<dyn HttpBackend>) -> Self {
         self.http_backend = Some(backend);
         self
@@ -304,8 +301,6 @@ impl ApifyClient {
         &self.base_url
     }
 
-    // ----- Actor accessors -------------------------------------------------
-
     /// Returns a client for the Actor collection (list & create Actors).
     pub fn actors(&self) -> ActorCollectionClient {
         ActorCollectionClient::new(self.http(), &self.base_url)
@@ -316,8 +311,6 @@ impl ApifyClient {
         ActorClient::new(self.clone(), self.http(), &self.base_url, &id.into())
     }
 
-    // ----- Build accessors -------------------------------------------------
-
     /// Returns a client for the Actor build collection (list builds).
     pub fn builds(&self) -> BuildCollectionClient {
         BuildCollectionClient::new(self.http(), &self.base_url)
@@ -327,8 +320,6 @@ impl ApifyClient {
     pub fn build(&self, id: impl Into<String>) -> BuildClient {
         BuildClient::new(self.http(), &self.base_url, &id.into())
     }
-
-    // ----- Run accessors ---------------------------------------------------
 
     /// Returns a client for the Actor run collection (list runs).
     pub fn runs(&self) -> RunCollectionClient {
@@ -346,8 +337,6 @@ impl ApifyClient {
         )
     }
 
-    // ----- Dataset accessors ----------------------------------------------
-
     /// Returns a client for the dataset collection (list & get-or-create datasets).
     pub fn datasets(&self) -> DatasetCollectionClient {
         DatasetCollectionClient::new(self.http(), &self.base_url)
@@ -358,8 +347,6 @@ impl ApifyClient {
         DatasetClient::new(self.http(), &self.base_url, "datasets", &id.into())
             .with_public_base(&self.public_base_url)
     }
-
-    // ----- Key-value store accessors --------------------------------------
 
     /// Returns a client for the key-value store collection.
     pub fn key_value_stores(&self) -> KeyValueStoreCollectionClient {
@@ -372,8 +359,6 @@ impl ApifyClient {
             .with_public_base(&self.public_base_url)
     }
 
-    // ----- Request queue accessors ----------------------------------------
-
     /// Returns a client for the request queue collection.
     pub fn request_queues(&self) -> RequestQueueCollectionClient {
         RequestQueueCollectionClient::new(self.http(), &self.base_url)
@@ -383,8 +368,6 @@ impl ApifyClient {
     pub fn request_queue(&self, id: impl Into<String>) -> RequestQueueClient {
         RequestQueueClient::new(self.http(), &self.base_url, "request-queues", &id.into())
     }
-
-    // ----- Task accessors --------------------------------------------------
 
     /// Returns a client for the Actor task collection (list & create tasks).
     pub fn tasks(&self) -> TaskCollectionClient {
@@ -396,8 +379,6 @@ impl ApifyClient {
         TaskClient::new(self.clone(), self.http(), &self.base_url, &id.into())
     }
 
-    // ----- Schedule accessors ---------------------------------------------
-
     /// Returns a client for the schedule collection (list & create schedules).
     pub fn schedules(&self) -> ScheduleCollectionClient {
         ScheduleCollectionClient::new(self.http(), &self.base_url)
@@ -407,8 +388,6 @@ impl ApifyClient {
     pub fn schedule(&self, id: impl Into<String>) -> ScheduleClient {
         ScheduleClient::new(self.http(), &self.base_url, &id.into())
     }
-
-    // ----- Webhook accessors ----------------------------------------------
 
     /// Returns a client for the webhook collection (list & create webhooks).
     pub fn webhooks(&self) -> WebhookCollectionClient {
@@ -429,8 +408,6 @@ impl ApifyClient {
     pub fn webhook_dispatch(&self, id: impl Into<String>) -> WebhookDispatchClient {
         WebhookDispatchClient::new(self.http(), &self.base_url, &id.into())
     }
-
-    // ----- Misc accessors --------------------------------------------------
 
     /// Returns a client for browsing the Apify Store.
     pub fn store(&self) -> StoreCollectionClient {
@@ -478,13 +455,10 @@ impl ApifyClient {
     }
 }
 
-/// Appends [`API_VERSION_PATH`] to `url` unless it is already the final path segment, mirroring
-/// the reference client's `toApiBaseUrl`.
+/// Appends [`API_VERSION_PATH`] to `url` unless it is already the final path segment.
 ///
-/// A trailing slash (or several) is trimmed first, so `https://host/v2/` and `https://host/v2//`
-/// both normalize to `https://host/v2` rather than growing a double slash. The check looks only
-/// at the URL's *path*, not at the string as a whole: `https://v2` has no path (`v2` is the
-/// host), so it still becomes `https://v2/v2` even though the raw string ends in `v2`.
+/// Trailing slashes are trimmed first. Only the path is checked: `https://v2` has no path (`v2` is
+/// the host), so it becomes `https://v2/v2`.
 fn to_api_base_url(url: &str) -> String {
     let (authority, path) = split_authority(url);
     let path = path.trim_end_matches('/');
@@ -515,10 +489,8 @@ fn split_authority(url: &str) -> (&str, &str) {
 mod tests {
     use super::to_api_base_url;
 
-    /// Mirrors the reference client's `toApiBaseUrl` test matrix exactly, so the two clients
-    /// agree on every case, including the `https://v2` host-vs-path edge case.
     #[test]
-    fn to_api_base_url_matches_reference_matrix() {
+    fn to_api_base_url_appends_the_version_path_once() {
         let cases = [
             ("https://example.com", "https://example.com/v2"),
             ("https://example.com/", "https://example.com/v2"),

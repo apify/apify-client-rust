@@ -1,10 +1,8 @@
 //! Data models for Apify API resources.
 //!
-//! Each resource is modelled with the fields most commonly used by clients, mirroring
-//! the reference JavaScript client. To remain forward-compatible with additive changes to
-//! the API, none of the models set `deny_unknown_fields`, so unknown API fields are ignored
-//! rather than breaking deserialization. Most resource models additionally capture any unknown
-//! fields in an `extra` map via `#[serde(flatten)]` so they remain accessible to callers.
+//! Each resource is modelled with its most commonly used fields. No model sets
+//! `deny_unknown_fields`, so a new API field never breaks deserialization. Most resource models
+//! also keep unknown fields in an `extra` map.
 
 use std::collections::HashMap;
 
@@ -642,7 +640,7 @@ pub struct ProcessedRequest {
     /// The request's unique key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_key: Option<String>,
-    /// The request's ID, as returned by a batch **add** (mirrors the API's `requestId`).
+    /// The request's ID, as returned by a batch **add**.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     /// Whether the request was already present in the queue (batch add only).

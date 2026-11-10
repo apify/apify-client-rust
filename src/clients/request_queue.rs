@@ -21,29 +21,24 @@ use crate::models::{
 use crate::timeouts::Timeout;
 
 /// Maximum number of requests the API accepts in a single `requests/batch` call. Larger
-/// `batch_add_requests` inputs are split into chunks of at most this size (matching the
-/// reference client's `REQUEST_QUEUE_MAX_REQUESTS_PER_BATCH_OPERATION`); `batch_delete_requests`
-/// does not auto-chunk (matching the reference client) and instead rejects larger inputs.
+/// `batch_add_requests` inputs are split into chunks of this size, while `batch_delete_requests`
+/// rejects them.
 const MAX_REQUESTS_PER_BATCH_OPERATION: usize = 25;
-/// Maximum accepted size (bytes) of a request body, mirroring the platform-wide
-/// `MAX_PAYLOAD_SIZE_BYTES` (9 MiB) that the reference client chunks `batch_add_requests` calls
-/// against, on top of the per-call request-count limit.
+/// Maximum size in bytes (9 MiB) of a request body. `batch_add_requests` chunks by it as well as by
+/// the request count.
 const MAX_PAYLOAD_SIZE_BYTES: usize = 9_437_184;
 /// Bytes of the `[` and `]` around a JSON array.
 const ARRAY_BRACKETS_BYTES: usize = 2;
-/// Fraction of [`MAX_PAYLOAD_SIZE_BYTES`] held back as a safety margin (0.01%), matching the
-/// reference client's `SAFETY_BUFFER_PERCENT`.
+/// Fraction of [`MAX_PAYLOAD_SIZE_BYTES`] held back as a safety margin (0.01%).
 const SAFETY_BUFFER_PERCENT: f64 = 0.0001;
 /// Default number of batch-add API calls [`RequestQueueClient::batch_add_requests`] keeps in
-/// flight at once, matching the reference client's `DEFAULT_PARALLEL_BATCH_ADD_REQUESTS`.
+/// flight at once.
 const DEFAULT_MAX_PARALLEL_BATCH_ADD_REQUESTS: usize = 5;
 /// Default number of retry attempts for requests a batch-add call reports as `unprocessed`
-/// (typically rate-limited), matching the reference client's
-/// `DEFAULT_UNPROCESSED_RETRIES_BATCH_ADD_REQUESTS`.
+/// (typically rate-limited).
 const DEFAULT_MAX_UNPROCESSED_REQUESTS_RETRIES: u32 = 3;
-/// Default minimum delay before the first unprocessed-request retry; doubles (with jitter) on
-/// each subsequent retry, matching the reference client's
-/// `DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES_MILLIS`.
+/// Default minimum delay before the first unprocessed-request retry. It doubles, with jitter, on
+/// each later retry.
 const DEFAULT_MIN_DELAY_BETWEEN_UNPROCESSED_REQUESTS_RETRIES: Duration = Duration::from_millis(500);
 
 /// The path of the request with the given ID, relative to the queue. An ID that is empty or a dot
@@ -55,11 +50,10 @@ fn request_path(id: &str) -> ApifyClientResult<String> {
 
 /// Options for [`RequestQueueClient::batch_add_requests`].
 ///
-/// Mirrors the reference client's retrying, chunked, parallel `batchAddRequests`: large inputs
-/// are split by count (max `MAX_REQUESTS_PER_BATCH_OPERATION`) and by JSON byte size (max
-/// `MAX_PAYLOAD_SIZE_BYTES`, minus a safety margin), chunks are sent with up to `max_parallel`
-/// requests in flight at once, and any request an API call reports as `unprocessed` (typically
-/// due to rate limiting) is retried with exponential backoff.
+/// Large inputs are split by count (`MAX_REQUESTS_PER_BATCH_OPERATION`) and by JSON size
+/// (`MAX_PAYLOAD_SIZE_BYTES` minus a safety margin), up to `max_parallel` chunks are sent at once,
+/// and requests reported as `unprocessed`, typically because of rate limiting, are retried with
+/// exponential backoff.
 #[derive(Debug, Default, Clone)]
 pub struct BatchAddRequestsOptions {
     /// If `true`, adds all requests to the front of the queue.
@@ -80,9 +74,8 @@ pub struct BatchAddRequestsOptions {
 /// request against the payload limit and is joined into the batch body that is sent, so a request
 /// is never serialized twice, whichever chunk or retry it ends up in.
 struct SerializedRequest {
-    /// Key correlating the request across the retry loop: its explicit `unique_key` if set,
-    /// otherwise its `url` — matching the API's own fallback (a request added without a
-    /// `unique_key` is deduplicated by its raw `url`).
+    /// Key that matches the request across retries: its `unique_key`, or its `url` if it has none,
+    /// like the API's own deduplication.
     dedup_key: String,
     url: String,
     method: Option<String>,
@@ -125,13 +118,10 @@ fn batch_body(requests: &[SerializedRequest]) -> Vec<u8> {
 /// is only used to name the offending item in the error message, so it should be the slice's
 /// absolute position within the caller's full input.
 ///
-/// The first item is always included regardless of size (once its own size has been checked
-/// against `max_bytes`), guaranteeing a non-empty result for a non-empty input — unlike the
-/// reference implementation, which can return an empty slice (and loop forever) when a single
-/// item's size leaves no room under `max_bytes` for even itself plus the array wrapper.
+/// The first item is always included once its own size has been checked against `max_bytes`, so a
+/// non-empty input never yields an empty chunk.
 ///
-/// Returns [`ApifyClientError::InvalidArgument`] if a single request's JSON exceeds `max_bytes`
-/// on its own (mirroring the reference client's thrown error).
+/// Returns [`ApifyClientError::InvalidArgument`] if a single request's JSON exceeds `max_bytes`.
 fn count_requests_fitting_byte_length(
     requests: &[SerializedRequest],
     max_bytes: usize,
@@ -166,7 +156,7 @@ fn count_requests_fitting_byte_length(
 
 /// Splits `requests` into chunks that each satisfy both the per-call count limit
 /// ([`MAX_REQUESTS_PER_BATCH_OPERATION`]) and the payload byte-size limit
-/// (`max_bytes`), mirroring the reference client's chunking loop in `batchAddRequests`.
+/// (`max_bytes`).
 fn chunk_requests_for_batch_add(
     requests: Vec<SerializedRequest>,
     max_bytes: usize,
@@ -202,8 +192,7 @@ pub struct ListRequestsOptions {
     /// Opaque pagination cursor returned by a previous call.
     pub cursor: Option<String>,
     /// Restrict the returned requests to the given states. The spec defines this as an array of
-    /// the enum values `"locked"` and `"pending"`; multiple values are sent comma-joined (matching
-    /// the JS reference, which serializes `filter: Array<'locked' | 'pending'>` via `join(',')`).
+    /// the enum values `"locked"` and `"pending"`; multiple values are sent comma-joined.
     pub filter: Option<Vec<String>>,
 }
 
@@ -383,24 +372,18 @@ impl RequestQueueClient {
     /// Adds multiple requests to the queue in a single logical operation.
     ///
     /// This is significantly more efficient than calling [`add_request`](Self::add_request)
-    /// once per request, especially for large batches: the input is automatically split into
-    /// chunks that respect both the API's per-call request-count limit
-    /// (`MAX_REQUESTS_PER_BATCH_OPERATION`) and its request-body byte-size limit
-    /// (`MAX_PAYLOAD_SIZE_BYTES`), chunks are sent with up to `options.max_parallel` API calls
-    /// in flight at once, and any request an API call reports as `unprocessed` (typically due to
-    /// rate limiting) is retried with exponential backoff — matching the reference client's
-    /// `batchAddRequests`. Every request must be identifiable by [`RequestQueueRequest::unique_key`]
-    /// (or, if left unset, by `url`, the API's own fallback) so a retried request can be matched
-    /// back to the original input.
+    /// once per request, especially for large batches: the input is split into chunks that respect
+    /// the API's limits on the request count (`MAX_REQUESTS_PER_BATCH_OPERATION`) and the body size
+    /// (`MAX_PAYLOAD_SIZE_BYTES`), up to `options.max_parallel` API calls run at once, and requests
+    /// an API call reports as `unprocessed`, typically because of rate limiting, are retried with
+    /// exponential backoff. Every request must be identifiable by
+    /// [`RequestQueueRequest::unique_key`], or by `url` if it has none, so a retried request can be
+    /// matched to the input.
     ///
-    /// Unlike most methods here, this does not propagate per-chunk API errors: a chunk that fails
-    /// even after retries has its requests reported in the result's `unprocessed_requests`
-    /// instead, so a batch add of many requests never fails outright over one bad chunk (matching
-    /// the reference client). It still returns [`ApifyClientError::InvalidArgument`] up front,
-    /// before any request is sent, for an empty `requests` (matching
-    /// [`batch_delete_requests`](Self::batch_delete_requests) and the reference client, which
-    /// validates both as non-empty) or if a single request's JSON is too large to ever fit in a
-    /// chunk.
+    /// A chunk that fails even after retries does not fail the call: its requests are reported in
+    /// the result's `unprocessed_requests`. Before any request is sent, it fails with
+    /// [`ApifyClientError::InvalidArgument`] for an empty `requests`, or for a single request whose
+    /// JSON is too large to fit in a chunk.
     pub async fn batch_add_requests(
         &self,
         requests: &[RequestQueueRequest],
@@ -450,8 +433,8 @@ impl RequestQueueClient {
         Ok(merged)
     }
 
-    /// Sends one already-byte/count-limited chunk, retrying requests reported as `unprocessed`
-    /// with exponential backoff (matching the reference client's `_batchAddRequestsWithRetries`).
+    /// Sends one chunk that is within the count and size limits, retrying requests reported as
+    /// `unprocessed` with exponential backoff.
     ///
     /// Never returns an `Err`: a transport/API failure that survives `HttpClient`'s own retries
     /// marks every request still outstanding in this chunk as unprocessed instead of propagating,
@@ -498,9 +481,8 @@ impl RequestQueueClient {
                     }
                 }
                 Err(_) => {
-                    // A hard failure (already retried by `HttpClient` for transient errors):
-                    // treat every request still outstanding in this chunk as unprocessed rather
-                    // than propagating, matching the reference client's "never throws" contract.
+                    // A failure that `HttpClient` already retried: report every outstanding
+                    // request as unprocessed instead of failing the whole call.
                     return BatchRequestsOperationResult {
                         processed_requests: processed,
                         unprocessed_requests: remaining
@@ -510,9 +492,7 @@ impl RequestQueueClient {
                     };
                 }
             }
-            // Exponential backoff with jitter before the next retry, matching the reference
-            // client's `(1 + random()) * 2^attempt * minDelay` (see `randomized_delay`, which
-            // returns a value in `[base, 2*base)`, i.e. `(1 + random()) * base`).
+            // `randomized_delay` adds jitter to the exponential backoff.
             let backoff = min_delay.saturating_mul(2u32.saturating_pow(attempt));
             sleep_public(crate::http_client::randomized_delay(backoff)).await;
         }
@@ -552,9 +532,8 @@ impl RequestQueueClient {
     /// Deletes multiple requests in a single batch operation.
     ///
     /// Unlike [`batch_add_requests`](Self::batch_add_requests), this does not auto-chunk: the API
-    /// accepts at most `MAX_REQUESTS_PER_BATCH_OPERATION` requests per call (matching the
-    /// reference client, which validates rather than chunks), so a larger `requests` returns
-    /// [`ApifyClientError::InvalidArgument`] before any request is sent.
+    /// accepts at most `MAX_REQUESTS_PER_BATCH_OPERATION` requests per call, so a larger
+    /// `requests` fails with [`ApifyClientError::InvalidArgument`] before any request is sent.
     pub async fn batch_delete_requests<T: Serialize>(
         &self,
         requests: &[T],
@@ -636,8 +615,7 @@ impl RequestQueueClient {
     /// Lazily paginates over all requests in the queue, fetching pages on demand.
     ///
     /// Returns a [`RequestQueueRequestsIterator`]; call its `next()` to get one request at a
-    /// time. Pagination uses the API's opaque `nextCursor` token: every page after the first is
-    /// fetched with `cursor` (matching the JS reference).
+    /// time. Every page after the first is fetched with the `nextCursor` token of the previous one.
     pub fn paginate_requests(&self, page_limit: Option<i64>) -> RequestQueueRequestsIterator {
         RequestQueueRequestsIterator {
             client: self.clone(),
@@ -686,8 +664,7 @@ impl RequestQueueRequestsIterator {
             return Ok(None);
         }
 
-        // Every page after the first is fetched with the opaque `cursor` token, matching the JS
-        // reference. Here we only ever paginate from the queue head, so the first page has none.
+        // The first page has no cursor: pagination starts at the queue head.
         let page = self
             .client
             .list_requests(ListRequestsOptions {
@@ -739,8 +716,7 @@ mod batch_add_tests {
             .collect()
     }
 
-    /// A request without an explicit `unique_key` is correlated by `url`, matching the API's own
-    /// deduplication fallback.
+    /// A request without a `unique_key` is matched by `url`, like the API's own deduplication.
     #[test]
     fn dedup_key_falls_back_to_url() {
         let with_key = SerializedRequest::new(&request("https://example.com", Some("k1"))).unwrap();

@@ -154,11 +154,10 @@ impl ActorServerClient {
 
     /// Returns the URL of the Actor's server.
     ///
-    /// The URL is the Actor's `standbyUrl`, fetched from the API by the first call of this method
-    /// or [`get_open_api_spec`](Self::get_open_api_spec) and reused by later calls on the clients
-    /// of the same [`ActorClient`](crate::clients::actor::ActorClient). Use it to call the server
-    /// with another HTTP client, for example one generated from the server's OpenAPI
-    /// specification.
+    /// The URL is the Actor's `standbyUrl`. The first call of this method or of
+    /// [`get_open_api_spec`](Self::get_open_api_spec) fetches it, and the clients of the same
+    /// [`ActorClient`](crate::clients::actor::ActorClient) reuse it. Use it to call the server with
+    /// another HTTP client, for example one generated from the server's OpenAPI specification.
     ///
     /// Fails with [`ApifyClientError::InvalidArgument`] when the Actor is not a Server Actor, and
     /// with a `404` [`ApiError`](crate::ApiError) when the Actor does not exist.
@@ -172,18 +171,16 @@ impl ActorServerClient {
     /// Returns the OpenAPI specification of the Actor's server, or `None` if the Actor's
     /// definition doesn't include one.
     ///
-    /// The specification is the web server schema from the Actor's definition, taken from the
-    /// build that serves the server interface: the build set in `actorStandby.build`, or `latest`
-    /// if none is set. Use it to generate an HTTP client for the server, and point that client at
-    /// the URL returned by [`get_url`](Self::get_url).
+    /// It is the web server schema in the definition of the build that serves the server
+    /// interface: the one set in `actorStandby.build`, or `latest`. Use it to generate an HTTP
+    /// client for the server, and point that client at [`get_url`](Self::get_url).
     ///
     /// Fails with [`ApifyClientError::InvalidArgument`] when the Actor is not a Server Actor, or
     /// the build that serves its server interface doesn't exist, and with a `404`
     /// [`ApiError`](crate::ApiError) when the Actor does not exist.
     pub async fn get_open_api_spec(&self) -> ApifyClientResult<Option<Value>> {
         let (actor, server_url) = self.fetch_server_actor().await?;
-        // Lets a later `get_url` and `request` skip fetching the Actor again. The URL is already
-        // set when an earlier call got there first, which is fine.
+        // Saves a later `get_url` and `request` from fetching the Actor again.
         let _ = self.server_url.set(server_url);
         let build_ref = actor
             .actor_standby
@@ -227,29 +224,27 @@ impl ActorServerClient {
 
     /// Sends an HTTP request to the Actor's server and buffers the response.
     ///
-    /// The request goes to the URL returned by [`get_url`](Self::get_url) and carries the client's
-    /// token in the `X-Apify-Authorization` header, which the platform consumes, so it never
-    /// reaches the Actor's code. Headers in the options, `Authorization` included, reach the
-    /// Actor's server as they are. The first request to an idle Actor waits for the platform to
-    /// start a server run, which is why the timeout defaults to the `Long` tier.
+    /// The request goes to the URL of [`get_url`](Self::get_url). The client's token is sent in the
+    /// `X-Apify-Authorization` header, which the platform consumes, so it never reaches the Actor's
+    /// code. Headers in the options, `Authorization` included, reach the server as they are. The
+    /// first request to an idle Actor waits for a server run to start, so the timeout defaults to
+    /// the `Long` tier.
     ///
-    /// `path` is the path on the Actor's server, for example `/search`. It is always resolved
-    /// against the server URL, so the request, and the token with it, can't be sent to another
-    /// host. Pass the query in [`ActorServerRequestOptions::params`]. A fragment (`#...`) is
-    /// dropped, since it's never sent to the server.
+    /// `path` is the path on the server, for example `/search`. It is resolved against the server
+    /// URL, so the request and the token can't go to another host. Pass the query in
+    /// [`ActorServerRequestOptions::params`]. A fragment (`#...`) is dropped.
     ///
     /// The method returns any response of the server, error statuses included, so check
-    /// [`HttpResponse::status`] before you use the body. A rate-limit (`429`) or Service
-    /// Unavailable (`503`) response is retried with the client's retry settings, and the last one
-    /// is returned once the retries run out. The Actor's code can return these statuses too, and
-    /// then it gets the request again. Network errors and timeouts are not retried, since the
-    /// Actor may have already handled the request. A redirect is returned as it is, since
-    /// following it would send the token to a host the Actor's code picked.
+    /// [`HttpResponse::status`] before you use the body. `429` and `503` responses are retried with
+    /// the client's retry settings, and the last one is returned when the retries run out. The
+    /// Actor's code can return these statuses too, and then it gets the request again. Network
+    /// errors and timeouts are not retried, since the Actor may have handled the request already. A
+    /// redirect is returned as it is, since following it would send the token to a host the
+    /// Actor's code picked.
     ///
-    /// It fails only when it gets no response from the server: with
-    /// [`ApifyClientError::InvalidArgument`] when the Actor is not a Server Actor, with a `404`
-    /// [`ApiError`](crate::ApiError) when the Actor does not exist, and with the transport error
-    /// when the request fails or times out.
+    /// It fails only when it gets no response: with [`ApifyClientError::InvalidArgument`] when the
+    /// Actor is not a Server Actor, with a `404` [`ApiError`](crate::ApiError) when the Actor does
+    /// not exist, and with the transport error when the request fails or times out.
     pub async fn request(
         &self,
         path: &str,
@@ -271,12 +266,11 @@ impl ActorServerClient {
     /// Like [`request`](Self::request), but returns the response body as a stream instead of
     /// buffering it.
     ///
-    /// The response is returned with whatever status the server answers, and is retried like
-    /// [`request`](Self::request) until it starts. Once the body is being read, it is not, since a
-    /// stream that is already open can't be replayed. The stream holds its connection open until
-    /// you read it to the end or drop it. The timeout of the request bounds only the wait for the
-    /// server to start responding, so a server that keeps the connection open and stays silent
-    /// between two chunks, such as one that sends events, is not cut off.
+    /// The response has whatever status the server answers, and is retried like
+    /// [`request`](Self::request) until it starts, but not once the body is being read. The stream
+    /// holds its connection until you read it to the end or drop it. The timeout bounds only the
+    /// wait for the response to start, so a server that stays silent between chunks, such as one
+    /// that sends events, is not cut off.
     pub async fn request_stream(
         &self,
         path: &str,

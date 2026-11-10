@@ -2,10 +2,9 @@
 //!
 //! An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
 //!
-//! It provides a resource-oriented interface that mirrors the official
-//! [JavaScript](https://github.com/apify/apify-client-js) and Python clients: start from
-//! an [`ApifyClient`], then drill down into resources (Actors, runs, datasets, key-value
-//! stores, request queues, tasks, schedules, webhooks, the store, users and logs).
+//! It follows the interface of the [JavaScript client](https://github.com/apify/apify-client-js):
+//! start from an [`ApifyClient`], then drill down into resources (Actors, runs, datasets,
+//! key-value stores, request queues, tasks, schedules, webhooks, the store, users and logs).
 //!
 //! ## Quick start
 //!
@@ -37,23 +36,17 @@
 //!
 //! - **Public interface**: [`ApifyClient`] and the resource clients in [`clients`].
 //! - **Replaceable transport**: the [`http_client::HttpBackend`] trait, with a default
-//!   [`http_client::ReqwestBackend`]. Swap it via
-//!   [`ApifyClientBuilder::http_backend`].
-//! - **Cross-cutting behaviour** (auth, `User-Agent`, retries with exponential backoff,
-//!   timeouts, request compression) lives in the client's internal HTTP layer and is applied to every
-//!   request.
+//!   [`http_client::ReqwestBackend`]. Swap it via [`ApifyClientBuilder::http_backend`].
+//! - **Shared behaviour** (auth, `User-Agent`, retries with exponential backoff, timeouts, request
+//!   compression) is applied to every request by the client's internal HTTP layer.
 //! - **Timeouts**: every method uses a [`Timeout`] tier (`Short`, `Medium` or `Long`) whose
 //!   duration is configured on the [`ApifyClientBuilder`]. A resource client's `with_timeout`
 //!   overrides the tier of all its requests.
 //!
 //! ## Cancellation
 //!
-//! The reference JavaScript client accepts an `AbortSignal` option on most methods so a caller
-//! can cancel an in-flight request. Rust futures are cancel-safe by construction: they do
-//! nothing until polled, so dropping one (e.g. via `tokio::select!`, or letting a
-//! `tokio::time::timeout` elapse) stops the underlying request without any API for it. This
-//! client therefore exposes no separate cancellation parameter — dropping the future returned
-//! by any method is the idiomatic equivalent: the request in flight ends and no retry or further
+//! Methods take no cancellation parameter. Drop the future a method returns, for example through
+//! `tokio::select!` or `tokio::time::timeout`, to end the request in flight: no retry or further
 //! poll follows. The built-in waits, such as [`RunClient::wait_for_finish`], are futures too.
 //!
 //! [`RunClient::wait_for_finish`]: crate::clients::run::RunClient::wait_for_finish
@@ -82,7 +75,6 @@ pub use statistics::Statistics;
 pub use timeouts::Timeout;
 pub use version::{API_SPEC_VERSION, CLIENT_VERSION};
 
-// Re-export the most commonly used option/parameter types for ergonomic access.
 pub use clients::actor::{
     ActorBuildOptions, ActorCallOptions, ActorStartOptions, TaskStartOptions, WaitForResources,
 };

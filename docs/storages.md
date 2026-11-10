@@ -233,11 +233,10 @@ listed in `KeyValueStoreKeysPage::items`. Its fields:
 | `delete_request_lock(id, forefront)` | `&str`, `bool` | `()` | Release a lock. |
 | `unlock_requests()` | — | `UnlockRequestsResult` | Release all this client's locks. |
 
-`paginate_requests(page_limit)` returns a `RequestQueueRequestsIterator` — a lazy, page-fetching
-iterator (parity with the Store iterator in [Store, users and logs](misc.md#apify-store--clientstore)).
-It is named `paginate_requests` (rather than an `iterate_*` verb like the dataset/key-value-store
-iterators) to mirror the reference JavaScript client's `paginateRequests` method, keeping the
-public interface consistent across the two clients.
+`paginate_requests(page_limit)` returns a `RequestQueueRequestsIterator`, a lazy iterator that
+fetches pages on demand, like the Store iterator in
+[Store, users and logs](misc.md#apify-store--clientstore). It is named after the `paginateRequests`
+method of the JavaScript client.
 Its `next()` is `async` and fallible, returning
 `ApifyClientResult<Option<RequestQueueRequest>>`, fetching the next page on demand and yielding
 `Ok(None)` once the queue is exhausted. `page_limit` bounds the requests fetched per page (`None`
@@ -282,8 +281,7 @@ them at the **back**.
 ### `batch_add_requests`
 
 `batch_add_requests(requests, options)` is the efficient way to add many requests at once —
-significantly cheaper than calling `add_request` in a loop. It mirrors the reference client's
-`batchAddRequests`:
+significantly cheaper than calling `add_request` in a loop:
 
 - The input is automatically split into chunks that respect both the API's per-call request-count
   limit (25) and its request-body byte-size limit (~9 MiB), so there is no need to chunk manually.
@@ -326,7 +324,7 @@ println!(
 # }
 ```
 
-`batch_delete_requests` does **not** auto-chunk (matching the reference client): it accepts at
+`batch_delete_requests` does **not** auto-chunk: it accepts at
 most 25 requests per call, identified by `id` and/or `unique_key` (not the full
 `RequestQueueRequest` shape), and returns `ApifyClientError::InvalidArgument` for a larger input.
 

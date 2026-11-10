@@ -325,24 +325,17 @@ impl DatasetClient {
 
     /// Lazily iterates over all items in the dataset, fetching pages on demand.
     ///
-    /// The idiomatic-Rust counterpart of the reference client's async-iterable
-    /// `listItems`/`iterateItems`: yields one deserialized item of type `T` at a time,
-    /// transparently paging. The caller's `options.limit` caps the total number of items yielded
-    /// (unset = all); use [`ListIterator::with_chunk_size`] to control the per-page fetch size. Dataset
-    /// items have no default page limit, so without a page size the whole dataset, or all `limit`
-    /// items, is loaded in one response: set one to iterate a large dataset.
+    /// Yields one deserialized item of type `T` at a time and fetches pages on demand.
+    /// `options.limit` caps the total number of items yielded (unset means all). Use
+    /// [`ListIterator::with_chunk_size`] to set the page size: without one, the whole dataset, or
+    /// all `limit` items, is loaded in one response.
     ///
-    /// Server-side filters (`skip_empty`/`clean`/`skip_hidden`) and `unwind` are forwarded on
-    /// every page request. Paging advances the offset by the number of underlying rows each page
-    /// *scanned* (the `x-apify-pagination-count` response header), not by `items.len()`, matching
-    /// the reference JavaScript client: a filter can scan more rows than it returns, and `unwind`
-    /// can return more items than rows scanned, so advancing by the returned count alone would
-    /// re-scan or skip rows. The listing's reported `total` is never consulted, so a dataset a
-    /// still-running Actor keeps pushing to is read to the end: iteration keeps requesting pages
-    /// until one scans no rows (one extra, empty request past the last page with data), rather
-    /// than stopping at the size the dataset had when the loop started.
-    ///
-    /// If `x-apify-pagination-count` is ever absent, the scanned count falls back to `items.len()`.
+    /// The filters (`skip_empty`, `clean`, `skip_hidden`) and `unwind` apply to every page. The
+    /// offset advances by the number of rows a page scanned (the `x-apify-pagination-count`
+    /// header, or `items.len()` when it is absent), since a filter can scan more rows than it
+    /// returns and `unwind` can return more items than rows. The reported `total` is not used, so a
+    /// dataset that an Actor is still filling is read to the end: iteration stops at the first page
+    /// that scans no rows.
     pub fn iterate_items<T: DeserializeOwned + Send + 'static>(
         &self,
         options: DatasetListItemsOptions,
@@ -388,17 +381,13 @@ impl DatasetClient {
     /// Like [`download_items`](Self::download_items), but streams the export as it arrives
     /// instead of buffering the whole response in memory.
     ///
-    /// Returns a `Stream` of byte chunks; drive it with `futures_util::StreamExt::next()` (or
-    /// pipe it through an `AsyncRead` adapter) to process a large export in constant memory. A
-    /// gap between chunks longer than the [`Timeout::Long`] tier (6 minutes by default) ends the
-    /// stream with [`ApifyClientError::Timeout`] — an
-    /// inactivity timeout, not a cap on the export's total duration. Use
+    /// Returns a `Stream` of byte chunks, which processes a large export in constant memory. A gap
+    /// between chunks longer than the [`Timeout::Long`] tier (6 minutes by default) ends the
+    /// stream with [`ApifyClientError::Timeout`]; the total duration is not capped. Use
     /// [`with_timeout`](Self::with_timeout) to change it.
     ///
-    /// Goes through the configured `HttpBackend`'s streaming path instead of the buffered one,
-    /// to keep the connection open — like [`crate::clients::log::LogClient::stream`], a failed
-    /// request (e.g. a `404`) still surfaces the same structured [`crate::error::ApiError`] as
-    /// the buffered endpoints, from reading the error body before the stream is handed back.
+    /// A failed request, such as a `404`, returns the same structured [`crate::error::ApiError`]
+    /// as the buffered endpoints, before the stream is returned.
     pub async fn download_items_stream(
         &self,
         format: DownloadItemsFormat,
@@ -447,11 +436,10 @@ impl DatasetClient {
 
     /// Builds a public URL for downloading this dataset's items.
     ///
-    /// Mirrors the reference client's `createItemsPublicUrl`: it fetches the dataset, and if
-    /// the dataset exposes a URL-signing secret key (i.e. it is private), appends an
-    /// HMAC-SHA256 `signature` so the URL grants access without an API token. `expires_in_secs`
-    /// optionally bounds the validity of a signed URL. The URL is built from the configured
-    /// public base URL. The served items are JSON; to request another export format, use
+    /// It fetches the dataset and, for a private dataset with a URL-signing secret key, appends an
+    /// HMAC-SHA256 `signature` so the URL works without a token. `expires_in_secs` bounds the
+    /// validity of a signed URL. The URL is built from the configured public base URL and serves
+    /// JSON. For another format, use
     /// [`create_items_public_url_with_format`](Self::create_items_public_url_with_format).
     ///
     /// `expires_in_secs` must be positive and at most
@@ -485,7 +473,6 @@ impl DatasetClient {
         options.apply(&mut params);
         params.add_str("format", format.map(|f| f.as_str().to_string()));
 
-        // Like the reference client, fetches the dataset with the `Long` tier of this method.
         let dataset: Option<Dataset> =
             get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Long).await?;
         if let Some(dataset) = dataset {

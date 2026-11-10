@@ -12,9 +12,8 @@ use std::io::Write;
 
 use crate::error::{ApifyClientError, ApifyClientResult};
 
-/// Request bodies at least this many bytes are compressed before sending. Smaller bodies are
-/// left uncompressed because the CPU cost outweighs the transfer savings. Matches the reference
-/// client's `MIN_COMPRESS_BYTES` threshold.
+/// Request bodies of at least this many bytes are compressed. For smaller ones the CPU cost
+/// outweighs the transfer savings.
 pub(crate) const MIN_COMPRESS_BYTES: usize = 1024;
 /// `Content-Encoding` value used for brotli-compressed request bodies.
 const CONTENT_ENCODING_BROTLI: &str = "br";
@@ -24,8 +23,7 @@ const CONTENT_ENCODING_GZIP: &str = "gzip";
 const BROTLI_MIN_QUALITY: u32 = 0;
 /// Highest brotli quality, the slowest with the best compression.
 const BROTLI_MAX_QUALITY: u32 = 11;
-/// Brotli quality used by [`BrotliHttpCompressor::default`]. Quality 6 balances the compression
-/// ratio against CPU cost, matching the reference client.
+/// Brotli quality used by [`BrotliHttpCompressor::default`], balancing ratio against CPU cost.
 const BROTLI_DEFAULT_QUALITY: u32 = 6;
 /// Brotli sliding-window size (log2), 22 is the library default (a 4 MiB window).
 const BROTLI_WINDOW_SIZE: u32 = 22;
@@ -37,9 +35,8 @@ const CONTENT_ENCODING_ZSTD: &str = "zstd";
 const GZIP_MIN_QUALITY: u32 = 1;
 /// Highest gzip quality, the slowest with the best compression.
 const GZIP_MAX_QUALITY: u32 = 9;
-/// Gzip quality used by [`GzipHttpCompressor::default`]: zlib's own default, which the reference
-/// client uses too. The levels above it roughly double the CPU cost for about a percent fewer
-/// bytes.
+/// Gzip quality used by [`GzipHttpCompressor::default`]: zlib's own default. The levels above it
+/// roughly double the CPU cost for about a percent fewer bytes.
 const GZIP_DEFAULT_QUALITY: u32 = 6;
 /// Lowest zstd level, the fastest with the least compression.
 const ZSTD_MIN_QUALITY: u32 = 1;
@@ -47,19 +44,15 @@ const ZSTD_MIN_QUALITY: u32 = 1;
 /// window above the 8 MB that RFC 9659 requires HTTP decoders to support, so a body compressed at
 /// those levels could fail to decode.
 const ZSTD_MAX_QUALITY: u32 = 19;
-/// Zstd level used by [`ZstdHttpCompressor::default`]: zstd's own default, which the reference
-/// client uses too.
+/// Zstd level used by [`ZstdHttpCompressor::default`]: zstd's own default.
 const ZSTD_DEFAULT_QUALITY: u32 = 3;
 
-/// Media-type prefixes whose payloads already carry their own compression, so running them
-/// through brotli/gzip burns CPU and memory for a result that is usually no smaller — and the
-/// request also keeps the intended `Content-Type`, rather than becoming an unreadable
-/// `Content-Encoding: br` blob the destination may not expect for these formats.
-/// Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES`.
+/// Media-type prefixes whose payloads already carry their own compression, so compressing them
+/// again costs CPU and memory for a result that is usually no smaller.
 const ALREADY_COMPRESSED_MEDIA_TYPE_PREFIXES: [&str; 3] = ["audio/", "image/", "video/"];
 
 /// Exact media types (outside the prefixes above) whose payloads already carry their own
-/// compression. Matches the reference client's `ALREADY_COMPRESSED_MEDIA_TYPES`.
+/// compression.
 const ALREADY_COMPRESSED_MEDIA_TYPES: [&str; 19] = [
     "application/epub+zip",
     "application/gzip",
@@ -83,7 +76,7 @@ const ALREADY_COMPRESSED_MEDIA_TYPES: [&str; 19] = [
 ];
 
 /// Uncompressed media types that sit under an already-compressed prefix above, so compressing
-/// them still pays off. Matches the reference client's `COMPRESSIBLE_MEDIA_TYPES`.
+/// them still pays off.
 const COMPRESSIBLE_MEDIA_TYPES: [&str; 16] = [
     "audio/aiff",
     "audio/basic",
@@ -104,8 +97,7 @@ const COMPRESSIBLE_MEDIA_TYPES: [&str; 16] = [
 ];
 
 /// Structured-syntax suffixes that mark a media type as text even under an already-compressed
-/// prefix (e.g. `image/svg+xml`). Matches the reference client's
-/// `COMPRESSIBLE_MEDIA_TYPE_SUFFIXES`.
+/// prefix (e.g. `image/svg+xml`).
 const COMPRESSIBLE_MEDIA_TYPE_SUFFIXES: [&str; 2] = ["+json", "+xml"];
 
 /// Strategy for compressing request bodies.
@@ -257,8 +249,7 @@ impl HttpCompressor for ZstdHttpCompressor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum RequestCompression {
-    /// Brotli (`Content-Encoding: br`). The default: best compression ratio, and the encoding the
-    /// reference client prefers.
+    /// Brotli (`Content-Encoding: br`). The default, with the best compression ratio.
     #[default]
     Brotli,
     /// Gzip (`Content-Encoding: gzip`). Choose this for environments or intermediaries that do not
@@ -292,9 +283,6 @@ fn check_quality(algorithm: &str, quality: u32, min: u32, max: u32) -> ApifyClie
 /// Compresses `body` with `compressor` and adds the matching `Content-Encoding` header, when the
 /// body is large enough, no `Content-Encoding` is already set, and its content type is not
 /// already compressed. Returns the (possibly unchanged) body.
-///
-/// The size threshold and the "compress once, before retries" behaviour mirror the reference
-/// client.
 pub(crate) fn maybe_compress(
     compressor: &dyn HttpCompressor,
     headers: &mut HashMap<String, String>,
@@ -337,7 +325,7 @@ pub(crate) fn maybe_compress(
 /// brotli or gzip burns CPU, holds a second full copy of the body in memory, and usually produces
 /// output no smaller than the input (sometimes larger). Formats that are raw despite such a media
 /// type, e.g. `image/bmp` or `audio/wav`, are still compressed. A body with no content type is
-/// assumed to be compressible. Matches the reference client's `isCompressibleContentType`.
+/// assumed to be compressible.
 fn is_compressible_content_type(content_type: Option<&str>) -> bool {
     let Some(content_type) = content_type else {
         return true;
@@ -392,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn default_qualities_are_the_zlib_and_brotli_defaults_of_the_reference_client() {
+    fn default_qualities_are_the_documented_defaults() {
         let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
 
         let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(6));

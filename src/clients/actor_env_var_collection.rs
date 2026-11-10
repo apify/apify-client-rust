@@ -31,8 +31,8 @@ impl ActorEnvVarCollectionClient {
     /// Lazily iterates over the Actor version's environment variables.
     ///
     /// The listing is not offset-paginated (the API returns every variable in a single page), so this
-    /// yields all of them from that one page and then completes. It exists for interface parity
-    /// with the other collection clients and the reference client.
+    /// yields all of them from that one page. It exists for parity with the other collection
+    /// clients.
     pub fn iterate(&self) -> ListIterator<ActorEnvVar> {
         single_page_iterator!(self)
     }

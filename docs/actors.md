@@ -54,7 +54,7 @@ documents neither.
 | `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json` for `start`/`call`, or `application/octet-stream` for `start_raw`/`call_raw`, when unset. |
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
-| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
+| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter. |
 | `wait_for_resources` | `Option<WaitForResources>` | Retry the start while the account lacks the memory or a concurrent-run slot for it (`ApiError::error_type` of `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`). See below. |
 
 ### `ActorCallOptions`
@@ -224,7 +224,7 @@ if let Some(actor) = client.actor("apify~hello-world").get().await? {
 | `image_digest` | `Option<String>` | Digest of the built Docker image manifest (without the `sha256:` prefix); compare two builds' digests to see if their image contents differ. `None` if not yet available. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
-`Build::is_terminal()` reports whether `status` is a terminal value, mirroring `ActorRun`.
+`Build::is_terminal()` reports whether `status` is a terminal value.
 
 ```rust,no_run
 # use apify_client::ApifyClient;

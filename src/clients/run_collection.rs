@@ -11,15 +11,13 @@ use crate::timeouts::Timeout;
 /// Filtering options for [`RunCollectionClient::list`], covering the spec query parameters of
 /// `GET /v2/actor-runs` and `GET /v2/actors/{actorId}/runs`.
 ///
-/// As in the reference client, the same options type is reused for the task-scoped run
-/// collection (`GET /v2/actor-tasks/{actorTaskId}/runs`), whose spec does not define
-/// `startedAfter`/`startedBefore`; those params are simply ignored server-side when set on a
-/// task-scoped list. This deliberate reference-parity reuse keeps the API surface uniform.
+/// The task-scoped run collection (`GET /v2/actor-tasks/{actorTaskId}/runs`) reuses this type. Its
+/// spec has no `startedAfter` and `startedBefore`, so the API ignores them there.
 #[derive(Debug, Default, Clone)]
 pub struct RunListOptions {
     /// Only return runs with one of these statuses (e.g. `SUCCEEDED`, `RUNNING`). The API
     /// accepts multiple statuses; they are sent as a comma-separated list. Empty means no
-    /// status filter. Matches the reference client, whose `status` accepts a string or array.
+    /// status filter.
     pub status: Vec<String>,
     /// Only return runs started at or after this ISO 8601 timestamp. (Actor-scoped lists only.)
     pub started_after: Option<String>,
@@ -91,8 +89,7 @@ impl RunCollectionClient {
 
     /// Lazily iterates over all runs matching `options`/`filter`, fetching pages on demand.
     ///
-    /// The idiomatic-Rust counterpart of the reference client's async-iterable run listing;
-    /// yields one [`ActorRun`] at a time across all pages.
+    /// Yields one [`ActorRun`] at a time across all pages.
     ///
     /// `options.limit` caps the *total* number of runs yielded across all pages, unlike
     /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size

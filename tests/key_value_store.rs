@@ -80,13 +80,9 @@ async fn iterate_key_value_stores() {
 
 /// Iteration: `iterate_keys` yields every key in the store.
 ///
-/// Creates a store, writes several records, then drives the `KeyValueStoreKeysIterator` to
-/// completion and asserts every written key is yielded exactly once. With only a handful of keys
-/// this fits in the endpoint's single default page, so it validates the helper end to end but
-/// does not cross a page boundary — `iterate_keys` has no per-page-size knob (its `limit` is a
-/// total cap, matching the JS reference), so forcing >1 page would need >1000 keys. The
-/// multi-page cursor-threading path (`exclusiveStartKey`/`nextExclusiveStartKey`) is covered
-/// hermetically by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
+/// Writes several records and asserts that the iterator yields every key exactly once. The keys fit
+/// in one page, since `iterate_keys` has no page size option, so the paging across several pages
+/// is covered by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_keys_yields_all_keys() {
     let client = require_client!();
@@ -142,9 +138,8 @@ async fn iterate_keys_yields_all_keys() {
 /// reserved in a URL path must round-trip correctly, proving the path segment is
 /// percent-encoded rather than interpolated raw.
 ///
-/// The Apify API restricts record keys to `a-zA-Z0-9!-_.'()`; several of those (`!`, `'`,
-/// `(`, `)`) are not RFC 3986 unreserved characters, so they must be percent-encoded in the
-/// URL path. A raw `format!(".../{key}")` would send them unescaped.
+/// The API allows `!`, `'`, `(` and `)` in record keys. They are not RFC 3986 unreserved
+/// characters, so the client must percent-encode them.
 #[tokio::test(flavor = "multi_thread")]
 async fn record_key_with_special_chars_round_trips() {
     let client = require_client!();
@@ -278,18 +273,10 @@ async fn key_value_store_crud_flow() {
         .is_none());
 }
 
-/// `set_record_raw_with_content_encoding` uploads an already-compressed value without the
-/// client compressing it a second time, and the value round-trips without corruption.
-///
-/// The payload is well above the client's own auto-compression size threshold, so this also
-/// exercises that the `Content-Encoding` header (not just the small-body skip) is what the
-/// client relies on to avoid double-compression; `set_record_with_content_encoding_is_not_compressed_again`
-/// in `tests/unit_http.rs` pins that exact wire behaviour hermetically. What the API does with
-/// the encoded upload server-side (store the compressed bytes as-is per
-/// `KeyValueStoreClient::set_record_raw_with_content_encoding`'s docs, or transparently decode
-/// it before storing) is outside the client's control, so this only asserts the value it reads
-/// back decodes to the original payload either way, never that the bytes are corrupted or
-/// double-compressed.
+/// A value uploaded with `set_record_raw_with_content_encoding` reads back as the original payload.
+/// The payload is above the compression threshold. The API may store the bytes as they are or
+/// decode them, so the test accepts either. The wire behavior is covered by
+/// `set_record_with_content_encoding_is_not_compressed_again` in `tests/unit_http.rs`.
 #[tokio::test(flavor = "multi_thread")]
 async fn set_record_with_content_encoding_round_trips_without_corruption() {
     use flate2::{write::GzEncoder, Compression};

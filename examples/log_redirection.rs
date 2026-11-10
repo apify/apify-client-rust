@@ -1,9 +1,7 @@
 //! Run another Actor with log redirection turned on.
 //!
-//! "Log redirection" is the convenience of taking a *separate* Actor run's log and piping it,
-//! live, into the calling program's own output as it is produced. This mirrors the JS reference
-//! client's `StreamedLog`, which prefixes every message with `"{Actor name} runId:{run id} -> "`
-//! so the redirected output is attributable to its source Actor.
+//! Log redirection pipes the live log of a separate Actor run into your own output. Every message
+//! is prefixed with `"{Actor name} runId:{run id} -> "`, so you can tell which Actor it came from.
 //!
 //! The first part lets `ActorClient::call` do it, which redirects the log to the standard output
 //! by default. The second part starts the run itself and redirects its log to a custom sink.

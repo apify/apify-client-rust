@@ -1,11 +1,7 @@
 //! Generic lazy pagination shared by every collection client.
 //!
-//! The reference JavaScript client returns an `AsyncIterable` from every collection `list()`
-//! (via its base `_listPaginatedFromCallback`), so callers can iterate across all pages without
-//! manually tracking offsets. Rust cannot return a value that is simultaneously a `Future` and a
-//! `Stream`, so the idiomatic equivalent here is a dedicated `iterate()` method on each collection
-//! client that returns a [`ListIterator`]. The paging logic lives here once so every client stays
-//! a thin wrapper over it (don't-repeat-yourself).
+//! A collection client's `iterate()` method returns a [`ListIterator`], which walks all pages
+//! without the caller tracking offsets. The paging logic lives here once for every client.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -73,8 +69,7 @@ macro_rules! single_page_iterator {
 pub(crate) use single_page_iterator;
 
 /// Returns the smaller of two optional positive limits, treating a non-positive value as "no
-/// limit" (`None`). Mirrors the reference client's `minForLimitParam`, where the API treats `0`
-/// as an absent limit.
+/// limit" (`None`), since the API treats `0` as an absent limit.
 fn min_positive_limit(a: Option<i64>, b: Option<i64>) -> Option<i64> {
     let a = a.filter(|&x| x > 0);
     let b = b.filter(|&x| x > 0);
@@ -88,30 +83,23 @@ fn min_positive_limit(a: Option<i64>, b: Option<i64>) -> Option<i64> {
 /// A lazy, page-fetching async iterator over an offset/limit-paginated list endpoint.
 ///
 /// Created by a collection client's `iterate()` method. Each call to [`next`](Self::next)
-/// returns the next item, transparently fetching the following page from the API once the
-/// local buffer drains, until the listing is exhausted (or the caller's total-item cap is hit).
+/// returns the next item and fetches the following page when the buffer is empty, until the
+/// listing is exhausted or the caller's cap is reached.
 ///
-/// # `limit` vs. page size
+/// # `limit` and page size
 ///
-/// The caller's `limit` (from the list options passed to `iterate()`) is a **cap on the total
-/// number of items the iterator yields**, matching the reference JavaScript client's
-/// `_listPaginatedFromCallback`, where `options.limit` bounds the whole async-iterable and a
-/// separate `chunkSize` controls page size. Leaving `limit` unset (or `0`) iterates the entire
-/// listing. The page size is a distinct concern: set it with [`with_chunk_size`](Self::with_chunk_size);
-/// when unset, the API's default page size is used. So `iterate(opts{ limit: 10 })` yields at most
-/// 10 items, and `iterate(opts).with_chunk_size(50)` fetches 50 per request while yielding
-/// everything. Without a page size, each request gets the API's default page size, capped by
-/// the remaining `limit`. Dataset items have no default limit, so iterating
-/// [`DatasetClient::iterate_items`](crate::clients::dataset::DatasetClient::iterate_items)
-/// without a page size loads the whole dataset, or all `limit` items, in one response: set one
-/// to iterate a large dataset.
+/// The `limit` of the list options is a cap on the total number of items the iterator yields.
+/// Leaving it unset (or `0`) iterates the whole listing. The page size is separate: set it with
+/// [`with_chunk_size`](Self::with_chunk_size), or each request gets the API's default page size,
+/// capped by the remaining `limit`. So `iterate(opts{ limit: 10 })` yields at most 10 items, and
+/// `iterate(opts).with_chunk_size(50)` fetches 50 per request and yields everything. Dataset items
+/// have no default limit, so
+/// [`DatasetClient::iterate_items`](crate::clients::dataset::DatasetClient::iterate_items) without
+/// a page size loads the whole dataset, or all `limit` items, in one response.
 ///
-/// **Large caps and the first page.** When a total cap is set but no page size is, the first page
-/// requests `limit == cap` (the reference client does the same, via
-/// `minForLimitParam(options.limit, options.chunkSize)`). If you set a very large cap — larger
-/// than the endpoint's maximum `limit` — also call [`with_chunk_size`](Self::with_chunk_size) with
-/// a value at or below that maximum, so the first request stays within the endpoint's accepted
-/// range rather than asking for the whole cap up front.
+/// **Large caps.** With a cap but no page size, the first page requests `limit == cap`. If the cap
+/// is larger than the endpoint's maximum `limit`, also call
+/// [`with_chunk_size`](Self::with_chunk_size) with a value at or below that maximum.
 ///
 /// # Example
 /// ```no_run
@@ -134,8 +122,7 @@ pub struct ListIterator<T> {
     /// Number of items still allowed under the caller's total-item cap; `None` = uncapped.
     /// Decremented by each page's item count as pages are fetched.
     remaining: Option<i64>,
-    /// Page size to request per fetch (the reference client's `chunkSize`); `None` = let the API
-    /// choose its default page size.
+    /// Page size to request per fetch; `None` = let the API choose its default page size.
     chunk_size: Option<i64>,
     /// When `true`, the underlying endpoint is not offset-paginated: the first fetch returns the
     /// whole result set, so the iterator stops after it rather than requesting a second page.
@@ -171,10 +158,9 @@ impl<T> ListIterator<T> {
         }
     }
 
-    /// Sets the page size (items requested per API call) for this iteration — the reference
-    /// client's `chunkSize`. This controls only how many items each page fetch requests, never how
-    /// many the iterator yields in total (that is the caller's `limit`; see the type docs). A
-    /// non-positive value lets the API choose its default page size.
+    /// Sets the page size, the number of items requested per API call. It never changes how many
+    /// items the iterator yields in total, which is the caller's `limit`. A non-positive value lets
+    /// the API choose its default page size.
     pub fn with_chunk_size(mut self, chunk_size: i64) -> Self {
         self.chunk_size = (chunk_size > 0).then_some(chunk_size);
         self
@@ -197,10 +183,8 @@ impl<T> ListIterator<T> {
 
     /// Fetches the page at the current offset into the buffer and advances the offset.
     async fn fetch_next_page(&mut self) -> ApifyClientResult<()> {
-        // Request the smaller of the items still allowed under the caller's cap (`remaining`) and
-        // the configured page size (`chunk_size`); `None` lets the API pick its default page size.
-        // On the first page `remaining` is the full cap, matching the reference client's initial
-        // `minForLimitParam(options.limit, options.chunkSize)`.
+        // Request the smaller of the items still allowed (`remaining`) and the page size
+        // (`chunk_size`); `None` lets the API pick its default page size.
         let page_limit = min_positive_limit(self.remaining, self.chunk_size);
         let page = (self.fetch)(self.next_offset, page_limit).await?;
         let received = page.items.len() as i64;
@@ -233,14 +217,10 @@ impl<T> ListIterator<T> {
             *rem -= scanned;
         }
 
-        // Decide whether more pages remain. `total` is deliberately never consulted: it changes
-        // as the listed resource grows (e.g. a dataset a still-running Actor keeps pushing to),
-        // so stopping at the `total` a page happened to report can end the walk before rows added
-        // later are ever read. A short page is not treated as terminal either (server-side filters
-        // can legitimately make a full, non-final window come back short) — only a page that
-        // scanned nothing, or the caller's own cap, ends the walk. This matches the reference
-        // client, which pages until a request scans zero rows and so always sends one extra
-        // request at the end to find that empty page.
+        // `total` is not used: it grows with the resource, so stopping at it could miss rows added
+        // later. A short page is not terminal either, since a filter can shorten a non-final page.
+        // Only a page that scanned nothing, or the caller's cap, ends the walk, which costs one
+        // extra request at the end.
         if self.single_page {
             // Non-paginated endpoint: everything came back in one response.
             self.exhausted = true;

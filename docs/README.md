@@ -166,12 +166,10 @@ let client = ApifyClient::builder()
 
 The `User-Agent` header has the form
 `ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}` where the `{os}`
-token matches the reference client's `os.platform()` value (e.g. `darwin`, `win32`, `linux`) so it
-is identical across all Apify clients, and `isAtHome` reflects the `APIFY_IS_AT_HOME` environment
-variable (the platform variable the reference clients read; rendered lowercase to match them). To
-reach those values the client maps Rust's native `std::env::consts::OS` spellings to Node's
-(`macos` → `darwin`, `windows` → `win32`, `solaris`/`illumos` → `sunos`); all other tokens
-(`linux`, `android`, `freebsd`, …) are already identical and pass through unchanged.
+token is the Node.js `os.platform()` value (e.g. `darwin`, `win32`, `linux`), and `isAtHome` is
+`true` or `false` according to the `APIFY_IS_AT_HOME` environment variable. The client maps Rust's
+`macos`, `windows`, `solaris` and `illumos` to `darwin`, `win32`, `sunos` and `sunos`; other tokens
+pass through unchanged.
 
 ### Timeouts
 

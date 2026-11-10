@@ -19,7 +19,7 @@ use crate::timeouts::Timeout;
 ///
 /// Covers the spec's optional `raw` and `download` query parameters on the log endpoints
 /// (`GET /v2/logs/{buildOrRunId}`, `GET /v2/actor-runs/{runId}/log`, and the last-run log
-/// variants), matching the reference client's `LogOptions`.
+/// variants).
 #[derive(Debug, Default, Clone)]
 pub struct LogOptions {
     /// If `true`, return the raw log content without any server-side processing (e.g. without
@@ -105,12 +105,11 @@ impl LogClient {
     /// Opens a streaming connection to the log, yielding chunks of bytes as they arrive, or
     /// `None` if the log does not exist.
     ///
-    /// This powers real-time log redirection: callers can forward each chunk to their own
-    /// logger/stdout while a run is still in progress. The stream completes when the log ends
-    /// (i.e. the run finishes) — as long as a new chunk arrives at least every 6 minutes (the
-    /// [`Timeout::Long`] tier, see [`with_timeout`](Self::with_timeout)); a run that legitimately
-    /// logs nothing for that long errors with
-    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout) instead.
+    /// Use it to forward the log of a run that is still in progress. The stream ends when the log
+    /// ends, that is, when the run finishes, as long as a chunk arrives within the
+    /// [`Timeout::Long`] tier (6 minutes by default, see [`with_timeout`](Self::with_timeout)). A
+    /// run that logs nothing for longer fails the stream with
+    /// [`ApifyClientError::Timeout`](crate::error::ApifyClientError::Timeout).
     ///
     /// A log client chained from a run or build, such as `run.log()`, has no ID of its own, so it
     /// returns the `404` as an error: the response cannot tell a missing run from a missing log.
@@ -127,8 +126,7 @@ impl LogClient {
     /// chunks of bytes as they arrive, or `None` if the log does not exist.
     ///
     /// Like [`LogClient::stream`], but lets the caller request the raw log via
-    /// [`LogOptions::raw`] (as the reference client's log redirection does, which streams
-    /// `{ raw: true }`).
+    /// [`LogOptions::raw`], as the log redirection does.
     pub async fn stream_with_options(
         &self,
         options: LogOptions,

@@ -17,7 +17,7 @@ to [Semantic Versioning](https://semver.org/).
   among the `Content-Encoding` values and describes `actorPath` on Actor versions.
 - **Breaking:** `ActorServerRequestOptions` has the new field `parent_request_id`, so a struct
   literal without `..Default::default()` no longer compiles.
-- Removed comments and documentation that repeated the code or described how a change was made.
+- Shortened code comments and documentation, and removed the references to other clients.
 
 ## [0.16.0] - 2026-11-06
 

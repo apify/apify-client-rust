@@ -5,9 +5,8 @@
 > relying on it in production and report issues on the repository.
 
 An idiomatic Rust client for the [Apify API](https://docs.apify.com/api/v2).
-It provides a resource-oriented, async interface that mirrors the official
-[JavaScript](https://github.com/apify/apify-client-js) and
-[Python](https://github.com/apify/apify-client-python) clients.
+It provides a resource-oriented, async interface that follows the
+[JavaScript client](https://github.com/apify/apify-client-js).
 
 - Async (Tokio-friendly), built on `reqwest`.
 - Transparent authentication, retries with exponential backoff, and timeouts.
@@ -194,10 +193,9 @@ it: `calls()` (each call counts once), `requests()` (every attempt counts) and
 
 Every request carries a `User-Agent` of the form
 `ApifyClient/{client_version} ({os}; Rust/{rust_version}); isAtHome/{true|false}`, plus any
-`user_agent_suffix` you set. The `{os}` token matches the reference clients' `os.platform()` value
-(the client maps Rust's `macos`/`windows`/`solaris`/`illumos` to `darwin`/`win32`/`sunos`;
-`linux`, `android`, and the rest pass through), so it is identical across all Apify clients.
-`isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable.
+`user_agent_suffix` you set. The `{os}` token is the Node.js `os.platform()` value (Rust's
+`macos`, `windows`, `solaris` and `illumos` become `darwin`, `win32`, `sunos` and `sunos`; the
+rest pass through). `isAtHome` reflects the `APIFY_IS_AT_HOME` environment variable.
 
 ## Resource clients
 
@@ -318,23 +316,18 @@ See [`docs/`](docs) for the full API documentation.
 
 ## Scope
 
-This client deliberately mirrors the public surface of the official JavaScript reference
-client. A few documented API endpoints are intentionally **not** exposed because the
-reference client does not expose them either, keeping the clients consistent:
+The client has the same public surface as the JavaScript client. These documented endpoints are
+not exposed, because the JavaScript client does not expose them either:
 
 - Synchronous run endpoints (`run-sync`, `run-sync-get-dataset-items`).
 - Cryptographic tools (`/tools/encode-and-sign`, `/tools/decode-and-verify`).
 - `/browser-info`.
 - The `POST` create-with-explicit-key variants of Actor versions
   (`POST /v2/actors/{actorId}/versions/{versionNumber}`) and version env-vars
-  (`POST /v2/actors/{actorId}/versions/{versionNumber}/env-vars/{envVarName}`). The reference
-  client creates versions/env-vars via `POST` to the collection and upserts via `PUT` on the
-  keyed path (both supported here as `versions().create(...)` / `version(n).update(...)` and
-  the env-var equivalents), so the redundant keyed-`POST` create is intentionally omitted.
+  (`POST /v2/actors/{actorId}/versions/{versionNumber}/env-vars/{envVarName}`). Create them with
+  `versions().create(...)` and the env-var equivalent, and update them with `version(n).update(...)`.
 - The `POST` store-record variant (`POST /v2/key-value-stores/{storeId}/records/{recordKey}`),
-  which the spec defines as behaving identically to the covered `PUT` variant. Records are
-  stored via `set_record_raw(...)` / `set_record_json(...)` (`PUT`), matching the reference
-  client; the redundant keyed-`POST` alias is intentionally omitted.
+  which behaves like the `PUT` variant. Use `set_record_raw(...)` or `set_record_json(...)`.
 
 If you need these, call them directly through a custom `HttpBackend` or open an issue.
 
@@ -369,7 +362,7 @@ match client.actor("nonexistent~actor").get().await {
 ```
 
 `get`/`delete` operations resolve a missing resource (any `404`) to `Ok(None)` / a successful
-no-op, matching the reference clients, but only on a client that names its resource by id. A
+no-op, but only on a client that names its resource by id. A
 client chained from a parent without an id of its own, such as `run.dataset()` or `run.log()`,
 returns the `404` as an error: the response cannot tell a missing run from a missing dataset. The
 same goes for methods that address a fixed sub-path of a resource (`get_statistics`, `get_input`,
@@ -377,26 +370,21 @@ same goes for methods that address a fixed sub-path of a resource (`get_statisti
 
 `ApiError` also exposes the `is_invalid_request()` (400), `is_unauthorized()` (401),
 `is_forbidden()` (403), `is_not_found()` (404), `is_conflict()` (409), `is_rate_limited()` (429) and
-`is_server_error()` (5xx) predicates classifying it by HTTP status — the idiomatic equivalent of the reference
-clients' `NotFoundError`/`RateLimitError`/... error subclasses, since Rust has no exception
-hierarchy to mirror them with.
+`is_server_error()` (5xx) predicates that classify it by HTTP status.
 
 ### Cancellation
 
-The reference JavaScript client accepts an `AbortSignal` option on most methods. Rust futures do
-nothing until polled, so dropping one — e.g. via `tokio::select!`, or letting a
-`tokio::time::timeout` elapse — stops the underlying request with no separate API needed; that is
-the idiomatic equivalent here.
+Methods take no cancellation parameter. Drop the future a method returns, for example through
+`tokio::select!` or `tokio::time::timeout`, to stop the request.
 
 ## Custom HTTP transport
 
-The transport is a replaceable component: any type implementing `http_client::HttpBackend` can be
-injected with `ApifyClientBuilder::http_backend`. The most common customization is to reuse the
-built-in `ReqwestBackend` with a `reqwest::Client` you pre-configure (custom proxy, TLS, connection
-pool, …), as shown below; to route requests through an entirely different HTTP stack, implement
-`HttpBackend` on your own type instead — just `async fn send`; `send_streaming` (used by
-`log().stream()` and `download_items_stream()`) has a default implementation that buffers the
-whole response via `send`, so it is optional unless you want true incremental streaming. A request
+Any type that implements `http_client::HttpBackend` can be injected with
+`ApifyClientBuilder::http_backend`. To customize the proxy, TLS or connection pool, wrap a
+`reqwest::Client` you configure in the built-in `ReqwestBackend`, as shown below. To use another
+HTTP stack, implement `HttpBackend` yourself: `send` is required, and `send_streaming` (used by
+`log().stream()` and `download_items_stream()`) buffers the whole response through `send` unless
+you override it for incremental streaming. A request
 whose `timeout` is `timeouts::NO_TIMEOUT` (see [Timeouts](#timeouts)) may run for as long as it
 takes, so a backend must check for it before it applies a timeout of its own. A request whose
 `follow_redirects` is `false`, such as one to an Actor's server, carries a token that must not
