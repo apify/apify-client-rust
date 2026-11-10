@@ -20,7 +20,7 @@ It provides a resource-oriented, async interface that follows the
 
 ```toml
 [dependencies]
-apify-client = "0.15"
+apify-client = "0.17"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -44,10 +44,11 @@ project needs `serde_json`. Two more dependencies are needed only for specific f
   snippet needs it as a direct dependency, and its version must match this crate's `reqwest`
   version (`0.12`) so the `reqwest::Client` types are compatible.
 
-By default the client uses the system TLS (`native-tls`). To use rustls instead:
+By default the client uses the system TLS (`native-tls`) and has the `zstd` feature. To use rustls
+instead:
 
 ```toml
-apify-client = { version = "0.15", default-features = false, features = ["rustls"] }
+apify-client = { version = "0.17", default-features = false, features = ["rustls", "zstd"] }
 ```
 
 The `rustls` feature requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10 or
@@ -164,8 +165,9 @@ or `RequestCompression::Zstd` (`zstd`) for fast compression at a good ratio.
 `HttpCompressor` to `ApifyClientBuilder::http_compressor`: the built-in
 `BrotliHttpCompressor` (quality 0 to 11, default 6), `GzipHttpCompressor` (quality 1 to 9,
 default 6), and `ZstdHttpCompressor` (quality 1 to 19, default 3), or your own implementation of
-the trait. Zstd needs the `zstd` cargo feature, which is on by default and compiles a C library, so
-turn it off with `default-features = false` if you don't need it.
+the trait. Zstd needs the `zstd` cargo feature, which is on by default and compiles a C library.
+To build without it, disable the default features and name the TLS backend you use, for example
+`default-features = false, features = ["native-tls"]`.
 
 ```rust,no_run
 use std::sync::Arc;

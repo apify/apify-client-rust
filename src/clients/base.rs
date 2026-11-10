@@ -756,7 +756,7 @@ where
             }
         }
 
-        // Let the replicas catch up before polling again.
+        // The pause also gives a replica that answered `404` time to catch up.
         crate::http_client::sleep_public(WAIT_FOR_FINISH_POLL_INTERVAL).await;
     }
 }

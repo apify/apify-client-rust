@@ -345,7 +345,7 @@ run's `APIFY_TOKEN`. For details, see
 use apify_client::{ActorServerRequestOptions, ApifyClient};
 
 # async fn run(incoming_request_id: String) -> Result<(), Box<dyn std::error::Error>> {
-let client = ApifyClient::new("my-api-token");
+let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
 let response = client
     .actor("username/other-actor")
     .server()
