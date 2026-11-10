@@ -42,5 +42,6 @@ uuid = { version = "1", features = ["v4"] }
 default = ["native-tls", "zstd"]
 native-tls = ["reqwest/native-tls"]
 rustls = ["reqwest/rustls-tls", "dep:rustls-webpki", "dep:webpki-roots"]
-# Zstd request compression. `zstd` compiles a C library, so turn it off if you do not need it.
+# Zstd request compression. It compiles a C library. To build without it, disable the default
+# features and name a TLS backend (`native-tls` or `rustls`).
 zstd = ["dep:zstd"]
