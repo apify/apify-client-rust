@@ -12,6 +12,8 @@ use std::time::Duration;
 use apify_client::clients::key_value_store::SetRecordOptions;
 use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, ReqwestBackend};
 use apify_client::timeouts::NO_TIMEOUT;
+#[cfg(feature = "zstd")]
+use apify_client::ZstdHttpCompressor;
 use apify_client::{
     ActorStartOptions, ApifyClient, ApifyClientError, BrotliHttpCompressor, GzipHttpCompressor,
     HttpCompressor, Timeout,
@@ -415,6 +417,22 @@ async fn gzip_quality_is_configurable() {
     assert_eq!(decompressed, vec![b'a'; COMPRESSIBLE_BODY_BYTES]);
 }
 
+#[cfg(feature = "zstd")]
+#[tokio::test]
+async fn zstd_quality_is_configurable() {
+    let compressor = ZstdHttpCompressor::new(19).expect("19 is a valid zstd level");
+    let backend = upload_with(Arc::new(compressor)).await;
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("zstd")
+    );
+    let sent = backend.last_body().unwrap();
+    assert_eq!(
+        zstd::bulk::decompress(&sent, COMPRESSIBLE_BODY_BYTES).expect("decode"),
+        vec![b'a'; COMPRESSIBLE_BODY_BYTES]
+    );
+}
+
 #[test]
 fn a_quality_outside_the_range_of_the_algorithm_is_rejected() {
     assert!(matches!(
@@ -610,7 +628,7 @@ async fn statistics_count_calls_requests_and_rate_limit_errors_by_attempt() {
 }
 
 /// Methods that read or write whole stores and datasets, or build a public URL from one, use the
-/// `Long` tier, like the reference client.
+/// `Long` tier.
 #[tokio::test]
 async fn key_value_store_writes_and_public_urls_use_the_long_tier() {
     let backend = MockBackend::new(vec![MockOutcome::Status(

@@ -227,9 +227,7 @@ async fn unparsable_error_body_is_retried_by_status_code() {
     );
 }
 
-/// `ApiError`'s `is_*` status-classification predicates (the idiomatic equivalent of the
-/// reference client's `NotFoundError`/`RateLimitError`/... subclasses) match the response status,
-/// and only that status's predicate is `true`.
+/// The `is_*` predicates of `ApiError` match the response status, and only that one is `true`.
 #[tokio::test]
 async fn api_error_status_predicates_classify_by_status_code() {
     async fn error_for(status: u16) -> apify_client::ApiError {
@@ -340,11 +338,8 @@ async fn zero_retries_single_attempt() {
     assert_eq!(backend.call_count(), 1);
 }
 
-/// Regression guard for the validate-input envelope-skip fix: the `validate-input` endpoint
-/// returns a **bare** `{"valid":...}` object with no `{"data":...}` envelope, so it must NOT be
-/// routed through `parse_data_envelope` (which would fail with `missing field 'data'`). This is
-/// token-free, so a future refactor that re-introduces envelope unwrapping is caught even in a
-/// run without `APIFY_TOKEN`.
+/// The `validate-input` endpoint returns a bare `{"valid":...}` object without the `data`
+/// envelope, which must not fail to parse.
 #[tokio::test]
 async fn validate_input_does_not_unwrap_data_envelope() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -432,10 +427,9 @@ async fn log_get_sends_raw_query_param() {
     );
 }
 
-/// `log().stream()` goes through the configured `HttpBackend` — including a fully custom one,
-/// not just `ReqwestBackend` — and applies the same auth/user-agent headers as a buffered call.
-/// `MockBackend` does not override `send_streaming`, so this also exercises
-/// `HttpBackend::send_streaming`'s default (buffer-via-`send`-and-yield-one-chunk) fallback.
+/// `log().stream()` goes through a custom `HttpBackend` and sends the same auth and user-agent
+/// headers as a buffered call. `MockBackend` does not override `send_streaming`, so this also
+/// covers its default implementation.
 #[tokio::test]
 async fn log_stream_goes_through_the_configured_backend() {
     let backend = MockBackend::new(vec![MockOutcome::Status(200, b"some log output".to_vec())]);
@@ -468,9 +462,8 @@ async fn log_stream_goes_through_the_configured_backend() {
     );
 }
 
-/// A failed `log().stream()` through a custom `HttpBackend` (not just `ReqwestBackend`) still
-/// surfaces the same structured `ApiError` a buffered call would, built from the mock's 404
-/// response — proving the error path also goes through the configured backend.
+/// A failed `log().stream()` through a custom `HttpBackend` returns the same structured
+/// `ApiError` as a buffered call.
 #[tokio::test]
 async fn log_stream_through_mock_backend_surfaces_structured_error() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -569,10 +562,34 @@ async fn large_request_body_is_gzip_compressed_when_selected() {
     assert_eq!(decompressed, original, "gzip round-trip must be lossless");
 }
 
-/// When `request_compression()` is never called on the builder, large bodies are brotli-compressed:
-/// the builder's default encoding is brotli, so the backend sees `Content-Encoding: br`. This
-/// exercises the builder default via the public builder path (not the `Default` derive), guarding
-/// against the default silently changing.
+/// With the zstd encoding selected, a large request body is sent with `Content-Encoding: zstd` and
+/// decodes back to the original bytes.
+#[cfg(feature = "zstd")]
+#[tokio::test]
+async fn large_request_body_is_zstd_compressed_when_selected() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
+    let client = client_with_compression(backend.clone(), RequestCompression::Zstd);
+
+    let original = vec![b'a'; 4096];
+    client
+        .key_value_store("me~store")
+        .set_record_raw("key", original.clone(), "text/plain")
+        .await
+        .expect("ok");
+
+    assert_eq!(
+        backend.last_header("Content-Encoding").as_deref(),
+        Some("zstd")
+    );
+    let sent = backend.last_body().expect("a body was sent");
+    assert!(sent.len() < original.len());
+    assert_eq!(
+        zstd::bulk::decompress(&sent, original.len()).expect("decode"),
+        original
+    );
+}
+
+/// Without `request_compression()`, large bodies are brotli-compressed.
 #[tokio::test]
 async fn builder_default_request_compression_is_brotli() {
     let backend = MockBackend::new(vec![MockOutcome::Status(200, b"".to_vec())]);
@@ -617,10 +634,8 @@ async fn small_request_body_is_not_compressed() {
     );
 }
 
-/// A large body whose content type already carries its own compression (e.g. a ZIP archive) is
-/// sent uncompressed, with no `Content-Encoding`: compressing it again would burn CPU for little
-/// to no size reduction. Exercises the raw-bytes path via `ActorClient::start_raw`, which is the
-/// main way a caller sets a non-JSON content type on a large body.
+/// A large body whose content type is already compressed, such as a ZIP archive, is sent as it is,
+/// through `ActorClient::start_raw`.
 #[tokio::test]
 async fn already_compressed_content_type_is_not_compressed() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -653,9 +668,8 @@ async fn already_compressed_content_type_is_not_compressed() {
     );
 }
 
-/// `set_record_raw_with_content_encoding` sends the caller's `Content-Encoding` verbatim and
-/// does not compress the body a second time, even above the auto-compression size threshold:
-/// `maybe_compress_request` skips any body that already carries a `Content-Encoding` header.
+/// `set_record_raw_with_content_encoding` sends the caller's `Content-Encoding` as it is and does
+/// not compress the body again, even above the compression threshold.
 #[tokio::test]
 async fn set_record_with_content_encoding_is_not_compressed_again() {
     let backend = MockBackend::new(vec![MockOutcome::Status(201, b"{}".to_vec())]);
@@ -742,8 +756,8 @@ async fn start_raw_defaults_content_type_and_sends_bytes_verbatim() {
 }
 
 /// The status-only `last_run(status)` and the options-based `last_run_with_options` thread the
-/// optional `status` and `origin` filters into the last-run request as query parameters, matching
-/// the JS reference's `lastRun({ status, origin })`. Leaving a filter as `None` omits it.
+/// optional `status` and `origin` filters into the last-run request as query parameters. Leaving a
+/// filter as `None` omits it.
 #[tokio::test]
 async fn last_run_sends_status_and_origin_query_params() {
     let backend = MockBackend::new(vec![MockOutcome::Status(
@@ -821,13 +835,8 @@ async fn last_run_sends_status_and_origin_query_params() {
     );
 }
 
-/// `iterate_items` must keep paging even when the dataset-items response omits the
-/// `X-Apify-Pagination-Total` header. With the header absent, `list_items` reports `total = 0`
-/// ("unknown"), so the iterator falls through to the short-page/empty-page backstop and walks
-/// every page. The `MockBackend` returns no headers, reproducing the missing-total case. Before
-/// the fix, `list_items` fell back to `total = count`, which the iterator read as a completed
-/// total after the first full page (`next_offset == total`) and silently dropped every later
-/// item — this test scripts three data pages then an empty one and asserts all items are yielded.
+/// `iterate_items` keeps paging when the response has no `X-Apify-Pagination-Total` header, which
+/// `MockBackend` never sends. The test scripts three data pages and an empty one.
 #[tokio::test]
 async fn iterate_items_without_total_header_walks_all_pages() {
     let backend = MockBackend::new(vec![
@@ -1051,8 +1060,8 @@ async fn iterate_keys_stops_on_is_truncated_even_with_trailing_cursor() {
     );
 }
 
-/// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size
-/// (reference parity): with `limit=2` the first request asks for `limit=2` and, once two keys
+/// The `iterate_keys` `limit` is a total cap that also bounds the first page's request size:
+/// with `limit=2` the first request asks for `limit=2` and, once two keys
 /// are consumed, the walk stops without a second fetch even though the API advertised more keys.
 #[tokio::test]
 async fn iterate_keys_limit_caps_the_walk() {

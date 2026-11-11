@@ -21,7 +21,7 @@ use crate::models::ActorRun;
 use crate::timeouts::Timeout;
 use std::sync::Arc;
 
-/// Header the API uses to deduplicate charge requests (matching the reference client).
+/// Header the API uses to deduplicate charge requests.
 const CHARGE_IDEMPOTENCY_HEADER: &str = "idempotency-key";
 /// Nanoseconds in a millisecond: the sub-millisecond part of a timestamp is below it.
 const NANOS_PER_MILLI: u32 = 1_000_000;
@@ -32,8 +32,7 @@ const NANOS_PER_MILLI: u32 = 1_000_000;
 ///
 /// Both are sent as query parameters to the last-run endpoints
 /// (`GET /v2/actors/{actorId}/runs/last`, `GET /v2/actor-tasks/{actorTaskId}/runs/last`).
-/// `status` and `origin` are both documented optional filters on those endpoints and match the
-/// reference client's `lastRun({ status, origin })`.
+/// `status` and `origin` are optional filters of those endpoints.
 #[derive(Debug, Default, Clone)]
 pub struct LastRunOptions {
     /// Filter by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`). `None` leaves it
@@ -81,8 +80,8 @@ pub struct RunChargeOptions {
     /// Idempotency key deduplicating the charge across retries. The API requires this header
     /// on every charge request and forgets each key 3 minutes after the charge, so a retry sent
     /// past that window with the same key creates a new charge rather than being deduplicated.
-    /// If `None`, one is auto-generated as `{runId}-{eventName}-{timestampMillis}-{random}`,
-    /// matching the reference client, so a transport-retried charge is applied at most once.
+    /// If `None`, one is generated as `{runId}-{eventName}-{timestampMillis}-{random}`, so a
+    /// charge that the transport retries is applied at most once.
     pub idempotency_key: Option<String>,
     /// ID of the Server Actor request being charged, taken from the `X-Actor-Request-ID` header
     /// of the incoming request. Required for multi-tenant Server Actor runs, where it maps the
@@ -159,10 +158,9 @@ impl RunClient {
         delete_resource(&self.ctx, None, Timeout::Short).await
     }
 
-    /// Aborts the run. `gracefully` is optional, matching the reference client's optional
-    /// `gracefully` option and the Go sibling's `Option<bool>`: `Some(true)` lets the run
-    /// perform cleanup first, `Some(false)` aborts immediately, and `None` omits the parameter
-    /// entirely so the server applies its default (immediate abort).
+    /// Aborts the run. `Some(true)` for `gracefully` lets the run clean up first, `Some(false)`
+    /// aborts immediately, and `None` omits the parameter, so the API applies its default
+    /// (immediate abort).
     pub async fn abort(&self, gracefully: Option<bool>) -> ApifyClientResult<ActorRun> {
         let mut params = QueryParams::new();
         params.add_bool("gracefully", gracefully);
@@ -179,9 +177,9 @@ impl RunClient {
 
     /// Transforms the run into a run of another Actor (metamorph).
     ///
-    /// `options.content_type` sets the content type of the input body (defaulting to
-    /// `application/json`), matching the reference client's `metamorph(..., { contentType })`.
-    /// To send a non-JSON input as raw bytes instead, use [`metamorph_raw`](Self::metamorph_raw).
+    /// `options.content_type` sets the content type of the input body (default
+    /// `application/json`). To send a non-JSON input as raw bytes, use
+    /// [`metamorph_raw`](Self::metamorph_raw).
     pub async fn metamorph<T: Serialize>(
         &self,
         target_actor_id: &str,
@@ -288,12 +286,10 @@ impl RunClient {
 
     /// Charges the run for a pay-per-event run, recording occurrences of a named event.
     ///
-    /// An idempotency key is always sent (auto-generated when `options.idempotency_key` is
-    /// `None`), so a charge that is retried by the transport is applied at most once — matching
-    /// the reference client and preventing double-charging.
+    /// An idempotency key is always sent (generated when `options.idempotency_key` is `None`), so
+    /// a charge that the transport retries is applied at most once.
     ///
-    /// The charge endpoint returns an empty body on success, so this issues the request
-    /// directly and treats any 2xx response as success (errors still surface normally).
+    /// The charge endpoint returns an empty body on success, so any 2xx response is a success.
     pub async fn charge(&self, options: RunChargeOptions) -> ApifyClientResult<()> {
         let count = options.count.unwrap_or(1);
         let idempotency_key = options
@@ -325,9 +321,8 @@ impl RunClient {
     }
 
     /// Builds a per-charge idempotency key of the form
-    /// `{runId}-{eventName}-{timestampMillis}-{random}`, matching the reference client. The
-    /// suffix only needs to be unique enough to avoid collisions within the same millisecond;
-    /// it is derived from the sub-millisecond part of the current time (no crypto needed).
+    /// `{runId}-{eventName}-{timestampMillis}-{random}`. The suffix only has to differ within the
+    /// same millisecond, so it comes from the sub-millisecond part of the current time.
     fn generate_idempotency_key(&self, event_name: &str) -> String {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -397,16 +392,14 @@ impl RunClient {
     ///
     /// Returns a [`RunDatasetItemsIterator`]; call its `next()` to get one item at a time. Unlike
     /// [`DatasetClient::iterate_items`], which stops at the end of the dataset as it is, this keeps
-    /// polling until the run finishes, so a consumer can process the items of a long-running Actor
-    /// as they appear. See [`RunDatasetItemsIterator`] for how the rows are read, and its
-    /// `with_chunk_size` and `with_poll_interval` for the page size and the polling interval.
+    /// polling until the run finishes, so you can process the items of a long-running Actor as they
+    /// appear. See [`RunDatasetItemsIterator`] for how rows are read, and its `with_chunk_size` and
+    /// `with_poll_interval` for the page size and the polling interval.
     ///
-    /// `options` filters and projects the items exactly like
-    /// [`DatasetClient::list_items`]: `offset` is the number of dataset rows to skip and `limit`
-    /// the maximum number of rows to scan. `desc: Some(true)` is rejected with
+    /// `options` works like in [`DatasetClient::list_items`]: `offset` is the number of rows to skip
+    /// and `limit` the maximum number of rows to scan. `desc: Some(true)` fails with
     /// [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument), since
-    /// the end of a dataset that is still growing is not known: the rows are always read oldest
-    /// first.
+    /// the end of a growing dataset is not known: rows are read oldest first.
     ///
     /// # Example
     /// ```no_run
@@ -434,7 +427,7 @@ impl RunClient {
     /// [`LogRedirect::Disabled`] or, for [`LogRedirect::Default`], the run does not exist. With a
     /// [`LogRedirect::Sink`] nothing is requested, so a missing run shows up as the error of
     /// [`StreamedLog::stop`]. Call [`StreamedLog::start`] to begin redirecting and
-    /// [`StreamedLog::stop`] to end it. Mirrors the reference client's `getStreamedLog`.
+    /// [`StreamedLog::stop`] to end it.
     ///
     /// With [`LogRedirect::Default`], the messages go to the standard output prefixed with
     /// `"{actor name} runId:{run id} -> "`, which costs a request for the run and one for its

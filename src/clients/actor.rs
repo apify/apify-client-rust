@@ -61,7 +61,7 @@ pub struct ActorStartOptions {
     /// Override the Actor's permission level for this run.
     pub force_permission_level: Option<String>,
     /// Ad-hoc webhooks to attach to this run. Serialized to base64-encoded JSON as the
-    /// `webhooks` query parameter, matching the reference clients.
+    /// `webhooks` query parameter.
     pub webhooks: Option<Vec<serde_json::Value>>,
     /// Retry the start while the account lacks the resources for the run, i.e. while the API
     /// rejects it with an [`ApiError`](crate::ApiError) whose `error_type` is
@@ -79,8 +79,8 @@ pub struct ActorStartOptions {
 }
 
 impl ActorStartOptions {
-    /// Serializes these options into run-start query parameters. Shared by the Actor and
-    /// task start methods (DRY).
+    /// Serializes these options into run-start query parameters, for the Actor and task start
+    /// methods.
     pub(crate) fn apply(&self, params: &mut QueryParams) {
         params
             .add_str("build", self.build.clone())
@@ -247,11 +247,9 @@ impl ActorClient {
 
     /// Starts the Actor with a raw request body instead of a JSON-serializable value.
     ///
-    /// Use this for a non-JSON input, e.g. a ZIP archive paired with
-    /// `options.content_type = Some("application/zip".into())`; the bytes are sent exactly as
-    /// given, with no JSON serialization. For an object or array input, use
-    /// [`start`](Self::start) instead, which handles the serialization. Mirrors the reference
-    /// client, whose `ActorInput` accepts a plain object, an array of them, or raw bytes.
+    /// Use this for a non-JSON input, e.g. a ZIP archive with
+    /// `options.content_type = Some("application/zip".into())`. The bytes are sent as given. For an
+    /// object or array input, use [`start`](Self::start).
     pub async fn start_raw(
         &self,
         input: &[u8],
@@ -266,10 +264,9 @@ impl ActorClient {
         .await
     }
 
-    /// Shared implementation of [`start`](Self::start) and [`start_raw`](Self::start_raw):
-    /// applies the run-start options as query parameters and posts the given body, falling back
-    /// to `default_content_type` only when the caller did not set `options.content_type`. `tier`
-    /// is the timeout of the request unless the client was given one with `with_timeout`.
+    /// Implements [`start`](Self::start) and [`start_raw`](Self::start_raw). `default_content_type`
+    /// applies unless `options.content_type` is set, and `tier` is the timeout of the request unless
+    /// the client has one from `with_timeout`.
     async fn start_with_body(
         &self,
         body: Option<Vec<u8>>,
@@ -308,10 +305,9 @@ impl ActorClient {
     /// to the log sink instead (without the `"{actor name} runId:{run id} -> "` prefix of the
     /// default redirection). One that cannot be set up is reported on the standard error.
     ///
-    /// Like the reference client, the start request has no client-side timeout, because an
-    /// aborted start would be retried and could create a second run; set a timeout with the
-    /// client's `with_timeout` to change that, and it applies to the polls as well. Without one,
-    /// the polls are timed as [`RunClient::wait_for_finish`] describes.
+    /// The start request has no client-side timeout, since an aborted start would be retried and
+    /// could create a second run. A timeout set with `with_timeout` changes that and applies to the
+    /// polls as well. Without one, the polls are timed as [`RunClient::wait_for_finish`] describes.
     pub async fn call<T: Serialize>(
         &self,
         input: Option<&T>,
@@ -349,7 +345,6 @@ impl ActorClient {
         let run = self
             .start_with_body(body, default_content_type, start, Timeout::NoTimeout)
             .await?;
-        // Use the root client's run client so polling targets the canonical run route.
         let mut run_client = self.root.run(run.id);
         if let Some(timeout) = self.ctx.timeout {
             run_client = run_client.with_timeout(timeout);
@@ -407,7 +402,7 @@ impl ActorClient {
     /// Resolves the Actor's default build and returns a client for it.
     ///
     /// `wait_for_finish` optionally bounds how long (in seconds) the API waits for the build
-    /// to finish before responding, matching the reference client's `defaultBuild(options)`.
+    /// to finish before responding.
     pub async fn default_build(
         &self,
         wait_for_finish: Option<i64>,
@@ -440,10 +435,8 @@ impl ActorClient {
 
     /// Validates the given input against the input schema of a specific Actor build.
     ///
-    /// `build` is the optional tag or number of the Actor build whose input schema is used for
-    /// validation (e.g. `"latest"` or `"1.2.34"`); passing `None` uses the default build, which
-    /// is equivalent to [`ActorClient::validate_input`]. This maps to the spec's optional `build`
-    /// query parameter on `POST /v2/actors/{actorId}/validate-input`.
+    /// `build` is the tag or number of the build whose input schema is used (e.g. `"latest"` or
+    /// `"1.2.34"`). `None` uses the default build, like [`ActorClient::validate_input`].
     pub async fn validate_input_for_build<T: Serialize>(
         &self,
         input: &T,
@@ -452,8 +445,7 @@ impl ActorClient {
         let body = serde_json::to_vec(input)?;
         let mut params = QueryParams::new();
         params.add_str("build", build);
-        // `validate-input` returns a bare `{ "valid": ... }` object, *not* the usual
-        // `{ "data": ... }` envelope, so it must skip `parse_data_envelope`.
+        // `validate-input` returns a bare `{ "valid": ... }` object, without the `data` envelope.
         crate::clients::base::post_action_raw(
             &self.ctx,
             Some("validate-input"),
@@ -468,9 +460,9 @@ impl ActorClient {
     /// Returns a client for the last run of this Actor, optionally filtered by run status.
     ///
     /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); pass `None`
-    /// to leave it unfiltered. This maps to the `status` query parameter on
-    /// `GET /v2/actors/{actorId}/runs/last` and mirrors the reference client's `lastRun({ status })`.
-    /// To also filter by `origin`, use [`ActorClient::last_run_with_options`].
+    /// to leave it unfiltered. It is the `status` query parameter of
+    /// `GET /v2/actors/{actorId}/runs/last`. To also filter by `origin`, use
+    /// [`ActorClient::last_run_with_options`].
     pub fn last_run(&self, status: Option<&str>) -> RunClient {
         self.last_run_with_options(LastRunOptions {
             status: status.map(str::to_owned),
@@ -482,10 +474,9 @@ impl ActorClient {
     /// (e.g. [`LastRunOptions::status`] and/or [`LastRunOptions::origin`]).
     ///
     /// `status` filters by run status (e.g. `"SUCCEEDED"`, `"FAILED"`, `"RUNNING"`); `origin` filters
-    /// by how the run was started, with accepted values being the platform's run origins (e.g.
-    /// `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). Both are documented optional query
-    /// parameters on `GET /v2/actors/{actorId}/runs/last` and match the reference client's
-    /// `lastRun({ status, origin })`; leave a field as `None` to omit it.
+    /// by how the run was started (e.g. `"DEVELOPMENT"`, `"WEB"`, `"API"`, `"SCHEDULER"`). Both
+    /// are query parameters of `GET /v2/actors/{actorId}/runs/last`; leave a field as `None` to omit
+    /// it.
     pub fn last_run_with_options(&self, options: LastRunOptions) -> RunClient {
         let mut client = RunClient::new(
             self.root.clone(),

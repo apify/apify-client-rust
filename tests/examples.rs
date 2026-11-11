@@ -1,10 +1,7 @@
 //! Smoke tests that run the documentation examples end-to-end.
 //!
-//! These ensure every example in `examples/` actually compiles and runs successfully
-//! against the live API, satisfying the requirement that each documentation example has a
-//! CI test. Each example is executed as a subprocess via `cargo run --example`.
-//!
-//! The longer Actor-build example is included but given a generous time budget.
+//! Each example in `examples/` runs as a subprocess with `cargo run --example` against the live
+//! API. The Actor-build example gets a longer time budget.
 
 mod common;
 

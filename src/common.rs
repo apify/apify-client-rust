@@ -1,5 +1,5 @@
-//! Shared building blocks used across resource clients: the response envelope,
-//! query-parameter helpers, pagination types and the `User-Agent` builder.
+//! Building blocks shared by the resource clients: the response envelope, query parameters,
+//! pagination types and the `User-Agent` builder.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ApifyClientError, ApifyClientResult, NOT_FOUND_STATUS_CODE};
 use crate::version::CLIENT_VERSION;
 
-/// Most Apify endpoints wrap their payload in a top-level `data` property.
-/// This envelope unwraps `{ "data": ... }` into the inner type.
+/// The `{ "data": ... }` envelope around the payload of most endpoints.
 #[derive(Debug, Deserialize)]
 pub(crate) struct DataEnvelope<T> {
     pub data: T,
@@ -20,11 +19,8 @@ pub(crate) fn parse_data_envelope<T: DeserializeOwned>(body: &[u8]) -> ApifyClie
     Ok(envelope.data)
 }
 
-/// Translates a "not found" API error into `Ok(None)`, re-raising any other error.
-///
-/// This mirrors `catchNotFoundOrThrow` in the reference clients: a `get`/`delete` on a
-/// missing resource resolves to `None` rather than raising, whatever the error `type` of the
-/// `404` response.
+/// Translates a "not found" API error into `Ok(None)` and returns any other error. A `get` or
+/// `delete` of a missing resource thus resolves to `None`, whatever the error `type` of the `404`.
 pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientResult<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
@@ -33,8 +29,7 @@ pub(crate) fn catch_not_found<T>(result: ApifyClientResult<T>) -> ApifyClientRes
     }
 }
 
-/// A mutable collection of query parameters that serializes booleans as `0`/`1` and
-/// omits `None` values, matching the Apify API conventions.
+/// A collection of query parameters that serializes booleans as `0`/`1` and omits `None` values.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct QueryParams {
     pairs: Vec<(String, String)>,
@@ -89,12 +84,12 @@ impl QueryParams {
         self
     }
 
-    /// Internal: read access to the raw pairs (used when merging parent params).
+    /// The raw key-value pairs.
     pub(crate) fn pairs_ref(&self) -> &[(String, String)] {
         &self.pairs
     }
 
-    /// Internal: push an already-stringified key/value pair.
+    /// Adds an already-stringified pair.
     pub(crate) fn push_raw(&mut self, key: String, value: String) {
         self.pairs.push((key, value));
     }
@@ -128,30 +123,21 @@ fn url_encode(input: &str) -> String {
     out
 }
 
-/// Percent-encodes a single URL *path segment*, so that values interpolated into the path
-/// (such as key-value-store record keys or request IDs) cannot break out of the segment or
-/// inject a query string.
+/// Percent-encodes a single URL path segment, such as a record key or a request ID, so it can't
+/// leave the segment or add a query string. Everything except the RFC 3986 unreserved characters
+/// is escaped.
 ///
-/// Encodes everything except the RFC 3986 "unreserved" characters. Notably `/`, `?`, `#`,
-/// space and any non-ASCII bytes are escaped — unlike a raw `format!(".../{key}")`, which
-/// would leave them intact and produce a malformed or wrong-endpoint URL.
-///
-/// This does not reject a segment that is empty or a dot segment (`.` or `..`), which a URL
-/// parser resolves to another endpoint even when percent-encoded; the client methods that take
-/// such a value validate it with `to_path_segment` instead.
+/// It does not reject an empty segment or a dot segment (`.` or `..`), which a URL parser resolves
+/// to another endpoint even when percent-encoded. Methods that take such a value use
+/// `to_path_segment` instead.
 pub(crate) fn encode_path_segment(input: &str) -> String {
-    // Path segments and query components share the same unreserved set here, so reuse the
-    // query encoder. (`url_encode` already escapes `/`, `?`, `#`, space and non-ASCII.)
+    // Path segments and query components share the unreserved set.
     url_encode(input)
 }
 
-/// Validates and percent-encodes a caller-supplied URL path segment so it cannot restructure
-/// the request path.
-///
-/// An empty value is rejected because it would address the collection instead of a resource, and
-/// so is `.` or `..`: URL parsers resolve dot segments after percent-decoding, so
-/// `records/%2E%2E` collapses to the parent endpoint just like `records/..`. The error is
-/// [`ApifyClientError::InvalidArgument`].
+/// Validates and percent-encodes a caller-supplied path segment. An empty segment, which would
+/// address the collection, and `.` or `..`, which URL parsers resolve even when percent-encoded,
+/// fail with [`ApifyClientError::InvalidArgument`].
 pub(crate) fn to_path_segment(input: &str) -> ApifyClientResult<String> {
     if input.is_empty() || input == "." || input == ".." {
         return Err(ApifyClientError::InvalidArgument(format!(
@@ -161,7 +147,7 @@ pub(crate) fn to_path_segment(input: &str) -> ApifyClientResult<String> {
     Ok(encode_path_segment(input))
 }
 
-/// Standard offset/limit pagination options shared by most list endpoints.
+/// Offset/limit pagination options of most list endpoints.
 #[derive(Debug, Default, Clone)]
 pub struct ListOptions {
     /// Number of items to skip from the beginning of the list.
@@ -172,9 +158,8 @@ pub struct ListOptions {
     pub desc: Option<bool>,
 }
 
-/// Options shared by the storage collection list endpoints (`GET /v2/datasets`,
-/// `/v2/key-value-stores`, `/v2/request-queues`), which add `unnamed` and `ownership`
-/// filters on top of the standard offset/limit pagination.
+/// Options of the storage collection list endpoints (datasets, key-value stores, and request
+/// queues): the offset/limit pagination plus `unnamed` and `ownership` filters.
 #[derive(Debug, Default, Clone)]
 pub struct StorageListOptions {
     /// Number of items to skip from the beginning of the list.
@@ -237,23 +222,17 @@ fn env_var_set(name: &str) -> bool {
 /// Builds the `User-Agent` header value mandated by the client requirements:
 /// `ApifyClient/{version} ({os}; {language version}); isAtHome/{isAtHome}`.
 pub(crate) fn build_user_agent(suffix: Option<&str>) -> String {
-    // The OS token must be byte-for-byte identical across all Apify clients, which means it must
-    // equal the reference JS client's `os.platform()` value. `std::env::consts::OS` uses Rust's
-    // own spellings (`macos`, `windows`, `solaris`, `illumos`), so map those to the Node
-    // `os.platform()` tokens (`darwin`, `win32`, `sunos`); the rest already agree.
+    // The OS token is the `os.platform()` value of Node.js, as in every Apify client.
+    // `std::env::consts::OS` spells a few differently.
     let os = map_os_to_node_platform(std::env::consts::OS);
-    // The `isAtHome` flag signals whether the client runs on the Apify platform. Per the
-    // requirements it is `true`/`false` based solely on the `APIFY_IS_AT_HOME` environment
-    // variable (`false` when the variable is missing), matching the JS reference, which reads
-    // only `APIFY_IS_AT_HOME` and renders a lowercase boolean.
+    // `isAtHome` depends only on `APIFY_IS_AT_HOME` and is `false` when it is missing.
     let is_at_home = if env_var_set("APIFY_IS_AT_HOME") {
         "true"
     } else {
         "false"
     };
-    // Rust has no stable runtime-version API, so report the compiler version captured at build
-    // time by `build.rs` (the closest analogue to a "language/runtime version"). Falls back to
-    // "unknown" only if the build script could not invoke rustc.
+    // Rust has no runtime-version API, so this is the compiler version `build.rs` captured, or
+    // "unknown" if it could not run rustc.
     let rust_version = option_env!("BUILD_RUSTC_VERSION").unwrap_or("unknown");
     let mut ua =
         format!("ApifyClient/{CLIENT_VERSION} ({os}; Rust/{rust_version}); isAtHome/{is_at_home}");
@@ -268,12 +247,9 @@ pub(crate) fn build_user_agent(suffix: Option<&str>) -> String {
 
 /// Maps a Rust `std::env::consts::OS` value to the corresponding Node.js `os.platform()` token.
 ///
-/// The User-Agent OS field must be identical across every Apify client, and the reference client
-/// derives it from Node's `os.platform()`. Rust and Node agree on most tokens (`linux`, `android`,
-/// `freebsd`, `openbsd`, `netbsd`, `aix`, ...), which pass through unchanged; the four Rust
-/// spellings that differ (`macos`, `windows`, `solaris`, `illumos`) are translated to Node's
-/// spelling. Note both `solaris` and `illumos` map to Node's single `sunos` token. Any unknown
-/// value passes through as-is (best effort).
+/// Rust and Node.js agree on most tokens, which pass through unchanged. The four that differ
+/// (`macos`, `windows`, `solaris`, `illumos`) are translated to `darwin`, `win32`, `sunos` and
+/// `sunos`. An unknown value passes through as it is.
 fn map_os_to_node_platform(os: &str) -> &str {
     match os {
         "macos" => "darwin",
@@ -290,21 +266,17 @@ pub(crate) fn to_safe_id(id: &str) -> String {
     id.replace('/', "~")
 }
 
-/// Version tag embedded in storage-content signatures. Matches the upstream library default
-/// (`0`), which the reference clients rely on by not passing an explicit version.
+/// Version tag embedded in storage-content signatures: the default of `@apify/utilities`.
 const STORAGE_CONTENT_SIGNATURE_VERSION: &str = "0";
 /// Number of leading hex characters of the HMAC digest used by `create_hmac_signature`.
 const HMAC_SIGNATURE_HEX_LEN: usize = 30;
-/// base62 alphabet (`0-9a-zA-Z`, lowercase first) used to encode the truncated HMAC. This
-/// ordering matches upstream `@apify/utilities`.
+/// base62 alphabet (`0-9a-zA-Z`, lowercase first) used to encode the truncated HMAC, in the order
+/// `@apify/utilities` uses.
 const BASE62_ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/// Computes an Apify URL-signing signature, byte-for-byte compatible with the platform's
-/// `@apify/utilities` `createHmacSignature`.
-///
-/// The algorithm is: `HMAC-SHA256(secret_key, message)` as lowercase hex, take the first 30
-/// hex characters, interpret them as a big integer, then base62-encode (alphabet `0-9a-zA-Z`).
-/// Used to sign key-value-store record keys for public access.
+/// Computes an Apify URL-signing signature, compatible with `createHmacSignature` of
+/// `@apify/utilities`: the first 30 hex characters of `HMAC-SHA256(secret_key, message)`,
+/// base62-encoded. It signs the record keys of public key-value-store URLs.
 pub(crate) fn create_hmac_signature(secret_key: &str, message: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -314,7 +286,7 @@ pub(crate) fn create_hmac_signature(secret_key: &str, message: &str) -> String {
     mac.update(message.as_bytes());
     let digest = mac.finalize().into_bytes();
 
-    // Hex-encode and keep the leading 30 hex chars (120 bits → fits in u128).
+    // 30 hex characters are 120 bits, which fit in a `u128`.
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest.iter() {
         hex.push_str(&format!("{byte:02x}"));
@@ -343,16 +315,14 @@ fn to_base62(mut value: u128) -> String {
 /// Milliseconds in a second.
 const MILLIS_PER_SECOND: i64 = 1000;
 
-/// The longest validity of a signed public URL, in seconds: `4611686018427387`, about 146 million
-/// years. It is half of what fits in milliseconds in an `i64`, which keeps the current time plus
-/// the validity from overflowing. The `expires_in_secs` of `create_items_public_url`,
-/// `create_items_public_url_with_format` and `create_keys_public_url` can be at most this.
+/// The longest validity of a signed public URL, in seconds (about 146 million years): half of what
+/// fits in milliseconds in an `i64`, so the current time plus the validity can't overflow. It is
+/// the upper bound of the `expires_in_secs` of the public URL methods.
 pub const MAX_EXPIRES_IN_SECS: i64 = i64::MAX / MILLIS_PER_SECOND / 2;
 
-/// Checks the validity of a signed public URL before any request is sent. `None` is a URL that
-/// does not expire. A validity has to be positive, since `0` and negative values would sign a URL
-/// that has already expired, and at most [`MAX_EXPIRES_IN_SECS`], so that its expiry can't
-/// overflow. Fails with [`ApifyClientError::InvalidArgument`] otherwise.
+/// Checks the validity of a signed public URL before any request is sent. `None` never expires.
+/// A validity must be positive, since `0` or less signs a URL that has already expired, and at
+/// most [`MAX_EXPIRES_IN_SECS`]. Fails with [`ApifyClientError::InvalidArgument`] otherwise.
 pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyClientResult<()> {
     match expires_in_secs {
         Some(secs) if secs <= 0 => Err(ApifyClientError::InvalidArgument(format!(
@@ -365,10 +335,10 @@ pub(crate) fn validate_expires_in_secs(expires_in_secs: Option<i64>) -> ApifyCli
     }
 }
 
-/// The expiry that a signed public URL gets, as the absolute time in milliseconds: the current
-/// time plus the validity, or `0` for a URL that does not expire. Call it when the URL is signed,
-/// so that the time the request before it took doesn't come off the validity, with a validity that
-/// passed [`validate_expires_in_secs`].
+/// The expiry of a signed public URL as an absolute time in milliseconds: now plus the validity,
+/// or `0` for a URL that does not expire. Call it when the URL is signed, so the time of earlier
+/// requests doesn't come off the validity. The validity must have passed
+/// [`validate_expires_in_secs`].
 pub(crate) fn public_url_expiry_millis(expires_in_secs: Option<i64>) -> i64 {
     match expires_in_secs {
         Some(secs) => chrono::Utc::now().timestamp_millis() + secs * MILLIS_PER_SECOND,
@@ -376,13 +346,12 @@ pub(crate) fn public_url_expiry_millis(expires_in_secs: Option<i64>) -> i64 {
     }
 }
 
-/// Builds a storage-content signature for a resource's public URL, byte-for-byte compatible
-/// with the platform's `@apify/utilities` `createStorageContentSignature`.
+/// Builds a storage-content signature for the public URL of dataset items or a key list,
+/// compatible with `createStorageContentSignature` of `@apify/utilities`.
 ///
-/// It signs the message `"{version}.{expiresAtMillis}.{resourceId}"` (where `expiresAtMillis`
-/// is the absolute expiry in milliseconds, as [`public_url_expiry_millis`] returns it) with
-/// [`create_hmac_signature`], then returns the base64url (no padding) encoding of
-/// `"{version}.{expiresAtMillis}.{hmac}"`. Used for dataset-items and key-list public URLs.
+/// It signs `"{version}.{expiresAtMillis}.{resourceId}"` with [`create_hmac_signature`] and returns
+/// the unpadded base64url encoding of `"{version}.{expiresAtMillis}.{hmac}"`. `expiresAtMillis` is
+/// what [`public_url_expiry_millis`] returns.
 pub(crate) fn sign_storage_content(
     secret_key: &str,
     resource_id: &str,
@@ -401,10 +370,8 @@ pub(crate) fn sign_storage_content(
 mod user_agent_tests {
     use super::{build_user_agent, map_os_to_node_platform};
 
-    // `build_user_agent` keys the flag solely on the `APIFY_IS_AT_HOME` env var (per the
-    // requirements and the JS reference). A bare `isAtHome` env var must NOT affect it. The value
-    // is the lowercase `true`/`false` the JS reference emits. Env vars are process-global, so this
-    // test owns both names for its duration and restores them afterwards.
+    // Only `APIFY_IS_AT_HOME` sets the flag, not a bare `isAtHome` variable. Environment variables
+    // are process-global, so this test owns both names and restores them afterwards.
     #[test]
     fn is_at_home_reads_only_apify_is_at_home() {
         let prev_apify = std::env::var("APIFY_IS_AT_HOME").ok();
@@ -444,11 +411,8 @@ mod user_agent_tests {
         }
     }
 
-    // The OS token in the emitted User-Agent must match the reference JS client's `os.platform()`
-    // value (so every Apify client reports the same token). This test checks the token that
-    // `build_user_agent` actually produces against an independent oracle — the set of documented
-    // Node `os.platform()` values — and asserts it is lowercase and never a Rust-native spelling.
-    // The exact per-platform translation is covered by `os_token_maps_rust_spellings_to_node_platform`.
+    // The OS token must be a documented Node.js `os.platform()` value. The per-platform mapping is
+    // covered by `os_token_maps_rust_spellings_to_node_platform`.
     #[test]
     fn user_agent_os_token_matches_node_platform() {
         // The values Node's `os.platform()` can return (independent of our mapping code).
@@ -490,9 +454,7 @@ mod user_agent_tests {
         }
     }
 
-    // The Rust->Node platform mapping must translate the four tokens that differ (both `solaris`
-    // and `illumos` collapse to Node's `sunos`) and leave every shared token untouched, so the
-    // emitted value is byte-for-byte identical to the reference.
+    // The four differing tokens are translated and the shared ones are left untouched.
     #[test]
     fn os_token_maps_rust_spellings_to_node_platform() {
         assert_eq!(map_os_to_node_platform("macos"), "darwin");
@@ -505,9 +467,7 @@ mod user_agent_tests {
         }
     }
 
-    // The `{language version}` segment must carry a real compiler version captured by build.rs,
-    // not the literal "unknown" the MSRV-based source used to produce. We assert the `Rust/`
-    // token is followed by a digit (e.g. `Rust/1.94.1`).
+    // The `Rust/` token must be followed by a compiler version such as `1.94.1`, not "unknown".
     #[test]
     fn user_agent_reports_real_rust_version() {
         let ua = build_user_agent(None);
@@ -527,12 +487,10 @@ mod user_agent_tests {
 mod signature_tests {
     use super::{create_hmac_signature, sign_storage_content, to_base62};
 
-    // Known-answer test pinning the `createHmacSignature` algorithm against upstream
-    // `@apify/utilities`: HMAC-SHA256 → hex → first 30 hex chars → big integer → base62 with
-    // the lowercase-first alphabet `0-9a-zA-Z`. For key="secret", msg="message" the upstream
-    // output is `11GYWmGxviysIBMtnQHBk`.
+    // Known answer of `createHmacSignature` in `@apify/utilities` for key "secret" and message
+    // "message".
     #[test]
-    fn hmac_signature_matches_upstream_scheme() {
+    fn hmac_signature_matches_the_known_answer() {
         let sig = create_hmac_signature("secret", "message");
         assert_eq!(sig, "11GYWmGxviysIBMtnQHBk");
         // base62 output uses only `0-9a-zA-Z`.

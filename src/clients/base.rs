@@ -1,9 +1,7 @@
 //! Shared internal machinery for resource clients.
 //!
-//! [`ResourceContext`] holds the resolved URL and the [`HttpClient`] for a single
-//! resource (or sub-resource). The free functions in this module implement the CRUD
-//! and wait-for-finish primitives once, so that every resource client stays small and
-//! consistent (the DRY principle).
+//! [`ResourceContext`] holds the URL and the [`HttpClient`] of a resource or sub-resource. The
+//! free functions implement the CRUD and wait-for-finish primitives that the resource clients share.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -22,18 +20,16 @@ use crate::timeouts::Timeout;
 
 /// How long to wait between polls while waiting for a run/build to finish.
 const WAIT_FOR_FINISH_POLL_INTERVAL: Duration = Duration::from_millis(250);
-/// The `waitForFinish` value (in seconds) sent on each poll; the API caps server-side
-/// waiting at 60 seconds, so we poll in chunks of this size.
+/// The `waitForFinish` value (in seconds) sent on each poll. The API holds a response for at most
+/// 60 seconds.
 const WAIT_FOR_FINISH_REQUEST_SECS: i64 = 60;
-/// How long a run/build may keep answering `404` before [`wait_for_finish`] gives up and returns
-/// a not-found error, instead of polling forever. A brand-new run/build can briefly 404 while the
-/// write that created it has not yet reached the replica a poll happens to land on; a success
-/// within this window resets it. Matches the reference clients' `DEFAULT_WAIT_WHEN_JOB_NOT_EXIST`.
-/// Without this bound, a run/build ID that was simply never valid (e.g. a typo, or the resource
-/// was deleted) would poll indefinitely when `wait_secs` is `None`.
+/// How long a run or build may keep answering `404` before [`wait_for_finish`] gives up with a
+/// not-found error. A new run or build can briefly 404 until its write reaches the replica a poll
+/// lands on, and a success resets the window. Without the bound, an ID that never existed would be
+/// polled forever when `wait_secs` is `None`.
 const NOT_FOUND_GRACE_PERIOD: Duration = Duration::from_secs(3);
-/// Path segment standing in for an ID that failed validation. The URL is never requested:
-/// the [`HttpClient`] of such a context is poisoned and fails every call first.
+/// Path segment standing in for an ID that failed validation. It is never requested: the
+/// [`HttpClient`] of such a context fails every call first.
 const INVALID_ID_PLACEHOLDER: &str = "invalid-id";
 
 /// Why a zero timeout is refused.
@@ -44,7 +40,7 @@ const ZERO_TIMEOUT_MESSAGE: &str = "a timeout and a timeout cap must be longer t
 #[derive(Debug, Clone)]
 pub(crate) struct ResourceContext {
     pub(crate) http: HttpClient,
-    /// The fully-qualified base URL of the resource, e.g. `https://api.apify.com/v2/actors/ID`.
+    /// The base URL of the resource, e.g. `https://api.apify.com/v2/actors/ID`.
     pub(crate) url: String,
     /// Parameters inherited from a parent resource (e.g. `status` on `actor.last_run()`).
     pub(crate) base_params: QueryParams,
@@ -90,8 +86,7 @@ impl ResourceContext {
         )
     }
 
-    /// Internal constructor that derives the API origin from `base_url`. The public origin
-    /// defaults to the API origin and can be overridden with [`with_public_origin`].
+    /// Derives the API origin from `base_url`. The public origin defaults to it.
     fn new(http: HttpClient, url: String, base_url: &str, has_id: bool) -> Self {
         let api_origin = origin_of(base_url);
         Self {
@@ -115,10 +110,9 @@ impl ResourceContext {
 
     /// Fails with [`ApifyClientError::InvalidArgument`](crate::error::ApifyClientError::InvalidArgument)
     /// when a request cannot be sent: the client was addressed with an invalid id (which follows
-    /// every client chained from it), or was given a zero timeout or cap. A zero timeout makes
-    /// every attempt fail at once and can never grow by doubling, and `Timeout::NoTimeout` is the
-    /// way to run without one. The timeout and cap of this client alone are checked, so a zero one
-    /// is neither inherited by chained clients nor sticky once `with_timeout` replaces it.
+    /// every client chained from it), or was given a zero timeout or cap. A zero timeout fails
+    /// every attempt at once, and `Timeout::NoTimeout` is the way to run without one. Only the
+    /// timeout and cap of this client are checked, so chained clients don't inherit a zero one.
     fn check_request_allowed(&self) -> ApifyClientResult<()> {
         self.http.fail_if_poisoned()?;
         let zero_timeout = self.timeout == Some(Timeout::Custom(Duration::ZERO))
@@ -307,8 +301,7 @@ impl ResourceContext {
     }
 }
 
-/// Generates the public `with_timeout` method of a resource client holding a [`ResourceContext`]
-/// in its `ctx` field.
+/// Generates `with_timeout` for a resource client with a [`ResourceContext`] in its `ctx` field.
 macro_rules! impl_with_timeout {
     ($client:ident) => {
         impl $client {
@@ -350,15 +343,14 @@ impl QueryParams {
     }
 }
 
-/// Header map for a request with a JSON body.
+/// Headers of a request with a JSON body.
 fn json_headers() -> HashMap<String, String> {
     HashMap::from([("Content-Type".to_string(), "application/json".to_string())])
 }
 
-/// Swallows a `404` and returns `Ok(None)` only when the client names its resource by ID. A
-/// chained client without one, such as `run.dataset()`, requests a path where a `404` can mean
-/// either the parent or the default sub-resource is missing, and the response cannot tell the two
-/// apart, so the error propagates.
+/// Turns a `404` into `Ok(None)` only when the client names its resource by ID. For a chained
+/// client without one, such as `run.dataset()`, a `404` can mean that the parent or the
+/// sub-resource is missing, so the error propagates.
 pub(crate) fn catch_not_found_for<T>(
     ctx: &ResourceContext,
     result: ApifyClientResult<T>,
@@ -522,10 +514,8 @@ pub(crate) async fn post_creating<T: DeserializeOwned>(
     parse_data_envelope(&response.body)
 }
 
-/// Sends a `POST` and returns the raw response body, deserialized directly **without**
-/// unwrapping a `data` envelope. A few endpoints (e.g. `validate-input`) return a bare JSON
-/// object rather than the usual `{ "data": ... }` envelope, so they must not go through
-/// [`parse_data_envelope`].
+/// Sends a `POST` and deserializes the body without unwrapping a `data` envelope, for the few
+/// endpoints, such as `validate-input`, that return a bare JSON object.
 pub(crate) async fn post_action_raw<T: DeserializeOwned>(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -547,8 +537,7 @@ pub(crate) async fn post_action_raw<T: DeserializeOwned>(
     Ok(serde_json::from_slice(&response.body)?)
 }
 
-/// Shared `POST` sender used by [`post_action`] and [`post_action_raw`]. Builds the URL with
-/// merged query params, sets the optional `Content-Type`, and returns the raw response.
+/// The `POST` sender of [`post_action`] and [`post_action_raw`].
 async fn post_send(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -613,12 +602,10 @@ pub(crate) async fn head_exists(
     Ok(catch_not_found(result)?.is_some())
 }
 
-/// A `PUT` with raw bytes and a content type (used for KVS record uploads).
+/// A `PUT` with raw bytes and a content type, used for key-value store records.
 ///
-/// `content_encoding`, when set, is sent as the `Content-Encoding` header for an
-/// already-compressed value; it makes [`HttpClient::call_with_options`]'s automatic request compression skip
-/// the body (it already refuses to double-encode a request that carries a `Content-Encoding`), so
-/// the bytes reach the API exactly as given.
+/// `content_encoding` is sent as the `Content-Encoding` header for an already-compressed value.
+/// The automatic compression skips such a body, so the bytes reach the API as given.
 pub(crate) async fn put_raw(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -652,13 +639,9 @@ pub(crate) struct RawUpload<'a> {
     pub(crate) content_encoding: Option<&'a str>,
 }
 
-/// Opens a streaming `GET` connection to `url` (already fully built, including query string),
-/// for a caller that wants to process a large body (a log or a dataset export) incrementally
-/// instead of waiting for [`HttpClient::call_with_options`] to buffer the whole response. Delegates to
-/// [`HttpClient::call_streaming`], which — unlike a one-off raw `reqwest` call — goes through
-/// the configured [`HttpBackend`](crate::http_client::HttpBackend), so a custom backend (or a
-/// `ReqwestBackend` wrapping a caller-provided, proxy/TLS-configured `reqwest::Client`) is
-/// honoured for streaming requests exactly as it is for buffered ones.
+/// Opens a streaming `GET` connection to the complete `url`, for a large body such as a log or a
+/// dataset export. It goes through [`HttpClient::call_streaming`], so a custom
+/// [`HttpBackend`](crate::http_client::HttpBackend) serves it like any other request.
 pub(crate) async fn get_byte_stream(
     ctx: &ResourceContext,
     url: String,
@@ -677,8 +660,8 @@ pub(crate) async fn get_byte_stream(
         .await
 }
 
-/// A `POST` with a raw body that returns an enveloped resource. Used by `actor.start`
-/// and `run.metamorph` where the input is arbitrary user JSON.
+/// A `POST` with a raw body that returns an enveloped resource, for the arbitrary JSON input of
+/// `actor.start` and `run.metamorph`.
 pub(crate) async fn post_with_body<T: DeserializeOwned>(
     ctx: &ResourceContext,
     sub_path: Option<&str>,
@@ -711,16 +694,13 @@ pub(crate) async fn delete_with_body<B: Serialize, T: DeserializeOwned>(
     parse_data_envelope(&response.body)
 }
 
-/// Polls a `GET` endpoint with `waitForFinish` until the resource reaches a terminal
-/// state or `wait_secs` elapses. Used by `RunClient` and `BuildClient`.
+/// Polls a `GET` endpoint with `waitForFinish` until the resource is terminal, as `is_terminal`
+/// decides, or `wait_secs` elapses. Returns the latest resource.
 ///
-/// `is_terminal` extracts whether the fetched resource is finished. Returns the latest
-/// resource (finished, or still running if the wait budget was exhausted).
-///
-/// With `wait_secs: None`, a poll has no client-side timeout unless the client was given one with
-/// `with_timeout`, like the reference client. With `Some`, a poll is allowed the `Medium` tier plus
-/// the hold it asks the API for, so a stalled connection cannot outlast the wait budget by more
-/// than that. A timeout set with `with_timeout` always wins.
+/// With `wait_secs: None`, a poll has no client-side timeout unless the client has one from
+/// `with_timeout`. With `Some`, a poll gets the `Medium` tier plus the hold it asks the API for, so
+/// a stalled connection can't outlast the wait by more than that. A timeout from `with_timeout`
+/// always wins.
 pub(crate) async fn wait_for_finish<T, F>(
     ctx: &ResourceContext,
     wait_secs: Option<i64>,
@@ -732,8 +712,7 @@ where
 {
     let start = tokio::time::Instant::now();
     let budget = wait_secs.map(|s| Duration::from_secs(s.max(0) as u64));
-    // When the fetch below starts hitting `404`, the instant the *first* one was seen; reset on
-    // any successful fetch. `None` means the resource has not 404'd (yet).
+    // When the first of the current run of `404` responses was seen, if any.
     let mut not_found_since: Option<tokio::time::Instant> = None;
 
     loop {
@@ -768,9 +747,7 @@ where
                 if !is_not_found {
                     return Err(err);
                 }
-                // A run/build that keeps 404ing past the grace period was never going to appear
-                // (bad ID, or it was deleted); without this, `wait_secs: None` would poll it
-                // forever instead of surfacing the not-found error.
+                // Past the grace period the resource is not going to appear.
                 let now = tokio::time::Instant::now();
                 let first_seen = *not_found_since.get_or_insert(now);
                 if now.duration_since(first_seen) >= NOT_FOUND_GRACE_PERIOD {
@@ -779,7 +756,7 @@ where
             }
         }
 
-        // Brief pause to let replicas catch up, then poll again.
+        // The pause also gives a replica that answered `404` time to catch up.
         crate::http_client::sleep_public(WAIT_FOR_FINISH_POLL_INTERVAL).await;
     }
 }
@@ -801,8 +778,7 @@ async fn poll<T: DeserializeOwned>(
     parse_data_envelope(&response.body)
 }
 
-/// Cooldown between retries of a run start the API rejected for lack of resources, matching the
-/// reference clients.
+/// Cooldown between retries of a run start the API rejected for lack of resources.
 const WAIT_FOR_RESOURCES_COOLDOWN: Duration = Duration::from_secs(10);
 /// `ApiError::error_type` values the API rejects a run start with while the account has no free
 /// memory or concurrent-run slot for it. Both clear as other runs/builds finish.
@@ -813,10 +789,9 @@ const RESOURCE_LIMIT_ERROR_TYPES: [&str; 2] = [
 
 /// Retries `attempt` while it fails with a resource-limit [`ApiError`](crate::ApiError), per
 /// `wait_for_resources` (see [`WaitForResources`](crate::clients::actor::WaitForResources)).
-/// `None` makes exactly one attempt. Any other error is returned immediately, unretried. Shared
-/// by [`ActorClient::start`](crate::clients::actor::ActorClient::start) and
-/// [`TaskClient::start`](crate::clients::task::TaskClient::start), whose run-start options and
-/// retry behavior are otherwise identical (the don't-repeat-yourself goal of this module).
+/// `None` makes exactly one attempt. Any other error is returned at once. Shared by
+/// [`ActorClient::start`](crate::clients::actor::ActorClient::start) and
+/// [`TaskClient::start`](crate::clients::task::TaskClient::start).
 pub(crate) async fn retry_while_resource_limited<F, Fut, T>(
     wait_for_resources: Option<crate::clients::actor::WaitForResources>,
     mut attempt: F,

@@ -1,6 +1,6 @@
 //! Log redirection: forwarding the live log of a run to a [`LogSink`].
 //!
-//! [`StreamedLog`] is the equivalent of the reference client's `StreamedLog`. It follows the log
+//! [`StreamedLog`] follows the log
 //! of a run in a background task, splits it into messages at the timestamps the Actor's log lines
 //! start with, and hands every message to a [`LogSink`]. [`ActorClient::call`] uses it to redirect
 //! the log of the run it waits for.
@@ -147,8 +147,7 @@ struct Running {
 /// [`start`](Self::start) spawns a task that follows the log, and [`stop`](Self::stop) ends it.
 /// Dropping a started `StreamedLog` cancels the task without reading the rest of the log.
 ///
-/// Compared with the reference client, a line that continues a message in a later chunk is
-/// emitted as a message of its own, instead of being dropped.
+/// A line that continues a message in a later chunk is emitted as a message of its own.
 pub struct StreamedLog {
     log: LogClient,
     sink: Arc<dyn LogSink>,

@@ -4,6 +4,22 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] - 2026-11-10
+
+### Added
+- `ZstdHttpCompressor` (quality 1 to 19, default 3) and `RequestCompression::Zstd`, which send
+  request bodies with `Content-Encoding: zstd`. They need the new `zstd` cargo feature, which is
+  on by default.
+- `ActorServerRequestOptions::parent_request_id`, sent as the `X-Actor-Request-ID` header so a
+  Server Actor that calls another one passes on the pricing tier of the request it handles.
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-11-09T143926Z` (`API_SPEC_VERSION`), which lists `zstd`
+  among the `Content-Encoding` values and describes `actorPath` on Actor versions.
+- **Breaking:** `ActorServerRequestOptions` has the new field `parent_request_id`, so a struct
+  literal without `..Default::default()` no longer compiles.
+- Shortened code comments and documentation, and removed the references to other clients.
+
 ## [0.16.0] - 2026-11-06
 
 Ports the `apify-client-js` Server Actor support and the `count` of dataset item pages.

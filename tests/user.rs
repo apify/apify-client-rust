@@ -30,12 +30,9 @@ async fn get_monthly_usage() {
 /// Simple GET: the current account's monthly usage for a specific month (the spec's optional
 /// `date` query parameter on `GET /v2/users/me/usage/monthly`).
 ///
-/// Asserts the returned billing cycle actually contains the requested date, which proves the
-/// `date` query parameter was honored (a dropped param would return the *current* cycle
-/// instead, which would not contain a fixed past date). The client unwraps the `{ data: ... }`
-/// envelope, so the response is `{ usageCycle: { startAt, endAt }, ... }`. Billing cycles are
-/// not calendar-month aligned, so we compare on day (`YYYY-MM-DD`) granularity rather than a
-/// month prefix or a full timestamp.
+/// Asserts that the returned billing cycle contains the requested date. A dropped `date` parameter
+/// would return the current cycle, which does not contain a fixed past date. Billing cycles are
+/// not aligned to calendar months, so the comparison is by day.
 #[tokio::test(flavor = "multi_thread")]
 async fn get_monthly_usage_for_date() {
     let client = require_client!();
@@ -60,13 +57,9 @@ async fn get_monthly_usage_for_date() {
         .and_then(|v| v.as_str())
         .expect("usageCycle.endAt should be a string");
 
-    // Compare on calendar-day granularity: the requested day must fall within the cycle's day
-    // span [startAt_day, endAt_day]. RFC3339 dates are zero-padded `YYYY-MM-DD`, so the first 10
-    // chars sort lexicographically as dates. Using day granularity (not the full timestamp)
-    // avoids false failures when a cycle boundary lands on the requested calendar day but at a
-    // non-midnight instant (billing cycles are not calendar-aligned and start at the signup
-    // time of day). If the `date` param were dropped, the API would return the *current* cycle,
-    // which cannot span a fixed 2026-03 day.
+    // The requested day must fall within [startAt_day, endAt_day]. The first 10 characters of an
+    // RFC 3339 timestamp, `YYYY-MM-DD`, sort as dates. A cycle can start or end during the
+    // requested day, so comparing full timestamps could fail.
     let start_day = start
         .get(..10)
         .expect("usageCycle.startAt should be an RFC3339 date at least 10 chars long");

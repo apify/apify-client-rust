@@ -80,13 +80,9 @@ async fn iterate_key_value_stores() {
 
 /// Iteration: `iterate_keys` yields every key in the store.
 ///
-/// Creates a store, writes several records, then drives the `KeyValueStoreKeysIterator` to
-/// completion and asserts every written key is yielded exactly once. With only a handful of keys
-/// this fits in the endpoint's single default page, so it validates the helper end to end but
-/// does not cross a page boundary — `iterate_keys` has no per-page-size knob (its `limit` is a
-/// total cap, matching the JS reference), so forcing >1 page would need >1000 keys. The
-/// multi-page cursor-threading path (`exclusiveStartKey`/`nextExclusiveStartKey`) is covered
-/// hermetically by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
+/// Writes several records and asserts that the iterator yields every key exactly once. The keys fit
+/// in one page, since `iterate_keys` has no page size option, so the paging across several pages
+/// is covered by `iterate_keys_walks_cursor_pages` in `tests/unit_http.rs`.
 #[tokio::test(flavor = "multi_thread")]
 async fn iterate_keys_yields_all_keys() {
     let client = require_client!();
@@ -142,9 +138,8 @@ async fn iterate_keys_yields_all_keys() {
 /// reserved in a URL path must round-trip correctly, proving the path segment is
 /// percent-encoded rather than interpolated raw.
 ///
-/// The Apify API restricts record keys to `a-zA-Z0-9!-_.'()`; several of those (`!`, `'`,
-/// `(`, `)`) are not RFC 3986 unreserved characters, so they must be percent-encoded in the
-/// URL path. A raw `format!(".../{key}")` would send them unescaped.
+/// The API allows `!`, `'`, `(` and `)` in record keys. They are not RFC 3986 unreserved
+/// characters, so the client must percent-encode them.
 #[tokio::test(flavor = "multi_thread")]
 async fn record_key_with_special_chars_round_trips() {
     let client = require_client!();
@@ -278,18 +273,10 @@ async fn key_value_store_crud_flow() {
         .is_none());
 }
 
-/// `set_record_raw_with_content_encoding` uploads an already-compressed value without the
-/// client compressing it a second time, and the value round-trips without corruption.
-///
-/// The payload is well above the client's own auto-compression size threshold, so this also
-/// exercises that the `Content-Encoding` header (not just the small-body skip) is what the
-/// client relies on to avoid double-compression; `set_record_with_content_encoding_is_not_compressed_again`
-/// in `tests/unit_http.rs` pins that exact wire behaviour hermetically. What the API does with
-/// the encoded upload server-side (store the compressed bytes as-is per
-/// `KeyValueStoreClient::set_record_raw_with_content_encoding`'s docs, or transparently decode
-/// it before storing) is outside the client's control, so this only asserts the value it reads
-/// back decodes to the original payload either way, never that the bytes are corrupted or
-/// double-compressed.
+/// A value uploaded with `set_record_raw_with_content_encoding` reads back as the original payload.
+/// The payload is above the compression threshold. The API may store the bytes as they are or
+/// decode them, so the test accepts either. The wire behavior is covered by
+/// `set_record_with_content_encoding_is_not_compressed_again` in `tests/unit_http.rs`.
 #[tokio::test(flavor = "multi_thread")]
 async fn set_record_with_content_encoding_round_trips_without_corruption() {
     use flate2::{write::GzEncoder, Compression};
@@ -346,6 +333,50 @@ async fn set_record_with_content_encoding_round_trips_without_corruption() {
         decoded, payload,
         "the record must round-trip to the original payload without corruption"
     );
+}
+
+/// A large record uploaded by a client that compresses with zstd reads back unchanged.
+#[cfg(feature = "zstd")]
+#[tokio::test(flavor = "multi_thread")]
+async fn set_record_compressed_with_zstd() {
+    use apify_client::RequestCompression;
+
+    let client = common::make_client_builder().map(|builder| {
+        builder
+            .request_compression(RequestCompression::Zstd)
+            .build()
+    });
+    let Some(client) = client else {
+        eprintln!("Skipping: APIFY_TOKEN is not set");
+        return;
+    };
+    let name = common::unique_name("kvs-zstd");
+    let store = client
+        .key_value_stores()
+        .get_or_create(Some(&name))
+        .await
+        .expect("create store");
+
+    let cleanup_client = client.clone();
+    let id = store.id.clone();
+    let _guard = common::Cleanup::new(move || async move {
+        let _ = cleanup_client.key_value_store(&id).delete().await;
+    });
+
+    let store_client = client.key_value_store(&store.id);
+    let payload = json!({ "data": "x".repeat(4096) });
+    store_client
+        .set_record_json("zstd-record", &payload)
+        .await
+        .expect("set zstd-compressed record");
+
+    let record = store_client
+        .get_record("zstd-record")
+        .await
+        .expect("get record")
+        .expect("record should exist");
+    let stored: serde_json::Value = serde_json::from_slice(&record.value).expect("JSON record");
+    assert_eq!(stored, payload);
 }
 
 /// Builds a record public URL and confirms it is well-formed and fetchable without auth.

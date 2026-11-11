@@ -49,7 +49,7 @@ pub struct ListKeysOptions {
 #[derive(Debug, Default, Clone)]
 pub struct GetRecordOptions {
     /// Request the record with a `Content-Disposition: attachment` response header. When unset,
-    /// the client sends `attachment=true`, matching the reference client's unconditional default.
+    /// the client sends `attachment=true`.
     pub attachment: Option<bool>,
     /// URL-signing signature granting access to a record in a private store.
     pub signature: Option<String>,
@@ -59,8 +59,8 @@ pub struct GetRecordOptions {
 /// [`KeyValueStoreClient::set_record_json_with_options`].
 #[derive(Debug, Default, Clone)]
 pub struct SetRecordOptions {
-    /// `Content-Encoding` of a value that is already compressed (`gzip`, `br`, `deflate` or
-    /// `identity`). The client then sends the bytes as they are, instead of compressing them
+    /// `Content-Encoding` of a value that is already compressed (`gzip`, `br`, `zstd`, `deflate`
+    /// or `identity`). The client then sends the bytes as they are, instead of compressing them
     /// again.
     pub content_encoding: Option<String>,
     /// Give up on the first transport timeout instead of retrying it. A retry of an upload that
@@ -135,22 +135,14 @@ impl KeyValueStoreClient {
 
     /// Lazily iterates over every key in the store, fetching pages on demand.
     ///
-    /// Returns a [`KeyValueStoreKeysIterator`]; call its `next()` to get one key at a time,
-    /// transparently fetching the following page once the local buffer drains, until the store
-    /// is exhausted. This is the auto-paginating counterpart to the single-page
-    /// [`list_keys`](Self::list_keys), matching the reference client's `listKeys()`
-    /// `AsyncIterable`.
+    /// Returns a [`KeyValueStoreKeysIterator`]; call its `next()` to get one key at a time. It
+    /// fetches the next page when the buffer is empty, until the store is exhausted. It is the
+    /// auto-paginating counterpart of [`list_keys`](Self::list_keys).
     ///
-    /// Key-value stores use cursor-based (not offset) pagination: each page is anchored by the
-    /// previous page's `nextExclusiveStartKey`, so the iterator threads that cursor through
-    /// automatically. The `prefix`, `collection` and `signature` filters from `options` are
-    /// carried into every page.
-    ///
-    /// `options.limit` caps the *total* number of keys yielded across all pages; leaving it unset
-    /// (or `0`) iterates the entire store, matching the reference client. It is honoured across as
-    /// many pages as needed — each individual request is bounded to the endpoint's maximum page
-    /// size ([`KEY_LIST_MAX_LIMIT`]), so a cap larger than one page still works.
-    /// `options.exclusive_start_key`, when set, resumes iteration after that key.
+    /// The `prefix`, `collection` and `signature` filters of `options` apply to every page.
+    /// `options.limit` caps the total number of keys yielded across all pages, and leaving it unset
+    /// (or `0`) iterates the whole store. Each request is limited to the endpoint's maximum page
+    /// size ([`KEY_LIST_MAX_LIMIT`]). `options.exclusive_start_key` resumes after that key.
     pub fn iterate_keys(&self, options: ListKeysOptions) -> KeyValueStoreKeysIterator {
         let remaining = options.limit.filter(|&l| l > 0);
         KeyValueStoreKeysIterator {
@@ -177,13 +169,11 @@ impl KeyValueStoreClient {
 
     /// Gets a record's raw value (and content type), or `None` if it does not exist.
     ///
-    /// The value is returned as the bytes the API sent: unlike the reference client's
-    /// `getRecord`, it is never parsed according to its content type, so a malformed JSON body
-    /// is not an error here. Use [`KeyValueStoreRecord::as_text`] or `serde_json` to decode it.
+    /// The value is returned as the bytes the API sent, never parsed according to its content
+    /// type. Use [`KeyValueStoreRecord::as_text`] or `serde_json` to decode it.
     ///
-    /// Like the reference client's `getRecord`, this sends `attachment=true`. Use
-    /// [`get_record_with_options`](Self::get_record_with_options) to override the attachment
-    /// behaviour or to pass a URL-signing `signature` for a private store.
+    /// This sends `attachment=true`. Use [`get_record_with_options`](Self::get_record_with_options)
+    /// to override it or to pass a URL-signing `signature` for a private store.
     pub async fn get_record(&self, key: &str) -> ApifyClientResult<Option<KeyValueStoreRecord>> {
         self.get_record_with_options(key, GetRecordOptions::default())
             .await
@@ -192,7 +182,7 @@ impl KeyValueStoreClient {
     /// Gets a record with explicit options.
     ///
     /// The `attachment` option controls the `Content-Disposition: attachment` response header;
-    /// when unset it defaults to `true`, matching the reference client's unconditional behaviour.
+    /// when unset it defaults to `true`.
     /// `signature` supplies a URL-signing signature for accessing a record in a private store.
     pub async fn get_record_with_options(
         &self,
@@ -200,7 +190,6 @@ impl KeyValueStoreClient {
         options: GetRecordOptions,
     ) -> ApifyClientResult<Option<KeyValueStoreRecord>> {
         let mut params = QueryParams::new();
-        // Default to `attachment=true` (reference parity); honour an explicit override.
         params
             .add_bool("attachment", Some(options.attachment.unwrap_or(true)))
             .add_str("signature", options.signature);
@@ -230,17 +219,12 @@ impl KeyValueStoreClient {
             .await
     }
 
-    /// Stores a record with raw, already-compressed bytes, sending `content_encoding` as the
-    /// `Content-Encoding` header so it is uploaded (and later served) exactly as given, without
-    /// the client compressing it again.
+    /// Stores a record with already-compressed bytes. `content_encoding` is sent as the
+    /// `Content-Encoding` header, and the record is stored and served as given, without the client
+    /// compressing it again.
     ///
-    /// The API accepts `gzip`, `br`, `deflate`, and `identity`. Unlike the reference client's
-    /// `setRecord({ contentEncoding })`, there is no separate runtime check rejecting a
-    /// non-identity encoding on a string or JSON value: this method, like
-    /// [`set_record_raw`](Self::set_record_raw), only ever accepts bytes that are already the
-    /// wire payload, so that case cannot arise here — pass pre-serialized/pre-compressed bytes,
-    /// not a value for the client to serialize. For plain (uncompressed) raw bytes, use
-    /// [`set_record_raw`](Self::set_record_raw); for a JSON value, use
+    /// The API accepts `gzip`, `br`, `zstd`, `deflate`, and `identity`. For uncompressed bytes use
+    /// [`set_record_raw`](Self::set_record_raw), and for a JSON value
     /// [`set_record_json`](Self::set_record_json).
     pub async fn set_record_raw_with_content_encoding(
         &self,
@@ -328,9 +312,8 @@ impl KeyValueStoreClient {
 
     /// Builds a public URL for reading the record with the given key.
     ///
-    /// Mirrors the reference client's `getRecordPublicUrl`: it fetches the store, and if the
-    /// store exposes a URL-signing secret key (private store), appends an HMAC-SHA256
-    /// `signature` over the record key so the URL works without an API token. The URL is
+    /// It fetches the store and, for a private store with a URL-signing secret key, appends an
+    /// HMAC-SHA256 `signature` over the record key so the URL works without a token. The URL is
     /// built from the configured public base URL.
     pub async fn get_record_public_url(&self, key: &str) -> ApifyClientResult<String> {
         let path = record_path(key)?;
@@ -400,16 +383,11 @@ pub const KEY_LIST_MAX_LIMIT: i64 = 1000;
 /// A lazy, page-fetching async iterator over the keys in a key-value store.
 ///
 /// Created by [`KeyValueStoreClient::iterate_keys`]. Each call to [`next`](Self::next) returns
-/// the next key, fetching another page from the API when the local buffer is exhausted, until
-/// every key has been yielded (or the caller's total-key cap is reached).
+/// the next key and fetches another page when the buffer is empty.
 ///
-/// Unlike the offset/limit-paginated [`ListIterator`](crate::ListIterator), key-value stores use
-/// cursor-based pagination: each page is anchored by the previous page's
-/// `nextExclusiveStartKey`. The walk stops once the page reports `isTruncated == false` (the
-/// authoritative end-of-data signal), a page comes back empty, the API stops returning a next
-/// cursor, or the caller's `limit` is exhausted. This yields the same result as the reference
-/// client's `listKeys()` async-iterable (which loops on the cursor); leading with `isTruncated`
-/// additionally avoids a wasted empty fetch when a final page still carries a cursor.
+/// Key-value stores use cursor pagination: each page starts at the `nextExclusiveStartKey` of the
+/// previous one. The walk stops when a page reports `isTruncated == false`, a page is empty, the
+/// API returns no next cursor, or the caller's `limit` is reached.
 pub struct KeyValueStoreKeysIterator {
     client: KeyValueStoreClient,
     /// Base listing options. The `prefix`/`collection`/`signature` filters are carried into every
@@ -471,12 +449,9 @@ impl KeyValueStoreKeysIterator {
         }
         self.next_exclusive_start_key = page.next_exclusive_start_key;
 
-        // Stop when the page is empty; the model reports no more keys (`is_truncated == false`,
-        // the authoritative "more data?" signal); the API returns no next cursor to advance on
-        // (a robustness fallback in case the flag and cursor disagree — e.g. `isTruncated:true`
-        // with a null cursor — which also prevents re-fetching the same first page); or the
-        // caller's cap is reached. Leading with `is_truncated` avoids one wasted empty fetch when
-        // a final page still carries a cursor, matching the model semantics.
+        // Stop on an empty page, on `is_truncated == false`, without a next cursor (the flag and
+        // the cursor can disagree, and without a cursor the first page would be fetched again),
+        // or at the caller's cap.
         if received == 0
             || !is_truncated
             || self.next_exclusive_start_key.is_none()

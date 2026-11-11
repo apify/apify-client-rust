@@ -1,15 +1,12 @@
 //! The HTTP layer of the client.
 //!
-//! The [`HttpBackend`] trait defines the minimal contract for sending a single HTTP
-//! request and receiving a response. It is the *replaceable component* of the client:
-//! the default implementation [`ReqwestBackend`] uses [`reqwest`], but a custom
-//! backend (e.g. for testing or for a different runtime) can be plugged in via
+//! The [`HttpBackend`] trait sends a single HTTP request and returns its response. The default
+//! implementation, [`ReqwestBackend`], uses [`reqwest`]. Plug in another one with
 //! [`ApifyClientBuilder::http_backend`](crate::ApifyClientBuilder::http_backend).
 //!
-//! The client wraps a backend in an internal `HttpClient` that adds the cross-cutting concerns shared by every
-//! endpoint: authentication, the `User-Agent` header, query-parameter serialization,
-//! timeouts and retries with exponential backoff (mirroring the JavaScript and Python
-//! reference clients).
+//! The client wraps a backend in an internal `HttpClient` that adds what every endpoint shares:
+//! authentication, the `User-Agent` header, query parameters, timeouts, and retries with
+//! exponential backoff.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,8 +29,7 @@ const AUTHORIZATION_HEADER: &str = "Authorization";
 /// The header that carries the API token to an Actor's server. The platform removes it before the
 /// request reaches the Actor, which keeps `Authorization` free for the Actor's own authentication.
 const X_APIFY_AUTHORIZATION_HEADER: &str = "X-Apify-Authorization";
-/// Multiplier applied to the inter-retry delay after each attempt (exponential backoff).
-/// Matches the reference client's `async-retry` default factor of 2.
+/// Multiplier applied to the delay between retries after each attempt.
 const BACKOFF_FACTOR: u32 = 2;
 
 /// HTTP method of a request.
@@ -73,10 +69,8 @@ impl HttpMethod {
     }
 }
 
-/// A fully-resolved HTTP request, ready to be sent by an [`HttpBackend`].
-///
-/// All cross-cutting concerns (auth header, user agent, retry policy) are applied by
-/// the client before the request reaches the backend.
+/// An HTTP request ready to be sent by an [`HttpBackend`]. The client has already applied the auth
+/// header, the user agent, and the compression.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     /// The HTTP method.
@@ -146,11 +140,8 @@ pub struct StreamingHttpResponse {
         std::pin::Pin<Box<dyn futures_util::Stream<Item = ApifyClientResult<Vec<u8>>> + Send>>,
 }
 
-/// The replaceable transport contract.
-///
-/// Implementors are responsible only for sending a single request and returning the
-/// raw response. Retries, authentication and serialization are handled by
-/// the client, so a backend only needs to perform one network round-trip.
+/// The transport that sends requests. An implementation performs one network round-trip per
+/// request: the client handles retries, authentication, and serialization.
 #[async_trait]
 pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// Sends a single HTTP request and returns the response.
@@ -163,11 +154,8 @@ pub trait HttpBackend: Send + Sync + std::fmt::Debug {
     /// Like [`send`](Self::send), but for a request whose body the caller wants to process
     /// incrementally (a live log or a large export) instead of fully buffered.
     ///
-    /// The default implementation just buffers the whole response via [`send`](Self::send) and
-    /// yields it as a single chunk: correct for a custom backend that does not override this
-    /// (streaming still works end-to-end, just without a memory-usage benefit), while the
-    /// default [`ReqwestBackend`] overrides it for real constant-memory streaming through
-    /// `reqwest`'s own chunked body reader.
+    /// The default implementation buffers the whole response with [`send`](Self::send) and yields
+    /// it as one chunk. [`ReqwestBackend`] overrides it to stream the body in constant memory.
     async fn send_streaming(
         &self,
         request: HttpRequest,
@@ -301,11 +289,9 @@ impl HttpBackend for ReqwestBackend {
     ) -> ApifyClientResult<StreamingHttpResponse> {
         let method = to_reqwest_method(request.method);
 
-        // Deliberately no `.timeout(request.timeout)` here: reqwest's per-request timeout bounds
-        // the *entire* request including reading the whole body (it wraps the body stream in a
-        // `TotalTimeoutBody`), which would cut off a long-but-active stream (e.g. live log
-        // redirection). `HttpClient` applies its own response-start bound and, unless the call
-        // opts out, a per-chunk-inactivity bound instead, uniformly across backends.
+        // No `.timeout(request.timeout)`: reqwest's timeout covers reading the whole body, which
+        // would cut off a long but active stream such as a live log. `HttpClient` bounds the wait
+        // for the response and, unless the call opts out, the silence between chunks instead.
         let mut builder = self.client_for(&request).request(method, &request.url);
         for (key, value) in &request.headers {
             builder = builder.header(key, value);
@@ -546,10 +532,9 @@ impl HttpClient {
     /// Opens a streaming connection through the configured [`HttpBackend`]'s
     /// [`HttpBackend::send_streaming`], with authentication, the user-agent header and the retry
     /// policy applied like [`call_with_options`](Self::call_with_options), but with no request
-    /// compression. Like the reference clients, it retries until the response starts (an error
-    /// status or a transport error before it opens), and never once the body is being read: an
-    /// open stream, such as a log redirection or a large export already in flight, can't be
-    /// safely replayed from the start.
+    /// compression. It retries until the response starts (an error status or a transport error
+    /// before it opens), and never once the body is being read, since an open stream can't be
+    /// replayed from the start.
     ///
     /// On a non-success status, reads the body (bounded by the same inactivity timeout as a
     /// successful body below) and returns the same structured [`ApiError`] [`call_with_options`](Self::call_with_options)
@@ -594,8 +579,7 @@ impl HttpClient {
         self.stats.add_call();
         self.apply_headers(&mut request, options.authorization_header);
 
-        // Compress the request body once (not per attempt) when it is large enough, mirroring the
-        // reference client. The API accepts both brotli- and gzip-encoded request bodies.
+        // Compress the request body once, not per attempt, when it is large enough.
         self.compress_body(&mut request, &options.compression)?;
 
         let method_str = request.method.as_str().to_string();
@@ -655,11 +639,8 @@ impl HttpClient {
                 return Err(error);
             }
 
-            // Sleep with randomized exponential backoff before the next attempt. The backoff
-            // doubles each retry (matching the reference client, which uses `async-retry` with
-            // a factor of 2) and is capped at `timeout_max`.
+            // The backoff doubles each retry and is capped at `timeout_max`.
             sleep(randomized_delay(delay)).await;
-            // `saturating_mul` mirrors the saturating arithmetic in `attempt_timeout`.
             delay = delay.saturating_mul(BACKOFF_FACTOR).min(self.tiers.max);
             attempt += 1;
         }
@@ -669,8 +650,7 @@ impl HttpClient {
     ///
     /// The first attempt uses the `base` timeout of the request; each retry doubles it so a
     /// slow-but-progressing connection gets more time, while never exceeding the client's
-    /// `timeout_max`. A request without a timeout ([`NO_TIMEOUT`]) stays without one. Mirrors the
-    /// reference clients.
+    /// `timeout_max`. A request without a timeout ([`NO_TIMEOUT`]) stays without one.
     fn attempt_timeout(&self, base: Duration, attempt: u32) -> Duration {
         if base == NO_TIMEOUT {
             return NO_TIMEOUT;
@@ -849,9 +829,8 @@ fn extract_path(url: &str) -> Option<String> {
         .map(|idx| after_scheme[idx..].to_string())
 }
 
-/// We retry `429` (rate limit) and `5xx` (internal server errors), matching the
-/// reference client policy, unless the request lists its own `retry_status_codes`. Other `4xx`
-/// statuses are caller errors and are not retried.
+/// Retries `429` (rate limit) and `5xx`, unless the request lists its own `retry_status_codes`.
+/// Other `4xx` statuses are caller errors and are not retried.
 fn is_status_retryable(status: u16, retry_status_codes: Option<&[u16]>) -> bool {
     match retry_status_codes {
         Some(codes) => codes.contains(&status),
@@ -859,9 +838,8 @@ fn is_status_retryable(status: u16, retry_status_codes: Option<&[u16]>) -> bool 
     }
 }
 
-/// Only transport-level failures are retryable. Programming errors (serde, invalid
-/// argument) and already-classified API errors are handled elsewhere, so they are not
-/// retried here — matching the reference clients, which retry only network/timeout errors.
+/// Only transport failures (network errors and timeouts) are retried. Serialization errors,
+/// invalid arguments and API errors are not.
 fn is_error_retryable(err: &ApifyClientError) -> bool {
     matches!(err, ApifyClientError::Http(_) | ApifyClientError::Timeout)
 }
@@ -904,11 +882,8 @@ fn build_api_error(
     }
 }
 
-/// Returns a delay chosen randomly from the interval `[delay, 2*delay)`, matching the
-/// exponential-backoff-with-jitter algorithm described in the API docs.
-///
-/// `pub(crate)` so other retrying call sites (e.g. `RequestQueueClient::batch_add_requests`'s
-/// unprocessed-request retries) can reuse the same jitter source instead of duplicating it.
+/// Returns a delay chosen randomly from the interval `[delay, 2*delay)`, the jitter of the API's
+/// recommended exponential backoff. Shared with the retries of `batch_add_requests`.
 pub(crate) fn randomized_delay(delay: Duration) -> Duration {
     let base = delay.as_millis() as u64;
     if base == 0 {
@@ -918,20 +893,15 @@ pub(crate) fn randomized_delay(delay: Duration) -> Duration {
     Duration::from_millis(base + extra)
 }
 
-/// A process-wide pseudo-random source for backoff jitter.
-///
-/// Backoff jitter does not need cryptographic quality, but it must be well-distributed and
-/// uncorrelated across concurrent retries (otherwise many clients retry in lockstep). A
-/// shared atomically-advanced SplitMix64 generator, seeded once from the clock, gives each
-/// caller a distinct value without pulling in a heavyweight RNG dependency.
+/// A process-wide SplitMix64 source for backoff jitter. It is not cryptographic, but it gives
+/// concurrent retries distinct values so they don't run in lockstep, without an RNG dependency.
 fn next_jitter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static STATE: AtomicU64 = AtomicU64::new(0);
 
     const GOLDEN_GAMMA: u64 = 0x9E3779B97F4A7C15;
 
-    // Lazily seed from the clock on first use. A racing double-seed is harmless: both
-    // candidate seeds are valid SplitMix64 stream starting points.
+    // Seed from the clock on first use. Two racing seeds are both valid starting points.
     if STATE.load(Ordering::Relaxed) == 0 {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -941,9 +911,7 @@ fn next_jitter() -> u64 {
         let _ = STATE.compare_exchange(0, seed, Ordering::Relaxed, Ordering::Relaxed);
     }
 
-    // SplitMix64: advance the shared state by the golden-ratio increment in a single atomic
-    // read-modify-write (`fetch_add`) so concurrent callers each observe a distinct value —
-    // a plain load-then-store could hand two racing retries the same number. Then scramble.
+    // A single atomic `fetch_add` gives each concurrent caller a distinct value.
     let mut z = STATE
         .fetch_add(GOLDEN_GAMMA, Ordering::Relaxed)
         .wrapping_add(GOLDEN_GAMMA);
@@ -952,7 +920,7 @@ fn next_jitter() -> u64 {
     z ^ (z >> 31)
 }
 
-/// Sleeps for the given duration (public crate-internal helper for poll loops).
+/// Sleeps for the given duration.
 pub(crate) async fn sleep_public(duration: Duration) {
     sleep(duration).await;
 }

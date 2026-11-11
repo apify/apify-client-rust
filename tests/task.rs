@@ -87,13 +87,10 @@ async fn iterate_tasks() {
     );
 }
 
-/// `publish`/`unpublish` are thin wrappers around `update` that flip `isPublic`. Unpublishing an
-/// already-unpublished task is a documented no-op, so it round-trips cleanly; publishing a task
-/// (and, per the spec, editing `publicConfig` at all) requires write permission over its Actor.
-/// Here that's the shared, Apify-owned `apify/hello-world` (per [`task_definition`]), so both are
-/// expected to be rejected with `insufficient-permissions` - this exercises the same request path
-/// without needing a private Actor the test account can actually publish. See
-/// [`task_public_config_update`] for the `publicConfig`-editing path against an owned Actor.
+/// `publish` and `unpublish` flip `isPublic` through `update`. Unpublishing an unpublished task is
+/// a no-op. Publishing needs write permission to the task's Actor, which `apify/hello-world` (see
+/// [`task_definition`]) does not give, so the API is expected to reject it with
+/// `insufficient-permissions`. [`task_public_config_update`] covers an Actor the account owns.
 #[tokio::test(flavor = "multi_thread")]
 async fn task_publish_unpublish() {
     let client = require_client!();
@@ -157,17 +154,13 @@ fn owned_actor_definition(name: &str) -> serde_json::Value {
     })
 }
 
-/// Exercises `Task::public_config` (`TaskPublicConfig`): editing it via `update` requires write
-/// permission to the task's Actor, so this uses a private Actor owned by the test account. Sets
-/// the `seoTitle`/`seoDescription` metadata fields and reads them back typed - `inputSchemaFields`/
-/// `datasetView` are omitted since the API validates them against the Actor's input/dataset
-/// schema (which this minimal Actor doesn't declare) even on a plain `publicConfig` edit, not
-/// only on publish. Also checks that `unpublish` (a no-op here, since the task was never
-/// published) leaves `publicConfig` untouched.
+/// Edits `Task::public_config` of a task of a private Actor the account owns, which `update`
+/// requires. It sets `seoTitle` and `seoDescription` and reads them back. `inputSchemaFields` and
+/// `datasetView` are left out, since the API validates them against schemas this Actor lacks.
+/// `unpublish` of the unpublished task must leave `publicConfig` untouched.
 ///
-/// Task creation resolves the Actor's default (`latest`) build tag up front, so - unlike the
-/// other Actor-owning tests in this suite, which only need the Actor to exist - the Actor must
-/// actually be built first (mirrors `tests/build.rs::build_actor_flow`'s build-and-wait).
+/// Creating a task resolves the `latest` build, so the Actor is built first, as in
+/// `tests/build.rs::build_actor_flow`.
 #[tokio::test(flavor = "multi_thread")]
 async fn task_public_config_update() {
     let client = require_client!();

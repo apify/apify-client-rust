@@ -1,12 +1,10 @@
 //! Shared helpers for the integration test suite.
 //!
-//! All integration tests require a valid `APIFY_TOKEN` for the test account. The API
-//! base URL is taken from `APIFY_API_URL` (which includes the `/v2` suffix) and falls
-//! back to `https://api.apify.com/v2`.
+//! The integration tests need an `APIFY_TOKEN`. The API URL is `APIFY_API_URL`, including the `/v2`
+//! suffix, and defaults to `https://api.apify.com/v2`.
 //!
-//! Tests are designed to run concurrently — including against the same test account from
-//! several language clients at once — so every test creates uniquely-named resources and
-//! cleans them up afterwards.
+//! The tests can run concurrently with each other and with other clients' tests on the same
+//! account, so each one creates uniquely named resources and cleans them up.
 
 #![allow(dead_code)]
 
@@ -67,12 +65,8 @@ macro_rules! require_client {
     }};
 }
 
-/// A panic-safe cleanup guard.
-///
-/// Holds a deferred cleanup action that runs when the guard is dropped — including when a
-/// test panics partway through (a failed `assert!`/`expect`), which would otherwise leak the
-/// created resource on the shared test account. The action is run to completion on the test's
-/// own (multi-thread) Tokio runtime, so it works inside `#[tokio::test]` bodies.
+/// Runs a cleanup action when dropped, also when the test panics, so a failed test doesn't leak
+/// its resources. It runs to completion on the test's multi-thread Tokio runtime.
 ///
 /// Usage:
 /// ```ignore
@@ -154,22 +148,13 @@ pub const ITER_RETRY_ATTEMPTS: usize = 32;
 /// Delay between the attempts made by [`iter_contains_eventually`].
 pub const ITER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// Like [`iter_contains`], but tolerant of replica lag in collection LIST endpoints.
+/// Like [`iter_contains`], but tolerates replica lag. The list endpoints read from secondaries that
+/// can trail the primary by up to 90 seconds, so a just-created resource may be missing from the
+/// first scan.
 ///
-/// The list endpoints read from database secondaries that may trail the primary by up to 90
-/// seconds, so a resource created through a write endpoint is not always immediately reflected in
-/// its collection's LIST response. A create-then-iterate test that scans the collection exactly
-/// once therefore races that lag and flakes when the just-created entity has not yet propagated.
-///
-/// This helper rebuilds a fresh iterator via `make_iter` and re-scans it with [`iter_contains`] up
-/// to [`ITER_RETRY_ATTEMPTS`] times, sleeping [`ITER_RETRY_BACKOFF`] between attempts, returning
-/// `true` as soon as `pred` matches. When the entity is already visible it matches on the first
-/// attempt and returns immediately with no sleeping — so it is a no-op in the common
-/// already-consistent case and only pays the backoff on the rare lagging run.
-///
-/// Budget: `(ITER_RETRY_ATTEMPTS - 1) * ITER_RETRY_BACKOFF` = 93s of retrying before giving up,
-/// which covers the 90-second staleness window. The cost lands only on lagging or
-/// genuinely-failing runs; a consistent account never sleeps.
+/// It scans a fresh iterator from `make_iter` up to [`ITER_RETRY_ATTEMPTS`] times, sleeping
+/// [`ITER_RETRY_BACKOFF`] between attempts, and returns `true` as soon as `pred` matches. The
+/// retries add up to 93 seconds, which covers the staleness window.
 pub async fn iter_contains_eventually<T, F, Mk>(mut make_iter: Mk, mut pred: F) -> bool
 where
     Mk: FnMut() -> apify_client::ListIterator<T>,
@@ -205,14 +190,9 @@ const ACTOR_NAME_HEAD_CAP: usize = 8;
 /// Generates a unique name that satisfies Apify's (stricter) Actor naming rules: starts with a
 /// letter and contains no hyphens, unlike the names [`unique_name`] produces for other resources.
 ///
-/// Built directly from `prefix` (filtered to alphanumerics) plus a full
-/// [`ACTOR_NAME_SUFFIX_LEN`]-hex-char random suffix, rather than truncating an already-formatted
-/// `unique_name(prefix)` string: that would fix the random suffix's *position* but not its
-/// *presence* - a short length cap could still truncate into the fixed `rust-test-` boilerplate
-/// `unique_name` prepends, silently keeping the same literal head (and thus the same account-wide
-/// collision domain, dropping the caller's `prefix` entirely) for every call regardless of
-/// `prefix`. Building the name from `prefix` directly keeps collision resistance and
-/// traceability-to-caller both guaranteed by construction.
+/// It is the alphanumeric part of `prefix`, capped at [`ACTOR_NAME_HEAD_CAP`] characters, plus a
+/// random suffix of [`ACTOR_NAME_SUFFIX_LEN`] hex characters. Truncating a `unique_name` instead
+/// could cut into its fixed `rust-test-` head and drop the `prefix`.
 pub fn unique_actor_name(prefix: &str) -> String {
     let sanitized: String = prefix.chars().filter(char::is_ascii_alphanumeric).collect();
     let head = &sanitized[..sanitized.len().min(ACTOR_NAME_HEAD_CAP)];

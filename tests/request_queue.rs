@@ -285,8 +285,8 @@ async fn request_queue_batch_add_and_delete() {
         .expect("batch delete requests");
     assert_eq!(delete_result.processed_requests.len(), TOTAL);
 
-    // `batch_delete_requests` rejects more than 25 requests per call client-side, matching the
-    // reference client's validation (it does not auto-chunk deletes).
+    // `batch_delete_requests` rejects more than 25 requests per call client-side. It does not
+    // auto-chunk.
     let too_many: Vec<serde_json::Value> = (0..26)
         .map(|i| json!({ "uniqueKey": format!("toomany-{i}") }))
         .collect();

@@ -54,7 +54,7 @@ documents neither.
 | `content_type` | `Option<String>` | Content type of the input body. Defaults to `application/json` for `start`/`call`, or `application/octet-stream` for `start_raw`/`call_raw`, when unset. |
 | `restart_on_error` | `Option<bool>` | Whether to restart the run if it fails. |
 | `force_permission_level` | `Option<String>` | Override the Actor's permission level for this run. |
-| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter, matching the reference clients. |
+| `webhooks` | `Option<Vec<serde_json::Value>>` | Ad-hoc webhooks to attach to this run. Encoded as base64 JSON in the `webhooks` query parameter. |
 | `wait_for_resources` | `Option<WaitForResources>` | Retry the start while the account lacks the memory or a concurrent-run slot for it (`ApiError::error_type` of `actor-memory-limit-exceeded` or `concurrent-runs-limit-exceeded`). See below. |
 
 ### `ActorCallOptions`
@@ -224,7 +224,7 @@ if let Some(actor) = client.actor("apify~hello-world").get().await? {
 | `image_digest` | `Option<String>` | Digest of the built Docker image manifest (without the `sha256:` prefix); compare two builds' digests to see if their image contents differ. `None` if not yet available. |
 | `extra` | `Extra` | Any other fields returned by the API. |
 
-`Build::is_terminal()` reports whether `status` is a terminal value, mirroring `ActorRun`.
+`Build::is_terminal()` reports whether `status` is a terminal value.
 
 ```rust,no_run
 # use apify_client::ApifyClient;
@@ -257,6 +257,7 @@ the old name.
 | `params` | `Vec<(String, String)>` | Query parameters of the request, in order. A key can repeat. |
 | `headers` | `HashMap<String, String>` | Additional headers of the request. They reach the Actor's server as they are, `Authorization` included. |
 | `body` | `Option<ActorServerBody>` | `Json(Value)` (sent with `Content-Type: application/json` unless you set a content type), `Text(String)` or `Bytes(Vec<u8>)` (both sent as they are). `ActorServerBody::json(&value)` serializes a value. |
+| `parent_request_id` | `Option<String>` | The `X-Actor-Request-ID` header of the request your Server Actor is handling, sent on as the same header (replacing one in `headers`) so the called Actor charges at that request's pricing tier. Use a client created with the run's `APIFY_TOKEN`. |
 | `compression` | `Option<ActorServerCompression>` | `Algorithm(RequestCompression)` or `Custom(Arc<dyn HttpCompressor>)`. The body is sent uncompressed when it's `None`, since the Actor's server may not decode a compressed body. Set it only if the server decodes the resulting `Content-Encoding`. |
 
 ```rust,no_run
@@ -326,6 +327,41 @@ How the request is sent:
   return them too, and then a retry sends the request to the Actor again. Network errors and
   timeouts are not retried, since the Actor may have already handled the request, and they fail
   the call.
+
+#### Calling a Server Actor from a Server Actor
+
+A multi-tenant Server Actor shares the developer's runs among its users, so the platform tells
+requests apart by an ID it sends in the `X-Actor-Request-ID` header of each request it forwards to
+the Actor. The Actor uses that ID to charge the caller of the request, and to pass the caller's
+pricing tier on to the Actors it calls.
+
+When your multi-tenant Server Actor calls another one while it handles a request, pass the incoming
+`X-Actor-Request-ID` header in `parent_request_id`. The client sends it as the same header, so the
+called Actor charges at the pricing tier of your incoming request. Use a client created with the
+run's `APIFY_TOKEN`. For details, see
+[Compose multi-tenant Server Actors](https://docs.apify.com/platform/actors/development/programming-interface/standby#compose-server-actors).
+
+```rust,no_run
+use apify_client::{ActorServerRequestOptions, ApifyClient};
+
+# async fn run(incoming_request_id: String) -> Result<(), Box<dyn std::error::Error>> {
+let client = ApifyClient::new(std::env::var("APIFY_TOKEN")?);
+let response = client
+    .actor("username/other-actor")
+    .server()
+    .request(
+        "/search",
+        ActorServerRequestOptions {
+            params: vec![("q".to_string(), "apify".to_string())],
+            parent_request_id: Some(incoming_request_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+println!("{}", response.text());
+# Ok(())
+# }
+```
 
 `get_open_api_spec` returns the web server schema from the build that serves the server
 interface: the build in the Actor's `actor_standby.build` field (a tag or a build number), or
