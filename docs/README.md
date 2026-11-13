@@ -65,7 +65,7 @@ suite and the Apify platform use), so production code typically does
 placeholder for brevity.
 
 Create the token on the [Integrations page](https://console.apify.com/settings/integrations) in
-Apify Console. The Console shows a token only once, right after you create or rotate it, so copy it
+Apify Console. Apify Console shows the token only once, right after you create or rotate it, so copy it
 and store it somewhere safe.
 
 ## Imports

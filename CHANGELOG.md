@@ -10,7 +10,7 @@ to [Semantic Versioning](https://semver.org/).
 - Synced with Apify OpenAPI spec `v2-2026-11-13T143025Z` (`API_SPEC_VERSION`), which only changes
   descriptions: single-tenant Server Actor runs ignore the `requestId` of a charge, a charge is
   sent from the run itself with the token in `APIFY_TOKEN`, and API tokens are shown only once.
-- Documented these points on `RunChargeOptions`, `RunClient::charge` and in the docs.
+- Documented these points on `RunChargeOptions`, `RunClient::charge`, and in the docs.
 
 ## [0.17.0] - 2026-11-10
 
