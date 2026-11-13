@@ -85,8 +85,8 @@ pub struct RunChargeOptions {
     pub idempotency_key: Option<String>,
     /// ID of the Server Actor request being charged, taken from the `X-Actor-Request-ID` header
     /// of the incoming request. Required for multi-tenant Server Actor runs, where it maps the
-    /// charge to the caller's account instead of the account that started the run. Omitted from
-    /// the request body when `None`.
+    /// charge to the caller's account instead of the account that started the run. Runs of
+    /// single-tenant Server Actors ignore it. Omitted from the request body when `None`.
     pub request_id: Option<String>,
 }
 
@@ -289,7 +289,8 @@ impl RunClient {
     /// An idempotency key is always sent (generated when `options.idempotency_key` is `None`), so
     /// a charge that the transport retries is applied at most once.
     ///
-    /// The charge endpoint returns an empty body on success, so any 2xx response is a success.
+    /// Call it from the run itself, with the token the run received in `APIFY_TOKEN`. The charge
+    /// endpoint returns an empty body on success, so any 2xx response is a success.
     pub async fn charge(&self, options: RunChargeOptions) -> ApifyClientResult<()> {
         let count = options.count.unwrap_or(1);
         let idempotency_key = options

@@ -64,6 +64,10 @@ suite and the Apify platform use), so production code typically does
 `ApifyClient::new(std::env::var("APIFY_TOKEN")?)`. The literal `"my-api-token"` above is only a
 placeholder for brevity.
 
+Create the token on the [Integrations page](https://console.apify.com/settings/integrations) in
+Apify Console. The Console shows a token only once, right after you create or rotate it, so copy it
+and store it somewhere safe.
+
 ## Imports
 
 The client, the builder, and **every** option/parameter struct are re-exported at the crate

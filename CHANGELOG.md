@@ -4,6 +4,14 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.17.1] - 2026-11-13
+
+### Changed
+- Synced with Apify OpenAPI spec `v2-2026-11-13T143025Z` (`API_SPEC_VERSION`), which only changes
+  descriptions: single-tenant Server Actor runs ignore the `requestId` of a charge, a charge is
+  sent from the run itself with the token in `APIFY_TOKEN`, and API tokens are shown only once.
+- Documented these points on `RunChargeOptions`, `RunClient::charge` and in the docs.
+
 ## [0.17.0] - 2026-11-10
 
 ### Added
