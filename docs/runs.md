@@ -77,7 +77,8 @@ streamed_log.stop().await?;
 the charge, so a retry past that window creates a new charge instead of being deduplicated),
 `request_id` (ID of the Server Actor request being charged, from the `X-Actor-Request-ID` header of
 the incoming request; required for multi-tenant Server Actor runs, where it maps the charge to the
-caller's account; omitted from the request when `None`).
+caller's account, and ignored by runs of single-tenant Server Actors; omitted from the request
+when `None`). Call `charge` from the run itself, with the token the run received in `APIFY_TOKEN`.
 
 `ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and
