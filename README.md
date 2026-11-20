@@ -304,8 +304,8 @@ code snippets in this README and `docs/` as doctests (`cargo test --doc`).
 
 ## Examples
 
-Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN` and can be
-run with `cargo run --example <name>`:
+Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN`, and `APIFY_API_URL` optionally overrides the API URL
+(default `https://api.apify.com/v2`). Run one with `cargo run --example <name>`:
 
 - `run_store_actor` — run a Store Actor, wait, read its default dataset.
 - `storages` — create each storage type (dataset, key-value store, request queue), write and read back.

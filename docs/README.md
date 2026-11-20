@@ -75,14 +75,14 @@ root, so you can import them directly from `apify_client` — you never need the
 `apify_client::clients::<module>::<Type>` path. The complete set of re-exported option/parameter
 types is:
 
-- Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`, `WaitForResources`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordOptions`
 - Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
-- Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StreamedLog`, `StreamedLogOptions`
-- Shared: `ListOptions`, `StorageListOptions`
+- Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StdoutLogSink`, `StreamedLog`, `StreamedLogOptions`
+- Shared: `ListOptions`, `StorageListOptions`, `Timeout`
 - Server Actors: `ActorServerRequestOptions`, `ActorServerBody`, `ActorServerCompression`
 - Client configuration: `RequestCompression`
 
