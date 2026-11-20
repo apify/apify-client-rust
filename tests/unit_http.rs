@@ -39,7 +39,7 @@ async fn success_single_call() {
     )]);
     let client = client_with(backend.clone(), 3);
     let user = client.me().get().await.expect("ok").expect("some");
-    assert_eq!(user.id, "abc");
+    assert_eq!(user.id.as_deref(), Some("abc"));
     assert_eq!(backend.call_count(), 1);
 }
 
@@ -104,7 +104,7 @@ async fn retry_then_success() {
     ]);
     let client = client_with(backend.clone(), 5);
     let user = client.me().get().await.expect("ok").expect("some");
-    assert_eq!(user.id, "ok");
+    assert_eq!(user.id.as_deref(), Some("ok"));
     assert_eq!(backend.call_count(), 3);
 }
 

@@ -4,13 +4,24 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
-## [0.17.1] - 2026-11-13
+## [0.18.0] - 2026-11-20
+
+### Fixed
+- `UserClient::get` no longer fails for a request authenticated with a proxy password. The API
+  answers it with only the reduced data Apify Proxy reads, without `id` and `username`.
 
 ### Changed
-- Synced with Apify OpenAPI spec `v2-2026-11-13T143025Z` (`API_SPEC_VERSION`), which only changes
-  descriptions: single-tenant Server Actor runs ignore the `requestId` of a charge, a charge is
-  sent from the run itself with the token in `APIFY_TOKEN`, and API tokens are shown only once.
-- Documented these points on `RunChargeOptions`, `RunClient::charge`, and in the docs.
+- Synced with Apify OpenAPI spec `v2-2026-11-18T151559Z` (`API_SPEC_VERSION`). It adds the reduced
+  proxy variant to the responses of `GET /v2/users/me` and `GET /v2/users/{userId}`, types the
+  schedule's `uiState` as nullable, and changes descriptions: single-tenant Server Actor runs
+  ignore the `requestId` of a charge, a charge is sent from the run itself with the token in
+  `APIFY_TOKEN`, and API tokens are shown only once.
+- **Breaking:** `User::id` is `Option<String>`, because the public profile and the reduced proxy
+  data have no `id`.
+- Documented that only the run itself can metamorph, with its own token, on
+  `RunClient::metamorph` and `metamorph_raw`.
+- Documented the other description changes on `RunChargeOptions`, `RunClient::charge`, and in the
+  docs.
 
 ## [0.17.0] - 2026-11-10
 

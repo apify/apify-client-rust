@@ -753,18 +753,25 @@ pub struct WebhookDispatchWebhookSummary {
 }
 
 /// Account information about a user.
+///
+/// The API answers with one of three shapes, and every field is optional so that all of them
+/// deserialize: the private account details, the public profile, or, for a request authenticated
+/// with a proxy password (`PROXY_PASSWORD` or `ACTOR_RUN_PROXY_PASSWORD`), only the reduced data
+/// Apify Proxy reads (`plan.availableProxyGroups`, `effectivePlatformFeatures` and `isPaying`,
+/// found in `extra`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
-    /// Unique user ID.
-    pub id: String,
-    /// Username.
+    /// Unique user ID. Absent from the public profile and the reduced proxy data.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Username. Absent from the reduced proxy data.
     #[serde(default)]
     pub username: Option<String>,
     /// The user's public profile.
     #[serde(default)]
     pub profile: Option<UserProfile>,
-    /// Any other fields returned by the API (public or private depending on the call).
+    /// Any other fields returned by the API (public, private or reduced depending on the call).
     #[serde(flatten)]
     pub extra: Extra,
 }

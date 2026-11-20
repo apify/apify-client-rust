@@ -30,7 +30,8 @@ impl UserClient {
     /// Fetches the user account information, or `None` if the user does not exist.
     ///
     /// For the current user (`me`) this returns private account details; for other users
-    /// it returns the public profile.
+    /// it returns the public profile. A request authenticated with a proxy password gets only the
+    /// reduced data Apify Proxy reads, so `id` and `username` can be `None`.
     pub async fn get(&self) -> ApifyClientResult<Option<User>> {
         get_resource(&self.ctx, None, &QueryParams::new(), Timeout::Short).await
     }

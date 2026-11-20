@@ -12,7 +12,10 @@ async fn get_own_account() {
         .await
         .expect("get current user")
         .expect("current user should exist");
-    assert!(!user.id.is_empty(), "user id should be present");
+    let id = user
+        .id
+        .expect("the private account details carry the user id");
+    assert!(!id.is_empty(), "user id should not be empty");
 }
 
 /// Simple GET: the current account's monthly usage.
@@ -93,7 +96,10 @@ async fn get_limits_and_monthly_usage_by_user_id() {
         .expect("get current user")
         .expect("current user should exist");
 
-    let by_id = client.user(&user.id);
+    let id = user
+        .id
+        .expect("the private account details carry the user id");
+    let by_id = client.user(&id);
     let limits = by_id.limits().await.expect("get limits by user id");
     assert!(limits.is_object(), "limits should be a JSON object");
     let usage = by_id

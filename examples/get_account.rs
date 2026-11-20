@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ApifyClient::new(token);
 
     let user = client.me().get().await?.expect("current user");
-    println!("Account id: {}", user.id);
+    println!("Account id: {}", user.id.as_deref().unwrap_or("(none)"));
     println!("Username: {}", user.username.as_deref().unwrap_or("(none)"));
 
     // Monthly usage for the current billing cycle (`None` == current cycle).

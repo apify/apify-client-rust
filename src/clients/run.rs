@@ -177,6 +177,10 @@ impl RunClient {
 
     /// Transforms the run into a run of another Actor (metamorph).
     ///
+    /// Only the run itself can metamorph: the client must use the run's own API token, which the
+    /// run gets in the `APIFY_TOKEN` environment variable. With any other token, the API rejects
+    /// the request.
+    ///
     /// `options.content_type` sets the content type of the input body (default
     /// `application/json`). To send a non-JSON input as raw bytes, use
     /// [`metamorph_raw`](Self::metamorph_raw).
@@ -196,6 +200,8 @@ impl RunClient {
 
     /// Transforms the run into a run of another Actor (metamorph) with a raw request body
     /// instead of a JSON-serializable value.
+    ///
+    /// Like [`metamorph`](Self::metamorph), only the run itself can call it, with its own token.
     ///
     /// The bytes are sent exactly as given, with no JSON serialization — pair this with
     /// `options.content_type` for a non-JSON input. For an object or array input, use

@@ -87,16 +87,20 @@ organization your API token belongs to. They return a `404` as an error.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `String` | Unique user ID (always present). |
-| `username` | `Option<String>` | Username. |
+| `id` | `Option<String>` | Unique user ID. Present in the private account details, absent from the public profile and the reduced proxy data. |
+| `username` | `Option<String>` | Username. Absent from the reduced proxy data. |
 | `profile` | `Option<UserProfile>` | The public profile: `name`, `picture_url` and `website_url` (both normalized to their WHATWG URL serialization) and the other fields in `extra`. |
 | `extra` | `Extra` | Any other fields returned by the API (more fields are present for `me` than for a public `user(id)`). |
+
+A request authenticated with a proxy password (`PROXY_PASSWORD` or `ACTOR_RUN_PROXY_PASSWORD`) gets only
+the reduced data Apify Proxy reads: `plan.availableProxyGroups`, `effectivePlatformFeatures` and
+`isPaying`, all in `extra`. `id` and `username` are `None` then.
 
 ```rust,no_run
 # use apify_client::ApifyClient;
 # async fn run(client: ApifyClient) -> Result<(), Box<dyn std::error::Error>> {
 if let Some(user) = client.me().get().await? {
-    println!("account id {}, username {:?}", user.id, user.username);
+    println!("account id {:?}, username {:?}", user.id, user.username);
 }
 # Ok(())
 # }

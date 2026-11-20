@@ -463,7 +463,7 @@ async fn a_pending_request_with_a_null_handled_at_deserializes() {
 }
 
 /// The API returns a `null` `uiState` once an update changed the schedule's `cronExpression` or
-/// `timezone`, although the spec types it as an object.
+/// `timezone`, which the spec types as nullable.
 #[tokio::test]
 async fn a_schedule_with_a_null_ui_state_deserializes() {
     let backend = MockBackend::new(vec![ok_data(json!({
@@ -479,6 +479,48 @@ async fn a_schedule_with_a_null_ui_state_deserializes() {
         .unwrap()
         .expect("the schedule exists");
     assert_eq!(schedule.extra.get("uiState"), Some(&Value::Null));
+}
+
+/// A request authenticated with a proxy password gets only the reduced proxy data, without `id`
+/// and `username`.
+#[tokio::test]
+async fn reduced_proxy_user_data_deserializes() {
+    let backend = MockBackend::new(vec![ok_data(json!({
+        "plan": { "availableProxyGroups": ["RESIDENTIAL"] },
+        "effectivePlatformFeatures": {},
+        "isPaying": true
+    }))]);
+    let client = client_with(backend, 0);
+    let user = client
+        .me()
+        .get()
+        .await
+        .unwrap()
+        .expect("the current user exists");
+    assert_eq!(user.id, None);
+    assert_eq!(user.username, None);
+    assert_eq!(user.extra.get("isPaying"), Some(&Value::Bool(true)));
+    assert_eq!(
+        user.extra
+            .get("plan")
+            .and_then(|plan| plan.pointer("/availableProxyGroups/0")),
+        Some(&json!("RESIDENTIAL"))
+    );
+}
+
+/// The public profile of another user has a `username` but no `id`.
+#[tokio::test]
+async fn public_user_profile_without_an_id_deserializes() {
+    let backend = MockBackend::new(vec![ok_data(json!({ "username": "someone" }))]);
+    let client = client_with(backend, 0);
+    let user = client
+        .user("someone")
+        .get()
+        .await
+        .unwrap()
+        .expect("the user exists");
+    assert_eq!(user.id, None);
+    assert_eq!(user.username.as_deref(), Some("someone"));
 }
 
 // ----- clients chained from the last run --------------------------------------------------
