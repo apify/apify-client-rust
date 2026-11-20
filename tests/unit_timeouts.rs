@@ -9,14 +9,13 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use apify_client::clients::key_value_store::SetRecordOptions;
 use apify_client::http_client::{HttpBackend, HttpMethod, HttpRequest, ReqwestBackend};
 use apify_client::timeouts::NO_TIMEOUT;
 #[cfg(feature = "zstd")]
 use apify_client::ZstdHttpCompressor;
 use apify_client::{
     ActorStartOptions, ApifyClient, ApifyClientError, BrotliHttpCompressor, GzipHttpCompressor,
-    HttpCompressor, Timeout,
+    HttpCompressor, SetRecordOptions, Timeout,
 };
 use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use serde_json::{json, Value};

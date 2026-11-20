@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [0.18.0] - 2026-11-20
 
+### Added
+- `SetRecordOptions` is re-exported at the crate root.
+
 ### Fixed
 - `UserClient::get` no longer fails for a request authenticated with a proxy password. The API
   answers it with only the reduced data Apify Proxy reads, without `id` and `username`.

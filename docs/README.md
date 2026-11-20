@@ -78,7 +78,7 @@ types is:
 - Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`, `WaitForResources`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
-- Key-value stores: `ListKeysOptions`, `GetRecordOptions`
+- Key-value stores: `ListKeysOptions`, `GetRecordOptions`, `SetRecordOptions`
 - Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StdoutLogSink`, `StreamedLog`, `StreamedLogOptions`
