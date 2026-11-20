@@ -84,7 +84,7 @@ types is:
 - Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StdoutLogSink`, `StreamedLog`, `StreamedLogOptions`
 - Shared: `ListOptions`, `StorageListOptions`, `Timeout`
 - Server Actors: `ActorServerRequestOptions`, `ActorServerBody`, `ActorServerCompression`
-- Client configuration: `RequestCompression`
+- Client configuration: `RequestCompression`, `HttpCompressor`, `BrotliHttpCompressor`, `GzipHttpCompressor`, and `ZstdHttpCompressor` (needs the `zstd` feature)
 
 plus the common container `PaginationList`, `ListIterator`
 (the return type of every collection client's `iterate()` method), `StoreActorIterator`
