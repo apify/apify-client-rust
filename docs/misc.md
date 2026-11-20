@@ -93,8 +93,8 @@ organization your API token belongs to. They return a `404` as an error.
 | `extra` | `Extra` | Any other fields returned by the API (more fields are present for `me` than for a public `user(id)`). |
 
 A request authenticated with a proxy password (`PROXY_PASSWORD` or `ACTOR_RUN_PROXY_PASSWORD`) gets only
-the reduced data Apify Proxy reads: `plan.availableProxyGroups`, `effectivePlatformFeatures` and
-`isPaying`, all in `extra`. `id` and `username` are `None` then.
+the reduced data Apify Proxy reads: `plan.availableProxyGroups`, `effectivePlatformFeatures`, and
+`isPaying`, all in `extra`. In that case, `id` and `username` are `None`.
 
 ```rust,no_run
 # use apify_client::ApifyClient;

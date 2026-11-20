@@ -757,7 +757,7 @@ pub struct WebhookDispatchWebhookSummary {
 /// The API answers with one of three shapes, and every field is optional so that all of them
 /// deserialize: the private account details, the public profile, or, for a request authenticated
 /// with a proxy password (`PROXY_PASSWORD` or `ACTOR_RUN_PROXY_PASSWORD`), only the reduced data
-/// Apify Proxy reads (`plan.availableProxyGroups`, `effectivePlatformFeatures` and `isPaying`,
+/// Apify Proxy reads (`plan.availableProxyGroups`, `effectivePlatformFeatures`, and `isPaying`,
 /// found in `extra`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -771,7 +771,7 @@ pub struct User {
     /// The user's public profile.
     #[serde(default)]
     pub profile: Option<UserProfile>,
-    /// Any other fields returned by the API (public, private or reduced depending on the call).
+    /// Any other fields returned by the API (public, private, or reduced depending on the call).
     #[serde(flatten)]
     pub extra: Extra,
 }

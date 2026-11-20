@@ -11,7 +11,13 @@ use serde_json::json;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("APIFY_TOKEN").expect("set APIFY_TOKEN");
-    let client = ApifyClient::new(token);
+    // `APIFY_API_URL` optionally points the example at another API, such as a staging deployment.
+    let api_url =
+        std::env::var("APIFY_API_URL").unwrap_or_else(|_| "https://api.apify.com/v2".into());
+    let client = ApifyClient::builder()
+        .token(token)
+        .base_url(api_url)
+        .build();
 
     // ---- Dataset: create, push, read ----
     let dataset = client.datasets().get_or_create(None).await?;

@@ -59,7 +59,7 @@ jobs:
 
       # The `rustls` feature swaps the TLS stack, so it needs its own lint and compile check.
       - name: Clippy with rustls
-        run: cargo clippy --no-default-features --features rustls -- -D warnings
+        run: cargo clippy --no-default-features --features rustls --all-targets -- -D warnings
 
       # The `zstd` feature is on by default, so the build without it needs its own check.
       - name: Clippy without zstd

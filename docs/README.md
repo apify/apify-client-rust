@@ -31,7 +31,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.17"
+apify-client = "0.18"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -79,7 +79,7 @@ types is:
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
 - Key-value stores: `ListKeysOptions`, `GetRecordOptions`
-- Request queues: `ListRequestsOptions`
+- Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
 - Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StreamedLog`, `StreamedLogOptions`
 - Shared: `ListOptions`, `StorageListOptions`
@@ -89,9 +89,10 @@ types is:
 plus the common container `PaginationList`, `ListIterator`
 (the return type of every collection client's `iterate()` method), `StoreActorIterator`
 (a type alias for `ListIterator<ActorStoreListItem>`, the return type of
-`StoreCollectionClient::iterate`), and the two cursor-based iterators `KeyValueStoreKeysIterator`
+`StoreCollectionClient::iterate`), the two cursor-based iterators `KeyValueStoreKeysIterator`
 (from `KeyValueStoreClient::iterate_keys`) and `RequestQueueRequestsIterator` (from
-`RequestQueueClient::paginate_requests`). Import any of them directly from `apify_client`:
+`RequestQueueClient::paginate_requests`), and `RunDatasetItemsIterator` (from
+`RunClient::iterate_dataset_items`). Import any of them directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};

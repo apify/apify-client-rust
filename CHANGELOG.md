@@ -9,6 +9,7 @@ to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - `UserClient::get` no longer fails for a request authenticated with a proxy password. The API
   answers it with only the reduced data Apify Proxy reads, without `id` and `username`.
+- `client.user(id).get()` no longer fails for the public profile of another user, which has no `id`.
 
 ### Changed
 - Synced with Apify OpenAPI spec `v2-2026-11-18T151559Z` (`API_SPEC_VERSION`). It adds the reduced
