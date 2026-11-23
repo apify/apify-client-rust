@@ -31,7 +31,7 @@ Add the crate and an async runtime:
 
 ```toml
 [dependencies]
-apify-client = "0.17"
+apify-client = "0.18"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -64,6 +64,10 @@ suite and the Apify platform use), so production code typically does
 `ApifyClient::new(std::env::var("APIFY_TOKEN")?)`. The literal `"my-api-token"` above is only a
 placeholder for brevity.
 
+Create the token on the [Integrations page](https://console.apify.com/settings/integrations) in
+Apify Console. Apify Console shows the token only once, right after you create or rotate it, so copy it
+and store it somewhere safe.
+
 ## Imports
 
 The client, the builder, and **every** option/parameter struct are re-exported at the crate
@@ -71,23 +75,24 @@ root, so you can import them directly from `apify_client` — you never need the
 `apify_client::clients::<module>::<Type>` path. The complete set of re-exported option/parameter
 types is:
 
-- Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`
+- Actors: `ActorStartOptions`, `ActorCallOptions`, `TaskStartOptions`, `ActorBuildOptions`, `ActorListOptions`, `WaitForResources`
 - Runs: `RunListOptions`, `RunResurrectOptions`, `RunMetamorphOptions`, `RunChargeOptions`, `LastRunOptions`
 - Datasets: `DatasetListItemsOptions`, `DatasetDownloadOptions`, `DownloadItemsFormat`
-- Key-value stores: `ListKeysOptions`, `GetRecordOptions`
-- Request queues: `ListRequestsOptions`
+- Key-value stores: `ListKeysOptions`, `GetRecordOptions`, `SetRecordOptions`
+- Request queues: `ListRequestsOptions`, `BatchAddRequestsOptions`
 - Store: `StoreListOptions`
-- Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StreamedLog`, `StreamedLogOptions`
-- Shared: `ListOptions`, `StorageListOptions`
+- Logs: `LogOptions`, `LogRedirect`, `LogSink`, `StdoutLogSink`, `StreamedLog`, `StreamedLogOptions`
+- Shared: `ListOptions`, `StorageListOptions`, `Timeout`
 - Server Actors: `ActorServerRequestOptions`, `ActorServerBody`, `ActorServerCompression`
-- Client configuration: `RequestCompression`
+- Client configuration: `RequestCompression`, `HttpCompressor`, `BrotliHttpCompressor`, `GzipHttpCompressor`, and `ZstdHttpCompressor` (needs the `zstd` feature)
 
 plus the common container `PaginationList`, `ListIterator`
 (the return type of every collection client's `iterate()` method), `StoreActorIterator`
 (a type alias for `ListIterator<ActorStoreListItem>`, the return type of
-`StoreCollectionClient::iterate`), and the two cursor-based iterators `KeyValueStoreKeysIterator`
+`StoreCollectionClient::iterate`), the two cursor-based iterators `KeyValueStoreKeysIterator`
 (from `KeyValueStoreClient::iterate_keys`) and `RequestQueueRequestsIterator` (from
-`RequestQueueClient::paginate_requests`). Import any of them directly from `apify_client`:
+`RequestQueueClient::paginate_requests`), and `RunDatasetItemsIterator` (from
+`RunClient::iterate_dataset_items`). Import any of them directly from `apify_client`:
 
 ```rust,no_run
 use apify_client::{ApifyClient, ActorListOptions, StoreListOptions, DownloadItemsFormat};

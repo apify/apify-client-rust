@@ -85,8 +85,8 @@ pub struct RunChargeOptions {
     pub idempotency_key: Option<String>,
     /// ID of the Server Actor request being charged, taken from the `X-Actor-Request-ID` header
     /// of the incoming request. Required for multi-tenant Server Actor runs, where it maps the
-    /// charge to the caller's account instead of the account that started the run. Omitted from
-    /// the request body when `None`.
+    /// charge to the caller's account instead of the account that started the run. Runs of
+    /// single-tenant Server Actors ignore it. Omitted from the request body when `None`.
     pub request_id: Option<String>,
 }
 
@@ -177,6 +177,10 @@ impl RunClient {
 
     /// Transforms the run into a run of another Actor (metamorph).
     ///
+    /// Only the run itself can metamorph: the client must use the run's own API token, which the
+    /// run gets in the `APIFY_TOKEN` environment variable. With any other token, the API rejects
+    /// the request.
+    ///
     /// `options.content_type` sets the content type of the input body (default
     /// `application/json`). To send a non-JSON input as raw bytes, use
     /// [`metamorph_raw`](Self::metamorph_raw).
@@ -196,6 +200,8 @@ impl RunClient {
 
     /// Transforms the run into a run of another Actor (metamorph) with a raw request body
     /// instead of a JSON-serializable value.
+    ///
+    /// Like [`metamorph`](Self::metamorph), only the run itself can call it, with its own token.
     ///
     /// The bytes are sent exactly as given, with no JSON serialization — pair this with
     /// `options.content_type` for a non-JSON input. For an object or array input, use
@@ -289,7 +295,8 @@ impl RunClient {
     /// An idempotency key is always sent (generated when `options.idempotency_key` is `None`), so
     /// a charge that the transport retries is applied at most once.
     ///
-    /// The charge endpoint returns an empty body on success, so any 2xx response is a success.
+    /// Call it from the run itself, with the token the run received in `APIFY_TOKEN`. The charge
+    /// endpoint returns an empty body on success, so any 2xx response is a success.
     pub async fn charge(&self, options: RunChargeOptions) -> ApifyClientResult<()> {
         let count = options.count.unwrap_or(1);
         let idempotency_key = options

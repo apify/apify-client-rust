@@ -84,7 +84,9 @@ pub use clients::actor_server::{
     ActorServerBody, ActorServerCompression, ActorServerRequestOptions,
 };
 pub use clients::dataset::{DatasetDownloadOptions, DatasetListItemsOptions, DownloadItemsFormat};
-pub use clients::key_value_store::{GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions};
+pub use clients::key_value_store::{
+    GetRecordOptions, KeyValueStoreKeysIterator, ListKeysOptions, SetRecordOptions,
+};
 pub use clients::log::LogOptions;
 pub use clients::pagination::ListIterator;
 pub use clients::request_queue::{

@@ -339,7 +339,7 @@ When your multi-tenant Server Actor calls another one while it handles a request
 `X-Actor-Request-ID` header in `parent_request_id`. The client sends it as the same header, so the
 called Actor charges at the pricing tier of your incoming request. Use a client created with the
 run's `APIFY_TOKEN`. For details, see
-[Compose multi-tenant Server Actors](https://docs.apify.com/platform/actors/development/programming-interface/standby#compose-server-actors).
+[Call another multi-tenant Server Actor](https://docs.apify.com/platform/actors/monetize/server-actors#call-another-multi-tenant-server-actor).
 
 ```rust,no_run
 use apify_client::{ActorServerRequestOptions, ApifyClient};

@@ -19,7 +19,7 @@ collections are available via `actor.runs()` and `task.runs()`.
 | `update(fields)` | `&impl Serialize` | `ActorRun` | Updates the run (e.g. status message). |
 | `delete()` | — | `()` | Deletes the run. |
 | `abort(gracefully)` | `Option<bool>` | `ActorRun` | Aborts the run. `None` omits the param (server default, immediate); `Some(true)`/`Some(false)` abort gracefully/immediately. |
-| `metamorph(target, input, options)` | `&str`, `Option<&impl Serialize>`, `RunMetamorphOptions` | `ActorRun` | Transforms the run into another Actor. |
+| `metamorph(target, input, options)` | `&str`, `Option<&impl Serialize>`, `RunMetamorphOptions` | `ActorRun` | Transforms the run into another Actor. Only the run itself can metamorph: use the run's own token from `APIFY_TOKEN`, as the API rejects any other token. |
 | `metamorph_raw(target, input, options)` | `&str`, `&[u8]`, `RunMetamorphOptions` | `ActorRun` | Like `metamorph`, but sends `input` as a raw request body (no JSON serialization), paired with `options.content_type`. |
 | `reboot()` | — | `ActorRun` | Reboots the run's container. |
 | `resurrect(options)` | `RunResurrectOptions` | `ActorRun` | Resurrects a run in a terminal state (`SUCCEEDED`, `FAILED`, `ABORTED`, `TIMED-OUT`). To continue a run that reached its cost limit, pass a higher `max_total_charge_usd`; the limit covers the whole run, including the cost before the resurrection. |
@@ -77,7 +77,8 @@ streamed_log.stop().await?;
 the charge, so a retry past that window creates a new charge instead of being deduplicated),
 `request_id` (ID of the Server Actor request being charged, from the `X-Actor-Request-ID` header of
 the incoming request; required for multi-tenant Server Actor runs, where it maps the charge to the
-caller's account; omitted from the request when `None`).
+caller's account, and ignored by runs of single-tenant Server Actors; omitted from the request
+when `None`). Call `charge` from the run itself, with the token the run received in `APIFY_TOKEN`.
 
 `ActorRun.status` is a stringly-typed `Option<String>` carrying the API's run status. Known
 values are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `ABORTING`, `ABORTED`, `TIMING-OUT`, and

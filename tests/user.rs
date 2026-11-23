@@ -12,7 +12,47 @@ async fn get_own_account() {
         .await
         .expect("get current user")
         .expect("current user should exist");
-    assert!(!user.id.is_empty(), "user id should be present");
+    let id = user
+        .id
+        .expect("the private account details carry the user id");
+    assert!(!id.is_empty(), "user id should not be empty");
+}
+
+/// Simple GET: the by-id endpoint answers for the caller's own account, as the private details.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_own_account_by_user_id() {
+    let client = require_client!();
+    let me = client
+        .me()
+        .get()
+        .await
+        .expect("get current user")
+        .expect("current user should exist");
+    let id = me
+        .id
+        .expect("the private account details carry the user id");
+
+    let by_id = client
+        .user(&id)
+        .get()
+        .await
+        .expect("get user by id")
+        .expect("own account should exist");
+    assert_eq!(by_id.username, me.username);
+}
+
+/// Simple GET: the public profile of another account has a `username` and no `id`.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_public_profile_of_another_user() {
+    let client = require_client!();
+    let user = client
+        .user("apify")
+        .get()
+        .await
+        .expect("get public profile")
+        .expect("the apify account should exist");
+    assert_eq!(user.username.as_deref(), Some("apify"));
+    assert_eq!(user.id, None, "a public profile carries no user id");
 }
 
 /// Simple GET: the current account's monthly usage.
@@ -93,7 +133,10 @@ async fn get_limits_and_monthly_usage_by_user_id() {
         .expect("get current user")
         .expect("current user should exist");
 
-    let by_id = client.user(&user.id);
+    let id = user
+        .id
+        .expect("the private account details carry the user id");
+    let by_id = client.user(&id);
     let limits = by_id.limits().await.expect("get limits by user id");
     assert!(limits.is_object(), "limits should be a JSON object");
     let usage = by_id

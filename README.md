@@ -20,7 +20,7 @@ It provides a resource-oriented, async interface that follows the
 
 ```toml
 [dependencies]
-apify-client = "0.17"
+apify-client = "0.18"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -49,7 +49,7 @@ instead, disable the default features and name `rustls`. The `"zstd"` entry keep
 so drop it if you do not need it:
 
 ```toml
-apify-client = { version = "0.17", default-features = false, features = ["rustls", "zstd"] }
+apify-client = { version = "0.18", default-features = false, features = ["rustls", "zstd"] }
 ```
 
 The `rustls` feature requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10 or
@@ -304,8 +304,8 @@ code snippets in this README and `docs/` as doctests (`cargo test --doc`).
 
 ## Examples
 
-Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN` and can be
-run with `cargo run --example <name>`:
+Runnable examples live in [`examples/`](examples). Each requires `APIFY_TOKEN`, and `APIFY_API_URL` optionally overrides the API URL
+(default `https://api.apify.com/v2`). Run one with `cargo run --example <name>`:
 
 - `run_store_actor` — run a Store Actor, wait, read its default dataset.
 - `storages` — create each storage type (dataset, key-value store, request queue), write and read back.

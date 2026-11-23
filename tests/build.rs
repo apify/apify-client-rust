@@ -150,18 +150,14 @@ async fn build_actor_flow() {
     let log = build_client.log().get().await.expect("get build log");
     assert!(log.is_some(), "finished build should have a log");
 
-    // Fetch the build's OpenAPI definition (simple GET; may be None if not generated).
+    // Fetch the build's OpenAPI definition (simple GET).
     let _openapi = build_client
         .get_openapi_definition()
         .await
         .expect("get openapi definition");
 
-    // Validate input against the just-built `latest` build, exercising the spec's optional
-    // `build` query parameter on POST /v2/actors/{actorId}/validate-input. A real `latest`
-    // build now exists (built above), so `build=latest` resolves to a concrete artifact.
-    // The success response is an object with a `valid` boolean; asserting that field is present
-    // (rather than merely `is_object()`) proves the call hit the endpoint with the param accepted
-    // and did not return an error envelope.
+    // Validate input against the just-built `latest` build (the optional `build` query parameter).
+    // A `valid` boolean in the response shows the endpoint accepted it, not an error envelope.
     let validation = actor_client
         .validate_input_for_build(&json!({}), Some("latest"))
         .await
@@ -170,7 +166,4 @@ async fn build_actor_flow() {
         validation.get("valid").and_then(|v| v.as_bool()).is_some(),
         "validate-input response should contain a `valid` boolean, got: {validation}"
     );
-
-    // Clean up.
-    actor_client.delete().await.expect("delete actor");
 }
