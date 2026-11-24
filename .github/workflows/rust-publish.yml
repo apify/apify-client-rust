@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.4.0
         with:
           # Full history for the tag lookups.
           fetch-depth: 0
@@ -43,7 +43,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -152,7 +152,7 @@ jobs:
       - name: Authenticate to crates.io (Trusted Publishing)
         id: auth
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.6
 
       - name: Publish to crates.io
         if: ${{ github.event.inputs.dry_run != 'true' }}
