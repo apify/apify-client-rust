@@ -55,9 +55,10 @@ pub(crate) use list_iterator;
 
 /// Generates the body of the `iterate()` method of a collection that is read in a single request.
 /// Without more arguments, the endpoint is not offset-paginated and the collection has a
-/// no-argument `list()` method. With `options` and a list method name, the call is the paginated
-/// `list(options)`, made for a request that ignores `offset`, such as a Store search. The
-/// resulting [`ListIterator`] calls `list` exactly once and then completes.
+/// no-argument `list()` method. With `options` and a list method name, it calls `$list(options)`
+/// once with the options as given (no `offset` or `limit` override), for a request that ignores
+/// `offset`, such as a Store search. The resulting [`ListIterator`] calls `list` exactly once and
+/// then completes.
 macro_rules! single_page_iterator {
     ($self:expr) => {{
         let client = $self.clone();
@@ -238,7 +239,7 @@ impl<T> ListIterator<T> {
         // Only a page that scanned nothing, or the caller's cap, ends the walk, which costs one
         // extra request at the end.
         if self.single_page {
-            // Non-paginated endpoint: everything came back in one response.
+            // Single-page listing: the first fetch is the only page.
             self.exhausted = true;
         } else if scanned == 0 {
             self.exhausted = true;
