@@ -27,7 +27,7 @@ pub struct StoreListOptions {
     /// [`StoreCollectionClient::iterate`] it is a cap on the *total* number of items yielded across
     /// all pages. See each method's docs.
     pub limit: Option<i64>,
-    /// Search query. With it, the API ranks the results by relevance and returns a single page of
+    /// Search query. With a non-empty one, the API ranks the results by relevance and returns a single page of
     /// at most 100 items: `offset` is ignored and there is no second page. To narrow the results,
     /// use `category`, `username`, or `pricing_model`.
     pub search: Option<String>,
@@ -96,11 +96,16 @@ impl StoreCollectionClient {
     /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
     /// [`ListIterator`] for details.
     ///
-    /// With `options.search`, the API returns a single page of at most 100 Actors and ignores
-    /// `offset`, so the iterator fetches that one page and stops. `with_chunk_size` has no effect
-    /// then, and `options.limit` is sent as given.
+    /// With a non-empty `options.search`, the API returns a single page of at most 100 Actors and
+    /// ignores `offset`, so the iterator fetches that one page and stops. `with_chunk_size` has no
+    /// effect then, and `options.limit` is sent as given.
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        if options.search.is_none() {
+        // The API treats an empty search as no search, and pages through the Store as usual.
+        if !options
+            .search
+            .as_deref()
+            .is_some_and(|search| !search.is_empty())
+        {
             return list_iterator!(self, options, list);
         }
         let client = self.clone();

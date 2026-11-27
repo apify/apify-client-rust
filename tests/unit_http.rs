@@ -1728,6 +1728,42 @@ async fn iterating_a_store_search_fetches_a_single_page() {
     assert!(urls[0].contains("limit=10"), "{urls:?}");
 }
 
+/// The API treats an empty `search` as no search and pages through the Store, so the iterator
+/// keeps paging instead of stopping after the first page.
+#[tokio::test]
+async fn iterating_an_empty_store_search_pages_normally() {
+    let backend = MockBackend::new(vec![
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":4,"count":2,"items":[{"id":"a"},{"id":"b"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":4,"count":2,"items":[{"id":"c"},{"id":"d"}]}}"#.to_vec(),
+        ),
+        MockOutcome::Status(
+            200,
+            br#"{"data":{"total":4,"count":0,"items":[]}}"#.to_vec(),
+        ),
+    ]);
+    let client = client_with(backend.clone(), 0);
+
+    let actors = client
+        .store()
+        .iterate(StoreListOptions {
+            search: Some(String::new()),
+            ..Default::default()
+        })
+        .with_chunk_size(2)
+        .collect_all()
+        .await
+        .expect("ok");
+
+    assert_eq!(actors.len(), 4);
+    let urls = backend.urls();
+    assert!(urls[1].contains("offset=2"), "{urls:?}");
+}
+
 /// A streaming call retries an error status until the response starts, like a buffered call.
 #[tokio::test]
 async fn a_stream_is_retried_on_an_error_status_until_the_response_starts() {

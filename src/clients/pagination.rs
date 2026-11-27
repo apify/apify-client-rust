@@ -30,7 +30,8 @@ type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Syn
 /// Collections whose listing does not fit this shape build their iterator directly instead:
 /// the run listing takes a separate `filter` argument, dataset items use `list_items::<T>`, and
 /// the listings that are not paginated (an Actor's versions and a version's env vars) use
-/// `single_page_iterator!`.
+/// `single_page_iterator!`. The Store listing uses this macro, except for a search, which
+/// returns one page and ignores `offset`, so it builds a single-page iterator itself.
 macro_rules! list_iterator {
     ($self:expr, $options:expr, $list:ident) => {{
         let client = $self.clone();
@@ -124,8 +125,9 @@ pub struct ListIterator<T> {
     remaining: Option<i64>,
     /// Page size to request per fetch; `None` = let the API choose its default page size.
     chunk_size: Option<i64>,
-    /// When `true`, the underlying endpoint is not offset-paginated: the first fetch returns the
-    /// whole result set, so the iterator stops after it rather than requesting a second page.
+    /// When `true`, the underlying endpoint is not offset-paginated, or ignores `offset` (a Store
+    /// search): the first fetch returns the whole result set, so the iterator stops after it
+    /// rather than requesting a second page.
     single_page: bool,
     /// Set once the listing has been fully consumed.
     exhausted: bool,
@@ -148,7 +150,8 @@ impl<T> ListIterator<T> {
     }
 
     /// Builds an iterator over an endpoint that is **not** offset-paginated (it returns every
-    /// item in one response, e.g. an Actor version's environment variables). `fetch` is called
+    /// item in one response, e.g. an Actor version's environment variables) or that ignores
+    /// `offset` for the request at hand (a Store search). `fetch` is called
     /// exactly once; the iterator does not attempt a second page, so it does not depend on the
     /// endpoint reporting a page `limit` and cannot refetch the same items.
     pub(crate) fn new_single_page(fetch: PageFetcher<T>) -> Self {

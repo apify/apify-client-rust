@@ -11,7 +11,7 @@ to [Semantic Versioning](https://semver.org/).
   stops, instead of repeating the same Actors.
 
 ### Changed
-- Documented the Store search, `limit`, `category` and `sort_by` semantics on `StoreListOptions` and
+- Documented the Store search, `limit`, `category`, and `sort_by` semantics on `StoreListOptions` and
   in the docs, and deprecated `StoreListOptions::sort_by`, which the API ignores.
 - `ActorVersionCollectionClient::create` and `ActorVersionClient::update` use the `Long` timeout
   tier by default, since a version can carry its source files.
