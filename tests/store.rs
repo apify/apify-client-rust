@@ -58,3 +58,39 @@ async fn list_store_with_input_schema() {
     assert!(!page.items.is_empty(), "the Store lists Actors");
     assert!(page.items.len() <= 3);
 }
+
+/// Simple GET: the deprecated `sort_by` is accepted by the Store endpoint, which ignores it, so
+/// the order of the result is not asserted.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(deprecated)] // The test covers the deprecated option.
+async fn list_store_accepts_the_deprecated_sort_by() {
+    let client = require_client!();
+    let page = client
+        .store()
+        .list(StoreListOptions {
+            limit: Some(10),
+            sort_by: Some("popularity".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("listing the store with the deprecated sort_by should succeed");
+    assert!(!page.items.is_empty(), "the Store lists Actors");
+}
+
+/// Convenience: iterating a search fetches its single page and ends, without repeating Actors.
+#[tokio::test(flavor = "multi_thread")]
+async fn iterate_store_search_ends_with_unique_actors() {
+    let client = require_client!();
+    let mut iter = client.store().iterate(StoreListOptions {
+        search: Some("web scraper".to_string()),
+        ..Default::default()
+    });
+    let mut ids = std::collections::HashSet::new();
+    let mut seen = 0;
+    while let Some(actor) = iter.next().await.expect("iterate the store search") {
+        seen += 1;
+        assert!(ids.insert(actor.id), "an Actor was yielded twice");
+    }
+    assert!(seen > 0, "the search yields at least one Actor");
+    assert!(seen <= 100, "a search returns at most 100 Actors");
+}

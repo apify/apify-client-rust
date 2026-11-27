@@ -4,6 +4,18 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] - 2026-11-27
+
+### Fixed
+- `StoreCollectionClient::iterate` with a non-empty `search` fetches the single page the API
+  returns and stops, instead of repeating the same Actors.
+
+### Changed
+- Documented the Store search, `limit`, `category`, and `sort_by` semantics on `StoreListOptions`
+  and in the docs, and deprecated `StoreListOptions::sort_by`, which the API ignores.
+- `ActorVersionCollectionClient::create` and `ActorVersionClient::update` use the `Long` timeout
+  tier by default, since a version can carry its source files.
+
 ## [0.18.0] - 2026-11-20
 
 ### Added

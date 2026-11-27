@@ -1,7 +1,7 @@
 //! Client for browsing the Apify Store (`/v2/store`).
 
 use crate::clients::base::{list_resource, ResourceContext};
-use crate::clients::pagination::{list_iterator, ListIterator};
+use crate::clients::pagination::{list_iterator, single_page_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -18,26 +18,38 @@ pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 /// Options for searching the Apify Store.
 #[derive(Debug, Default, Clone)]
 pub struct StoreListOptions {
-    /// Number of items to skip.
+    /// Number of items to skip. The API ignores it when a non-empty `search` is used.
     pub offset: Option<i64>,
-    /// Item limit. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a
-    /// single page's size (the maximum items that one call returns); for
+    /// Item limit. The default and the maximum are 1000. When a non-empty `search` is used,
+    /// they are 100, and a larger value is reduced to 100. With `include_input_schema`, they are
+    /// 10. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a single
+    /// page's size (the maximum items that one call returns); for
     /// [`StoreCollectionClient::iterate`] it is a cap on the *total* number of items yielded across
     /// all pages. See each method's docs.
     pub limit: Option<i64>,
-    /// Full-text search query.
+    /// Search query. With a non-empty query, the API ranks the results by relevance and returns a
+    /// single page of at most 100 items: `offset` is ignored and there is no second page. To
+    /// narrow the results, use `category`, `username`, or `pricing_model`.
     pub search: Option<String>,
-    /// Sort key (e.g. `popularity`, `newest`).
+    /// Deprecated and ignored by the API, which accepts it for backward compatibility. Results
+    /// are ordered by relevance when a non-empty `search` is used, and by Store position
+    /// otherwise. Sort the results on the client if you need a different order.
+    #[deprecated(note = "the API ignores `sortBy`: sort the results on the client")]
     pub sort_by: Option<String>,
-    /// Filter by category.
+    /// Filter by category. Accepts one or more category IDs separated by commas, case-insensitive
+    /// (for example `AI_AND_ML`). An Actor must match all of the listed categories. An unknown
+    /// category makes the API answer with a `400` error.
     pub category: Option<String>,
     /// Filter by owner username.
     pub username: Option<String>,
     /// Filter by pricing model: `FREE`, `PRICE_PER_DATASET_ITEM` or `PAY_PER_EVENT`.
     pub pricing_model: Option<String>,
-    /// Include Actors that the current user cannot run (e.g. needing a missing integration).
+    /// By default, results exclude Actors that are not safe to run automatically, such as Actors
+    /// from developers who have not passed KYC or full-permission Actors without a large user
+    /// base. Set to `true` to bypass this safety filtering and include all Actors.
     pub include_unrunnable_actors: Option<bool>,
-    /// Filter to Actors that allow agentic (x402/Skyfire) users.
+    /// If `true`, returns only Actors that allow agentic users. If `false`, returns only Actors
+    /// that do not allow agentic users.
     pub allows_agentic_users: Option<bool>,
     /// Response format requested from the API (`full` or `agent`, the API default is `full`).
     pub response_format: Option<String>,
@@ -83,10 +95,19 @@ impl StoreCollectionClient {
     /// [`list`](Self::list) where `limit` is a single page's size. Set the per-page fetch size
     /// with [`with_chunk_size`](crate::ListIterator::with_chunk_size); see
     /// [`ListIterator`] for details.
+    ///
+    /// With a non-empty `options.search`, the API returns a single page of at most 100 Actors and
+    /// ignores `offset`, so the iterator fetches that one page and stops. `with_chunk_size` has no
+    /// effect then, and `options.limit` is sent as given.
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        list_iterator!(self, options, list)
+        // The API treats an empty search as no search and pages through the Store as usual.
+        match options.search.as_deref() {
+            Some(search) if !search.is_empty() => single_page_iterator!(self, options, list),
+            _ => list_iterator!(self, options, list),
+        }
     }
 
+    #[allow(deprecated)] // `sort_by` is deprecated, but it is still sent as the caller set it.
     fn build_params(&self, options: &StoreListOptions) -> QueryParams {
         let mut params = QueryParams::new();
         params

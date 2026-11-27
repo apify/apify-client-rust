@@ -30,7 +30,8 @@ type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Syn
 /// Collections whose listing does not fit this shape build their iterator directly instead:
 /// the run listing takes a separate `filter` argument, dataset items use `list_items::<T>`, and
 /// the listings that are not paginated (an Actor's versions and a version's env vars) use
-/// `single_page_iterator!`.
+/// `single_page_iterator!`. The Store listing uses this macro, except for a non-empty search,
+/// which returns one page and ignores `offset`, so it uses `single_page_iterator!` as well.
 macro_rules! list_iterator {
     ($self:expr, $options:expr, $list:ident) => {{
         let client = $self.clone();
@@ -52,9 +53,12 @@ macro_rules! list_iterator {
 }
 pub(crate) use list_iterator;
 
-/// Generates the body of the `iterate()` method of a collection whose endpoint is not
-/// offset-paginated: it has a no-argument `list()` method and returns every item in one response.
-/// The resulting [`ListIterator`] calls `list` exactly once and then completes.
+/// Generates the body of the `iterate()` method of a collection that is read in a single request.
+/// Without more arguments, the endpoint is not offset-paginated and the collection has a
+/// no-argument `list()` method. With `options` and a list method name, it calls `$list(options)`
+/// once with the options as given (no `offset` or `limit` override), for a request that ignores
+/// `offset`, such as a Store search. The resulting [`ListIterator`] calls `list` exactly once and
+/// then completes.
 macro_rules! single_page_iterator {
     ($self:expr) => {{
         let client = $self.clone();
@@ -62,6 +66,17 @@ macro_rules! single_page_iterator {
             move |_offset, _page_limit| {
                 let client = client.clone();
                 Box::pin(async move { client.list().await })
+            },
+        ))
+    }};
+    ($self:expr, $options:expr, $list:ident) => {{
+        let client = $self.clone();
+        let options = $options;
+        $crate::clients::pagination::ListIterator::new_single_page(Box::new(
+            move |_offset, _page_limit| {
+                let client = client.clone();
+                let options = options.clone();
+                Box::pin(async move { client.$list(options).await })
             },
         ))
     }};
@@ -124,8 +139,9 @@ pub struct ListIterator<T> {
     remaining: Option<i64>,
     /// Page size to request per fetch; `None` = let the API choose its default page size.
     chunk_size: Option<i64>,
-    /// When `true`, the underlying endpoint is not offset-paginated: the first fetch returns the
-    /// whole result set, so the iterator stops after it rather than requesting a second page.
+    /// When `true`, the underlying endpoint is not offset-paginated, or ignores `offset` for the
+    /// request (a Store search): the first fetch returns the only page, so the iterator stops
+    /// after it rather than requesting a second page.
     single_page: bool,
     /// Set once the listing has been fully consumed.
     exhausted: bool,
@@ -148,9 +164,10 @@ impl<T> ListIterator<T> {
     }
 
     /// Builds an iterator over an endpoint that is **not** offset-paginated (it returns every
-    /// item in one response, e.g. an Actor version's environment variables). `fetch` is called
-    /// exactly once; the iterator does not attempt a second page, so it does not depend on the
-    /// endpoint reporting a page `limit` and cannot refetch the same items.
+    /// item in one response, e.g. an Actor version's environment variables) or that ignores
+    /// `offset` for the request at hand (a Store search). `fetch` is called exactly once; the
+    /// iterator does not attempt a second page, so it does not depend on the endpoint reporting a
+    /// page `limit` and cannot refetch the same items.
     pub(crate) fn new_single_page(fetch: PageFetcher<T>) -> Self {
         Self {
             single_page: true,
@@ -222,7 +239,7 @@ impl<T> ListIterator<T> {
         // Only a page that scanned nothing, or the caller's cap, ends the walk, which costs one
         // extra request at the end.
         if self.single_page {
-            // Non-paginated endpoint: everything came back in one response.
+            // Single-page listing: the first fetch is the only page.
             self.exhausted = true;
         } else if scanned == 0 {
             self.exhausted = true;
