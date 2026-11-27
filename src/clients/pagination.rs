@@ -30,8 +30,8 @@ type PageFetcher<T> = Box<dyn Fn(i64, Option<i64>) -> PageFuture<T> + Send + Syn
 /// Collections whose listing does not fit this shape build their iterator directly instead:
 /// the run listing takes a separate `filter` argument, dataset items use `list_items::<T>`, and
 /// the listings that are not paginated (an Actor's versions and a version's env vars) use
-/// `single_page_iterator!`. The Store listing uses this macro, except for a search, which
-/// returns one page and ignores `offset`, so it builds a single-page iterator itself.
+/// `single_page_iterator!`. The Store listing uses this macro, except for a non-empty search,
+/// which returns one page and ignores `offset`, so it uses `single_page_iterator!` as well.
 macro_rules! list_iterator {
     ($self:expr, $options:expr, $list:ident) => {{
         let client = $self.clone();
@@ -63,6 +63,19 @@ macro_rules! single_page_iterator {
             move |_offset, _page_limit| {
                 let client = client.clone();
                 Box::pin(async move { client.list().await })
+            },
+        ))
+    }};
+    // A listing that takes options and ignores `offset` for some of them: `list(options)` is
+    // called exactly once with the caller's options as given.
+    ($self:expr, $options:expr, $list:ident) => {{
+        let client = $self.clone();
+        let options = $options;
+        $crate::clients::pagination::ListIterator::new_single_page(Box::new(
+            move |_offset, _page_limit| {
+                let client = client.clone();
+                let options = options.clone();
+                Box::pin(async move { client.$list(options).await })
             },
         ))
     }};

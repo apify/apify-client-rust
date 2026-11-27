@@ -1,7 +1,7 @@
 //! Client for browsing the Apify Store (`/v2/store`).
 
 use crate::clients::base::{list_resource, ResourceContext};
-use crate::clients::pagination::{list_iterator, ListIterator};
+use crate::clients::pagination::{list_iterator, single_page_iterator, ListIterator};
 use crate::common::{PaginationList, QueryParams};
 use crate::error::ApifyClientResult;
 use crate::http_client::HttpClient;
@@ -18,22 +18,22 @@ pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 /// Options for searching the Apify Store.
 #[derive(Debug, Default, Clone)]
 pub struct StoreListOptions {
-    /// Number of items to skip. The API ignores it when `search` is used.
+    /// Number of items to skip. The API ignores it when a non-empty `search` is used.
     pub offset: Option<i64>,
-    /// Item limit. The default and the maximum are 1000. When `search` is used, they are 100, and
-    /// a larger value is reduced to 100. With `include_input_schema`, they are 10. Its meaning
-    /// depends on the method: for [`StoreCollectionClient::list`] it is a single page's size (the
-    /// maximum items that one call returns); for
+    /// Item limit. The default and the maximum are 1000. When a non-empty `search` is used,
+    /// they are 100, and a larger value is reduced to 100. With `include_input_schema`, they are
+    /// 10. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a single
+    /// page's size (the maximum items that one call returns); for
     /// [`StoreCollectionClient::iterate`] it is a cap on the *total* number of items yielded across
     /// all pages. See each method's docs.
     pub limit: Option<i64>,
-    /// Search query. With a non-empty one, the API ranks the results by relevance and returns a single page of
-    /// at most 100 items: `offset` is ignored and there is no second page. To narrow the results,
-    /// use `category`, `username`, or `pricing_model`.
+    /// Search query. With a non-empty query, the API ranks the results by relevance and returns a
+    /// single page of at most 100 items: `offset` is ignored and there is no second page. To
+    /// narrow the results, use `category`, `username`, or `pricing_model`.
     pub search: Option<String>,
     /// Deprecated and ignored by the API, which accepts it for backward compatibility. Results
-    /// are ordered by relevance when `search` is used, and by Store position otherwise. Sort the
-    /// results on the client if you need a different order.
+    /// are ordered by relevance when a non-empty `search` is used, and by Store position
+    /// otherwise. Sort the results on the client if you need a different order.
     #[deprecated(note = "the API ignores `sortBy`: sort the results on the client")]
     pub sort_by: Option<String>,
     /// Filter by category. Accepts one or more category IDs separated by commas, case-insensitive
@@ -100,20 +100,11 @@ impl StoreCollectionClient {
     /// ignores `offset`, so the iterator fetches that one page and stops. `with_chunk_size` has no
     /// effect then, and `options.limit` is sent as given.
     pub fn iterate(&self, options: StoreListOptions) -> StoreActorIterator {
-        // The API treats an empty search as no search, and pages through the Store as usual.
-        if !options
-            .search
-            .as_deref()
-            .is_some_and(|search| !search.is_empty())
-        {
-            return list_iterator!(self, options, list);
+        // The API treats an empty search as no search and pages through the Store as usual.
+        match options.search.as_deref() {
+            Some(search) if !search.is_empty() => single_page_iterator!(self, options, list),
+            _ => list_iterator!(self, options, list),
         }
-        let client = self.clone();
-        ListIterator::new_single_page(Box::new(move |_offset, _page_limit| {
-            let client = client.clone();
-            let options = options.clone();
-            Box::pin(async move { client.list(options).await })
-        }))
     }
 
     #[allow(deprecated)] // `sort_by` is deprecated, but it is still sent as the caller set it.
