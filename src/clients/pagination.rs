@@ -53,9 +53,11 @@ macro_rules! list_iterator {
 }
 pub(crate) use list_iterator;
 
-/// Generates the body of the `iterate()` method of a collection whose endpoint is not
-/// offset-paginated: it has a no-argument `list()` method and returns every item in one response.
-/// The resulting [`ListIterator`] calls `list` exactly once and then completes.
+/// Generates the body of the `iterate()` method of a collection that is read in a single request.
+/// Without more arguments, the endpoint is not offset-paginated and the collection has a
+/// no-argument `list()` method. With `options` and a list method name, the call is the paginated
+/// `list(options)`, made for a request that ignores `offset`, such as a Store search. The
+/// resulting [`ListIterator`] calls `list` exactly once and then completes.
 macro_rules! single_page_iterator {
     ($self:expr) => {{
         let client = $self.clone();
@@ -66,8 +68,6 @@ macro_rules! single_page_iterator {
             },
         ))
     }};
-    // A listing that takes options and ignores `offset` for some of them: `list(options)` is
-    // called exactly once with the caller's options as given.
     ($self:expr, $options:expr, $list:ident) => {{
         let client = $self.clone();
         let options = $options;
@@ -138,9 +138,9 @@ pub struct ListIterator<T> {
     remaining: Option<i64>,
     /// Page size to request per fetch; `None` = let the API choose its default page size.
     chunk_size: Option<i64>,
-    /// When `true`, the underlying endpoint is not offset-paginated, or ignores `offset` (a Store
-    /// search): the first fetch returns the whole result set, so the iterator stops after it
-    /// rather than requesting a second page.
+    /// When `true`, the underlying endpoint is not offset-paginated, or ignores `offset` for the
+    /// request (a Store search): the first fetch returns the only page, so the iterator stops
+    /// after it rather than requesting a second page.
     single_page: bool,
     /// Set once the listing has been fully consumed.
     exhausted: bool,
@@ -164,9 +164,9 @@ impl<T> ListIterator<T> {
 
     /// Builds an iterator over an endpoint that is **not** offset-paginated (it returns every
     /// item in one response, e.g. an Actor version's environment variables) or that ignores
-    /// `offset` for the request at hand (a Store search). `fetch` is called
-    /// exactly once; the iterator does not attempt a second page, so it does not depend on the
-    /// endpoint reporting a page `limit` and cannot refetch the same items.
+    /// `offset` for the request at hand (a Store search). `fetch` is called exactly once; the
+    /// iterator does not attempt a second page, so it does not depend on the endpoint reporting a
+    /// page `limit` and cannot refetch the same items.
     pub(crate) fn new_single_page(fetch: PageFetcher<T>) -> Self {
         Self {
             single_page: true,
