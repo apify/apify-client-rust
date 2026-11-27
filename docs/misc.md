@@ -10,13 +10,14 @@
 | `iterate(options)` | `StoreListOptions` | `StoreActorIterator` | Lazy, page-fetching iterator. |
 
 `StoreListOptions`: `offset`, `limit`, `search`, `sort_by`, `category`, `username`,
-`pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`.
+`pricing_model`, `include_unrunnable_actors`, `allows_agentic_users`, `response_format`,
+`include_input_schema`.
 `limit` means a single page's size for `list`, but a cap on the *total* number of
 items yielded for `iterate` (see below).
 
 With `search`, the API ranks the results by relevance and returns a single page of at most 100
 items: `offset` is ignored, a larger `limit` is reduced to 100, and there is no second page. Without
-it, a page has at most 1000 items. `sort_by` is deprecated: the API accepts it and ignores it, so
+it, a page has at most 1000 items, or 10 with `include_input_schema`. `sort_by` is deprecated: the API accepts it and ignores it, so
 sort the results on the client if you need a different order. `category` takes one or more
 category IDs separated by commas, such as `AI_AND_ML`; an Actor must match all of them, and an
 unknown category makes the API answer with a `400` error.
@@ -41,7 +42,8 @@ while let Some(actor) = iter.next().await? {
 ```
 
 `options.limit` caps the total number of Actors the iterator yields (unset iterates the whole
-Store). The per-request page size is separate: call `.with_chunk_size(n)` on the returned
+Store). With `search`, the API returns a single page and ignores `offset`, so the iterator fetches
+that one page of at most 100 Actors and stops; `with_chunk_size` has no effect then. The per-request page size is separate: call `.with_chunk_size(n)` on the returned
 `StoreActorIterator` to fetch `n` Actors per API call (when unset, the API's default page size is
 used). If you set a large `limit` cap, also set `with_chunk_size` so the first request does not ask
 for the entire cap at once — for example, `client.store().iterate(opts).with_chunk_size(50)`:

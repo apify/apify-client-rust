@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use apify_client::{
     ActorCallOptions, ActorStartOptions, ApifyClient, ApifyClientError, LastRunOptions,
-    LogRedirect, RequestCompression, TaskStartOptions, WaitForResources,
+    LogRedirect, RequestCompression, StoreListOptions, TaskStartOptions, WaitForResources,
 };
 use common::mock_backend::{client_with, MockBackend, MockOutcome};
 use futures_util::StreamExt;
@@ -1697,6 +1697,35 @@ async fn iterate_steps_by_the_count_the_api_reports_when_it_exceeds_the_items_re
     let urls = backend.urls();
     assert!(urls[1].contains("offset=3"), "{urls:?}");
     assert!(urls[2].contains("offset=6"), "{urls:?}");
+}
+
+/// With `search` the API returns one page and ignores `offset`, so the iterator stops after it
+/// instead of requesting the same Actors again.
+#[tokio::test]
+async fn iterating_a_store_search_fetches_a_single_page() {
+    let backend = MockBackend::new(vec![MockOutcome::Status(
+        200,
+        br#"{"data":{"total":2,"count":2,"items":[{"id":"a"},{"id":"b"}]}}"#.to_vec(),
+    )]);
+    let client = client_with(backend.clone(), 0);
+
+    let actors = client
+        .store()
+        .iterate(StoreListOptions {
+            search: Some("scraper".to_string()),
+            limit: Some(10),
+            ..Default::default()
+        })
+        .collect_all()
+        .await
+        .expect("ok");
+
+    let ids: Vec<&str> = actors.iter().map(|actor| actor.id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+    let urls = backend.urls();
+    assert_eq!(urls.len(), 1, "{urls:?}");
+    assert!(urls[0].contains("search=scraper"), "{urls:?}");
+    assert!(urls[0].contains("limit=10"), "{urls:?}");
 }
 
 /// A streaming call retries an error status until the response starts, like a buffered call.

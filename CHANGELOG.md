@@ -6,14 +6,13 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [0.19.0] - 2026-11-27
 
+### Fixed
+- `StoreCollectionClient::iterate` with `search` fetches the single page the API returns and
+  stops, instead of repeating the same Actors.
+
 ### Changed
-- Synced with the Apify OpenAPI spec. `GET /v2/store` ranks the results of a `search` by relevance
-  and returns a single page of at most 100 items, `sortBy` is deprecated and ignored, and
-  `category` takes comma-separated category IDs. Documented it on `StoreListOptions` and in the
-  docs. The Store listing items keep the new `stats` shape and `isVerified` in `extra`. The spec
-  also adds the `APIFY_AI` run origin, marks eight response fields as nullable, and adds the `409`
-  response to creating an Actor and the `401` response to getting a build. These need no code
-  change.
+- Documented the Store search, `limit`, `category` and `sort_by` semantics on `StoreListOptions` and
+  in the docs, and deprecated `StoreListOptions::sort_by`, which the API ignores.
 - `ActorVersionCollectionClient::create` and `ActorVersionClient::update` use the `Long` timeout
   tier by default, since a version can carry its source files.
 
