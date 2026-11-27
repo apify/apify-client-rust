@@ -4,6 +4,19 @@ All notable changes to the Rust Apify API client are documented here. The format
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] - 2026-11-27
+
+### Changed
+- Synced with the Apify OpenAPI spec. `GET /v2/store` ranks the results of a `search` by relevance
+  and returns a single page of at most 100 items, `sortBy` is deprecated and ignored, and
+  `category` takes comma-separated category IDs. Documented it on `StoreListOptions` and in the
+  docs. The Store listing items keep the new `stats` shape and `isVerified` in `extra`. The spec
+  also adds the `APIFY_AI` run origin, marks eight response fields as nullable, and adds the `409`
+  response to creating an Actor and the `401` response to getting a build. These need no code
+  change.
+- `ActorVersionCollectionClient::create` and `ActorVersionClient::update` use the `Long` timeout
+  tier by default, since a version can carry its source files.
+
 ## [0.18.0] - 2026-11-20
 
 ### Added

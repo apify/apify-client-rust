@@ -18,18 +18,25 @@ pub type StoreActorIterator = ListIterator<ActorStoreListItem>;
 /// Options for searching the Apify Store.
 #[derive(Debug, Default, Clone)]
 pub struct StoreListOptions {
-    /// Number of items to skip.
+    /// Number of items to skip. The API ignores it when `search` is used.
     pub offset: Option<i64>,
-    /// Item limit. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a
+    /// Item limit. The default and the maximum are 1000. When `search` is used, they are 100, and
+    /// a larger value is reduced to 100. Its meaning depends on the method: for [`StoreCollectionClient::list`] it is a
     /// single page's size (the maximum items that one call returns); for
     /// [`StoreCollectionClient::iterate`] it is a cap on the *total* number of items yielded across
     /// all pages. See each method's docs.
     pub limit: Option<i64>,
-    /// Full-text search query.
+    /// Search query. With it, the API ranks the results by relevance and returns a single page of
+    /// at most 100 items: `offset` is ignored and there is no second page. To narrow the results,
+    /// use `category`, `username` or `pricing_model`.
     pub search: Option<String>,
-    /// Sort key (e.g. `popularity`, `newest`).
+    /// Deprecated and ignored by the API, which accepts it for backward compatibility. Results
+    /// are ordered by relevance when `search` is used, and by Store position otherwise. Sort the
+    /// results on the client if you need a different order.
     pub sort_by: Option<String>,
-    /// Filter by category.
+    /// Filter by category. Accepts one or more category IDs separated by commas, case-insensitive
+    /// (for example `AI_AND_ML`). An Actor must match all of the listed categories. An unknown
+    /// category makes the API answer with a `400` error.
     pub category: Option<String>,
     /// Filter by owner username.
     pub username: Option<String>,

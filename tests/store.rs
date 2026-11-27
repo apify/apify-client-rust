@@ -58,3 +58,20 @@ async fn list_store_with_input_schema() {
     assert!(!page.items.is_empty(), "the Store lists Actors");
     assert!(page.items.len() <= 3);
 }
+
+/// Simple GET: the deprecated `sort_by` is accepted by the Store endpoint, which ignores it, so
+/// the order of the result is not asserted.
+#[tokio::test(flavor = "multi_thread")]
+async fn list_store_accepts_the_deprecated_sort_by() {
+    let client = require_client!();
+    let page = client
+        .store()
+        .list(StoreListOptions {
+            limit: Some(10),
+            sort_by: Some("popularity".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("listing the store with the deprecated sort_by should succeed");
+    assert!(!page.items.is_empty(), "the Store lists Actors");
+}

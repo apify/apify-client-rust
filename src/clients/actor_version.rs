@@ -32,8 +32,11 @@ impl ActorVersionClient {
     }
 
     /// Updates the version with the given fields.
+    ///
+    /// The request uses the `Long` timeout tier by default, since the version can carry its
+    /// source files. Set another one with [`with_timeout`](Self::with_timeout).
     pub async fn update<T: Serialize>(&self, new_fields: &T) -> ApifyClientResult<ActorVersion> {
-        update_resource(&self.ctx, None, new_fields, Timeout::Short).await
+        update_resource(&self.ctx, None, new_fields, Timeout::Long).await
     }
 
     /// Deletes the version.

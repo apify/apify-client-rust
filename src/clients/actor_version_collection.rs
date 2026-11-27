@@ -41,7 +41,10 @@ impl ActorVersionCollectionClient {
     }
 
     /// Creates a new Actor version.
+    ///
+    /// The request uses the `Long` timeout tier by default, since the version can carry its
+    /// source files. Set another one with [`with_timeout`](Self::with_timeout).
     pub async fn create<T: Serialize>(&self, version: &T) -> ApifyClientResult<ActorVersion> {
-        create_resource(&self.ctx, &QueryParams::new(), version, Timeout::Short).await
+        create_resource(&self.ctx, &QueryParams::new(), version, Timeout::Long).await
     }
 }

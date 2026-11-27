@@ -57,6 +57,32 @@ async fn listing_uses_the_medium_tier() {
 }
 
 #[tokio::test]
+async fn creating_and_updating_an_actor_version_use_the_long_tier() {
+    let backend = MockBackend::new(vec![
+        ok_data(json!({ "versionNumber": "0.1" })),
+        ok_data(json!({ "versionNumber": "0.1" })),
+    ]);
+    let client = client_with(backend.clone(), 0);
+    let body = json!({ "versionNumber": "0.1", "sourceType": "SOURCE_FILES" });
+    client
+        .actor("a")
+        .versions()
+        .create(&body)
+        .await
+        .expect("create version");
+    client
+        .actor("a")
+        .version("0.1")
+        .update(&body)
+        .await
+        .expect("update version");
+    assert_eq!(
+        backend.timeouts(),
+        vec![Duration::from_secs(360), Duration::from_secs(360)]
+    );
+}
+
+#[tokio::test]
 async fn dataset_items_use_the_long_tier() {
     let backend = MockBackend::new(vec![MockOutcome::Status(200, b"[]".to_vec())]);
     let client = client_with(backend.clone(), 0);

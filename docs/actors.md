@@ -407,4 +407,5 @@ when it is `None`.
 Creating a version needs `versionNumber` and `sourceType` in the body, and so does every item of
 the `versions` array in an Actor create or update body. The writable source types are
 `SOURCE_FILES`, `GIT_REPO`, `TARBALL` and `GITHUB_GIST`; `SOURCE_CODE` can be read but not sent.
-Updating a version needs no required field.
+Updating a version needs no required field. `create` and `update` use the `Long` timeout tier by
+default, since a version can carry its source files; set another one with `with_timeout`.

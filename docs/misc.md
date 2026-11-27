@@ -14,6 +14,13 @@
 `limit` means a single page's size for `list`, but a cap on the *total* number of
 items yielded for `iterate` (see below).
 
+With `search`, the API ranks the results by relevance and returns a single page of at most 100
+items: `offset` is ignored, a larger `limit` is reduced to 100, and there is no second page. Without
+it, a page has at most 1000 items. `sort_by` is deprecated: the API accepts it and ignores it, so
+sort the results on the client if you need a different order. `category` takes one or more
+category IDs separated by commas, such as `AI_AND_ML`; an Actor must match all of them, and an
+unknown category makes the API answer with a `400` error.
+
 `StoreActorIterator` is a type alias for `ListIterator<ActorStoreListItem>` (the shared iterator
 returned by every collection's `iterate`), re-exported at the crate root alongside `ListIterator`
 itself. Its `next()` is `async` and fallible — it returns

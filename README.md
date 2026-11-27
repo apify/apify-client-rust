@@ -20,7 +20,7 @@ It provides a resource-oriented, async interface that follows the
 
 ```toml
 [dependencies]
-apify-client = "0.18"
+apify-client = "0.19"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"          # for the `serde_json::Value` responses used in the Quick start
 ```
@@ -49,7 +49,7 @@ instead, disable the default features and name `rustls`. The `"zstd"` entry keep
 so drop it if you do not need it:
 
 ```toml
-apify-client = { version = "0.18", default-features = false, features = ["rustls", "zstd"] }
+apify-client = { version = "0.19", default-features = false, features = ["rustls", "zstd"] }
 ```
 
 The `rustls` feature requires `rustls-webpki` 0.103.16 or newer and `webpki-roots` 1.0.10 or
